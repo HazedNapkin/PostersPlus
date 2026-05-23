@@ -82,7 +82,7 @@ Then start it:
 docker compose up -d
 ```
 
-The service will be available at `http://localhost:8000`. Open the configurator at `http://localhost:8000` to tune your settings and generate a URL template for AIOMetadata.
+Once your reverse proxy is set up, open the configurator at your public HTTPS domain to tune your settings and generate a URL template for AIOMetadata. The URL it generates is based on the domain you access it from, so always open it via your real domain — not localhost.
 
 ### Building from source
 
