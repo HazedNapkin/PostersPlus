@@ -50,28 +50,44 @@ Non self hosters can [visit the public instance.](https://postersplus.elfhosted.
 >
 > `http://localhost:8000` is only suitable for accessing the configurator locally during setup.
 
-**1. Clone the repository**
-```bash
-git clone https://github.com/UmbraProjects/PostersPlus.git
-cd PostersPlus
+### Using the pre-built image (recommended)
+
+Pre-built images for `amd64` and `arm64` are published to the GitHub Container Registry on every release.
+
+Create a `compose.yaml` with the following content, substituting your own values:
+
+```yaml
+services:
+  postersplus:
+    image: ghcr.io/umbraprojects/postersplus:latest
+    ports:
+      - "8000:8000"    # change the left side if port 8000 is already in use
+    restart: unless-stopped
+    volumes:
+      - ./postersplus-cache:/app/cache
+    environment:
+      - TMDB_API_KEY=your_tmdb_key
+      - MDBLIST_API_KEY=your_mdblist_key
+      - WORKERS=2
+      # See .env.example for all available options
 ```
 
-**2. Configure your environment**
-```bash
-cp .env.example .env
-```
-Edit `.env` and add at minimum your `TMDB_API_KEY` and `MDBLIST_API_KEY`. See the comments in `.env.example` for all available options.
+Then start it:
 
-**3. Start the service**
 ```bash
 docker compose up -d
 ```
 
-The service will be available at `http://localhost:8000`. Set up your reverse proxy to expose it over HTTPS before generating your poster URL.
+The service will be available at `http://localhost:8000`. Open the configurator at `http://localhost:8000` to tune your settings and generate a URL template for AIOMetadata.
 
-**4. Open the configurator**
+### Building from source
 
-Navigate to `http://localhost:8000/configurator` to tune your settings and generate a URL template.
+```bash
+git clone https://github.com/UmbraProjects/PostersPlus.git
+cd PostersPlus
+cp .env.example .env   # fill in your keys
+docker compose up -d --build
+```
 
 ---
 
