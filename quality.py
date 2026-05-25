@@ -163,7 +163,7 @@ async def fetch_quality_from_aiostreams(
         return tokens
 
     except Exception as exc:
-        logger.error(f"AIOStreams fetch error for {imdb_id}: {exc}")
+        logger.error(f"AIOStreams fetch error for {imdb_id}: {type(exc).__name__}: {exc}")
         return FETCH_FAILED
 
 

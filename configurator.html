@@ -116,6 +116,26 @@
     text-transform: uppercase;
   }
 
+  .header-github {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    color: var(--text-muted);
+    text-decoration: none;
+    text-transform: uppercase;
+    opacity: 0.7;
+    transition: opacity 0.15s;
+    /* "WEB CONFIGURATOR" sits at the POSTERS+ text baseline, which is ~5.5px
+       below the header's geometric centre. margin-top of 11px shifts the
+       centred item down by half that value, landing it at the subtitle level. */
+    margin-top: 11px;
+  }
+  .header-github:hover { opacity: 1; color: var(--silver); }
+  .header-github svg { flex-shrink: 0; display: block; }
+
   .status-bar {
     display: flex;
     align-items: center;
@@ -1070,7 +1090,9 @@
     .preview-panel { width: 100%; }
     .preview-frame { height: auto; min-height: 240px; padding: 12px; }
     .preview-poster { width: 100%; height: auto; max-height: 70vh; object-fit: contain; }
-    .header { flex-direction: column; align-items: flex-start; gap: 14px; }
+    .header { flex-direction: row; align-items: center; }
+    .logo-sep, .logo-sub { display: none; }
+    .header-github { opacity: 0.6; margin-top: 0; }
     .two-col, .inline-grid { grid-template-columns: 1fr; }
     .weight-item { grid-template-columns: 96px 1fr 38px; column-gap: 8px; }
     .btn-row { flex-wrap: wrap; }
@@ -1173,10 +1195,14 @@
     <div class="header-left">
       <div>
         <span class="logo"><em>Posters</em>+</span>
-        <span class="logo-sep">//</span>
-        <span class="logo-sub">Web Configurator</span>
       </div>
     </div>
+    <a class="header-github" href="https://github.com/UmbraProjects/PostersPlus" target="_blank" rel="noopener">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
+      </svg>
+      <span class="github-label">GitHub</span>
+    </a>
   </header>
 
   <div class="main-layout">
@@ -1321,6 +1347,16 @@
                 <option value="3">3. Minimalist</option>
               </select>
             </div>
+            <div id="rating-alt-colors-toggle" style="margin-bottom:14px;">
+              <div class="field">
+                <label class="field-label">Colour Palette</label>
+                <select id="cfg-score-color-mode" onchange="build(); queuePreviewReload()">
+                  <option value="0">Default - red, yellow, green, purple</option>
+                  <option value="1">Dark/light - red, yellow, green</option>
+                  <option value="2">Metal - grey, bronze, silver, gold</option>
+                </select>
+              </div>
+            </div>
             <div id="rating-mode1-fields">
               <div class="field">
                 <label class="field-label">Font Size</label>
@@ -1410,6 +1446,15 @@
             <span class="section-chevron">▼</span>
           </div>
           <div class="section-body">
+            <div class="toggle-row" style="margin-bottom:14px;">
+              <div>
+                <div class="toggle-label">Textless</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="tog-textless" onchange="build(); queuePreviewReload()">
+                <div class="toggle-track"><div class="toggle-thumb"></div></div>
+              </label>
+            </div>
             <div class="field">
               <label class="field-label">Max Width Ratio</label>
               <div class="range-row">
@@ -1451,6 +1496,16 @@
                 <div class="toggle-track"><div class="toggle-thumb"></div></div>
               </label>
             </div>
+            <div class="toggle-row" style="margin-bottom:14px;">
+              <div>
+                <div class="toggle-label">Muted Sashes</div>
+                <div class="field-hint">Reduce sash opacity slightly.</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="tog-muted" onchange="build(); queuePreviewReload()">
+                <div class="toggle-track"><div class="toggle-thumb"></div></div>
+              </label>
+            </div>
             <div class="field-hint" style="margin-bottom:10px;">Drag to reorder. Click ✕ to disable a sash — the first matching sash wins.</div>
             <div class="sash-list" id="sash-priority-list"></div>
           </div>
@@ -1468,12 +1523,16 @@
               <label class="field-label">Display Mode</label>
               <select id="cfg-badge-display-mode" onchange="updateBadgeModeHint(); build(); queuePreviewReload()">
                 <option value="0">0. Hidden</option>
-                <option value="1" selected>1. Quality Age Rating</option>
+                <option value="1">1. Quality Age Rating</option>
                 <option value="2">2. Quality Badge Row</option>
                 <option value="3">3. Age Rating Only</option>
+                <option value="4" selected>4. Tier Accent Bar</option>
               </select>
               <div class="field-hint" id="badge-mode1-hint">
                 The color of the font reflects stream quality, following medal tiers.
+              </div>
+              <div class="field-hint" id="badge-mode4-hint" style="display:none">
+                Medal colored marker based on stream quality.
               </div>
               <div class="field-hint" id="badge-quality-fetch-hint" style="display:none">
                 If media quality is un-cached, it's fetched in the background and applied for future requests.
@@ -1485,9 +1544,9 @@
             <div class="two-col">
               <div class="field">
                 <label class="field-label">Height (px)</label>
-                <input type="number" id="cfg-badge-h" value="36" min="16" max="80" oninput="build(); queuePreviewReload()">
+                <input type="number" id="cfg-badge-h" value="20" min="16" max="80" oninput="build(); queuePreviewReload()">
               </div>
-              <div class="field">
+              <div class="field" id="badge-gap-field" style="display:none">
                 <label class="field-label">Gap (px)</label>
                 <input type="number" id="cfg-badge-gap" value="8" min="0" max="32" oninput="build(); queuePreviewReload()">
               </div>
@@ -1745,7 +1804,10 @@ function updateKeyBadges() {
 function updateBadgeModeHint() {
   const mode = parseInt(document.getElementById('cfg-badge-display-mode').value);
   document.getElementById('badge-mode1-hint').style.display        = mode === 1 ? '' : 'none';
-  document.getElementById('badge-quality-fetch-hint').style.display = (mode === 1 || mode === 2) ? '' : 'none';
+  document.getElementById('badge-mode4-hint').style.display        = mode === 4 ? '' : 'none';
+  document.getElementById('badge-quality-fetch-hint').style.display = (mode === 1 || mode === 2 || mode === 4) ? '' : 'none';
+  document.getElementById('badge-gap-field').style.display         = mode === 2 ? '' : 'none';
+  document.getElementById('cfg-badge-h').value                     = mode === 4 ? 20 : 36;
 }
 
 function buildWeightSection(containerId, sources, defaults) {
@@ -2277,6 +2339,7 @@ function buildBaseParams({ usePlaceholders = false } = {}) {
   if (userTmdbKey)    params.set('tmdb_key',     usePlaceholders ? '{tmdb_key}'    : userTmdbKey);
   if (userMdblistKey) params.set('mdblist_key',  usePlaceholders ? '{mdblist_key}' : userMdblistKey);
   params.set('show_award_sash',    c('tog-award-sash') ? 'true' : 'false');
+  params.set('muted',              c('tog-muted')      ? 'true' : 'false');
   params.set('badge_display_mode', ni('cfg-badge-display-mode'));
   params.set('sash_priority',      getSashPriorityParam());
   params.set('rating_display_mode',            ni('cfg-rating-mode'));
@@ -2290,6 +2353,8 @@ function buildBaseParams({ usePlaceholders = false } = {}) {
   params.set('score_glow_threshold',   ni('cfg-glow-thresh'));
   params.set('score_glow_blur',        ni('cfg-glow-blur'));
   params.set('score_glow_alpha',       ni('cfg-glow-alpha'));
+  params.set('textless',                c('tog-textless')         ? 'true' : 'false');
+  params.set('score_color_mode',        ni('cfg-score-color-mode'));
   params.set('logo_max_w_ratio',        n('cfg-logo-w').toFixed(2));
   params.set('logo_max_h_ratio',        n('cfg-logo-h').toFixed(2));
   params.set('logo_bottom_ratio',       n('cfg-logo-bottom').toFixed(2));
@@ -2409,10 +2474,11 @@ async function loadPreview() {
 
 function updateRatingFields() {
   const mode = parseInt(document.getElementById('cfg-rating-mode').value);
-  document.getElementById('rating-mode1-fields').style.display = mode === 1 ? '' : 'none';
-  document.getElementById('rating-mode2-fields').style.display = mode === 2 ? '' : 'none';
-  document.getElementById('rating-mode3-fields').style.display = mode === 3 ? '' : 'none';
-  document.getElementById('rating-glow-fields').style.display  = mode === 1 ? '' : 'none';
+  document.getElementById('rating-mode1-fields').style.display      = mode === 1 ? '' : 'none';
+  document.getElementById('rating-mode2-fields').style.display      = mode === 2 ? '' : 'none';
+  document.getElementById('rating-mode3-fields').style.display      = mode === 3 ? '' : 'none';
+  document.getElementById('rating-glow-fields').style.display       = mode === 1 ? '' : 'none';
+  document.getElementById('rating-alt-colors-toggle').style.display = (mode === 1 || mode === 3) ? '' : 'none';
 }
 
 // ---------------------------------------------------------------------------
@@ -2493,6 +2559,7 @@ function importUrl(urlStr) {
 
   // ── Sash ────────────────────────────────────────────────────────────────
   if (p.has('show_award_sash')) _setEl('tog-award-sash', p.get('show_award_sash'));
+  if (p.has('muted'))           _setEl('tog-muted',      p.get('muted'));
 
   if (p.has('sash_priority')) {
     const tokens = p.get('sash_priority').split(',').map(s => s.trim()).filter(Boolean);
@@ -2521,12 +2588,14 @@ function importUrl(urlStr) {
   if (p.has('score_glow_threshold'))           _setEl('cfg-glow-thresh',  p.get('score_glow_threshold'));
   if (p.has('score_glow_blur'))                _setEl('cfg-glow-blur',    p.get('score_glow_blur'));
   if (p.has('score_glow_alpha'))               _setEl('cfg-glow-alpha',   p.get('score_glow_alpha'));
+  if (p.has('score_color_mode'))               _setEl('cfg-score-color-mode', p.get('score_color_mode'));
   updateRatingFields();
 
   // ── Logo ────────────────────────────────────────────────────────────────
   if (p.has('logo_max_w_ratio'))   _setEl('cfg-logo-w',      p.get('logo_max_w_ratio'));
   if (p.has('logo_max_h_ratio'))   _setEl('cfg-logo-h',      p.get('logo_max_h_ratio'));
   if (p.has('logo_bottom_ratio'))  _setEl('cfg-logo-bottom', p.get('logo_bottom_ratio'));
+  if (p.has('textless'))           _setEl('tog-textless',    p.get('textless'));
 
   // ── Quality badges ──────────────────────────────────────────────────────
   if (p.has('badge_display_mode')) _setEl('cfg-badge-display-mode', p.get('badge_display_mode'));

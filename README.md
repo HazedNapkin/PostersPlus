@@ -110,6 +110,7 @@ All configuration is done via environment variables. Copy `.env.example` to `.en
 | `QUALITY_OLD_CACHE_DURATION` | `90` | Days to cache quality data for titles older than 2 weeks |
 | `QUALITY_BG_CONCURRENCY` | `5` | Max concurrent background quality fetches |
 | `CDN_CACHE_TTL` | `0` | Adds `Cache-Control: public, max-age=N` to poster responses. Set to `0` to disable |
+| `JPEG_QUALITY` | `85` | JPEG output quality for composited posters (70–95). Raise to `92` for higher fidelity; lower to reduce file size |
 | `COMPOSITE_CACHE_TTL` | `604800` | Seconds to keep a rendered poster before re-rendering (default 7 days) |
 | `COMPOSITE_MAX_ENTRIES` | `0` | Cap on composite cache entries. `0` = no cap |
 | `DEFAULT_LOGO_LANGUAGE` | `en` | ISO 639-1 language code for title logos |
@@ -123,6 +124,9 @@ Posters are served at `/poster` with parameters controlling every aspect of rend
 ```
 https://yourdomain.com/poster?tmdb_id={tmdb_id}&imdb_id={imdb_id}&type={type}
 ```
+
+Append `&debug=1` to any poster URL to receive a JSON response with all computed metadata — score, genre, sash label, quality tokens, award data, matched cast/directors — instead of rendering the image. Useful for diagnosing unexpected sashes or missing ratings.
+
 ---
 
 ## Award Sashes

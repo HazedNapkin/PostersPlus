@@ -11,7 +11,7 @@ import numpy as np
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import Response, HTMLResponse
+from fastapi.responses import JSONResponse, Response, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageDraw, ImageFont
 
@@ -56,6 +56,12 @@ class _TruncateUrlFilter(logging.Filter):
 _url_filter = _TruncateUrlFilter()
 for _handler in logging.getLogger().handlers:
     _handler.addFilter(_url_filter)
+
+# httpx logs every outbound HTTP request at INFO level, including full URLs with
+# API keys in query strings.  Raise its level to WARNING so those lines are never
+# written to the log — our own try/except blocks capture errors explicitly.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -131,7 +137,7 @@ async def _background_quality_fetch(
         _quality_bg_inflight.discard(imdb_id)
 
 # Local imports
-from age_badge import draw_quality_age_badge
+from age_badge import draw_quality_age_badge, draw_tier_bar
 from awards import FETCH_FAILED, draw_award_sash, parse_mdblist_awards
 from cache import (
     get_cached_quality,
@@ -274,6 +280,9 @@ class RequestConfig:
 
     logo_language: str = field(default_factory=lambda: _cfg.DEFAULT_LOGO_LANGUAGE)
     sash_priority: list[str] = field(default_factory=lambda: list(_cfg.SASH_PRIORITY))
+    muted: bool = False
+    textless: bool = False
+    score_color_mode: int = 0
 
 
 def _parse_bool(val: str | None, default: bool) -> bool:
@@ -330,6 +339,9 @@ def build_request_config(params: dict) -> RequestConfig:
         except: return default
 
     cfg.show_award_sash         = _b("show_award_sash",        cfg.show_award_sash)
+    cfg.muted                   = _b("muted",                  cfg.muted)
+    cfg.textless                = _b("textless",               cfg.textless)
+    cfg.score_color_mode        = _i("score_color_mode",        cfg.score_color_mode)
     cfg.badge_display_mode      = _i("badge_display_mode",     cfg.badge_display_mode)
     cfg.rating_display_mode     = _i("rating_display_mode",    cfg.rating_display_mode)
 
@@ -407,6 +419,20 @@ def _text_center(
 # Poster composition
 # ---------------------------------------------------------------------------
 
+def _make_fallback_canvas() -> Image.Image:
+    """Dark gradient canvas served when a title has no poster art on TMDB."""
+    W, H = _cfg.POSTER_WIDTH, _cfg.POSTER_HEIGHT
+    t    = np.linspace(0, np.pi, H, dtype=np.float32)
+    # sin curve: peaks at midheight (18), dark at top/bottom (10)
+    v    = (10 + 8 * np.sin(t)).astype(np.uint8)
+    arr  = np.zeros((H, W, 4), dtype=np.uint8)
+    arr[:, :, 0] = v[:, np.newaxis]                                          # R
+    arr[:, :, 1] = v[:, np.newaxis]                                          # G
+    arr[:, :, 2] = np.minimum(255, (v * 1.4).astype(np.uint8))[:, np.newaxis]  # B — cool tint
+    arr[:, :, 3] = 255
+    return Image.fromarray(arr, "RGBA")
+
+
 def build_poster(
     image: Image.Image,
     score: int | str,
@@ -418,6 +444,7 @@ def build_poster(
     quality_tokens: list[str] | None = None,
     release_year: str | None = None,
     age_rating: int | None = None,
+    no_poster: bool = False,
 ) -> Image.Image:
 
     width, height = image.size
@@ -475,6 +502,16 @@ def build_poster(
             always_silver=True,
         )
 
+    elif mode == 4:
+        # Accent bar — small vertical pill in tier colour, no text
+        draw_tier_bar(
+            image,
+            tokens,
+            anchor_x_ratio=cfg.badge_anchor_x,
+            anchor_y_ratio=cfg.badge_anchor_y,
+            bar_height=cfg.badge_height,
+        )
+
     elif mode == 2:
         allowed_tokens  = {"4K", "1080P", "REMUX", "WEBDL", "DV", "HDR10+", "HDR10"}
         filtered_tokens = [t for t in tokens if t in allowed_tokens]
@@ -529,12 +566,25 @@ def build_poster(
         draw.text((tx + shadow_offset, ty + shadow_offset), fallback_title, font=font, fill=(0, 0, 0, 180))
         draw.text((tx, ty), fallback_title, font=font, fill=(255, 255, 255, 255))
 
+        if no_poster:
+            # Small watermark below the "No Image Available" text so viewers
+            # know this is a PostersPlus message, not a client or CDN failure.
+            try:
+                wm_font = ImageFont.truetype(os.path.join(_FONTS_DIR, "Inter-Bold.ttf"), 13)
+            except IOError:
+                wm_font = ImageFont.load_default()
+            wm_text = "PostersPlus · No poster art on TMDB"
+            wm_bb   = draw.textbbox((0, 0), wm_text, font=wm_font)
+            wm_x    = (width - (wm_bb[2] - wm_bb[0])) // 2
+            wm_y    = ty + (wm_bb[3] - wm_bb[1]) + int(font_size * 1.4)  # type: ignore
+            draw.text((wm_x, wm_y), wm_text, font=wm_font, fill=(160, 160, 160, 110))
+
     # --- Rating / genre label ---
     if cfg.rating_display_mode != 0:
 
         if cfg.rating_display_mode == 1:
             font_size = int(width * cfg.accent_bar_font_size_ratio)
-            label = f"{genre} · {release_year}"
+            label = f"{genre} · {release_year}" if release_year else genre
             rating_cy = height * cfg.accent_bar_y_offset
 
             try:
@@ -554,6 +604,7 @@ def build_poster(
                 glow_threshold=cfg.score_glow_threshold,
                 glow_blur=cfg.score_glow_blur,
                 glow_alpha=cfg.score_glow_alpha,
+                color_mode=cfg.score_color_mode,
             )
 
         elif cfg.rating_display_mode == 2:
@@ -619,6 +670,7 @@ def build_poster(
                     y_center=pip_cy,
                     height=pip_h,
                     width=pip_w,
+                    color_mode=cfg.score_color_mode,
                 )
 
     # --- Discovery sash ---
@@ -626,7 +678,7 @@ def build_poster(
         sash_result = pick_sash(discovery_meta, cfg.sash_priority)
         if sash_result is not None:
             label, sash_type = sash_result
-            image = draw_award_sash(image, label, sash_type=sash_type)
+            image = draw_award_sash(image, label, sash_type=sash_type, muted=cfg.muted)
 
     return image
 
@@ -835,6 +887,10 @@ async def get_poster(
     tv_weights: str | None = None,
     logo_language: str | None = None,
     sash_priority: str | None = None,
+    muted: str | None = None,
+    textless: str | None = None,
+    score_color_mode: str | None = None,
+    debug: str | None = None,
 ):
     if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
         raise HTTPException(status_code=403, detail="Unauthorized, your access key is not valid for this instance.")
@@ -867,7 +923,7 @@ async def get_poster(
         k: v for k, v in request.query_params.items()
         if k not in (
             "tmdb_id", "imdb_id", "mdblist_key", "tmdb_key", "type",
-            "quality", "season", "episode", "access_key",
+            "quality", "season", "episode", "access_key", "debug",
         )
     }
     rcfg = build_request_config(raw_params)
@@ -885,7 +941,14 @@ async def get_poster(
         cached_jpeg = get_cached_final_poster(final_cache_key)
         if cached_jpeg is not None:
             logger.info(f"Final poster cache hit for {final_cache_key}")
-            return Response(content=cached_jpeg, media_type="image/jpeg")
+            etag = f'"{final_cache_key}"'
+            if request.headers.get("if-none-match") == etag:
+                return Response(status_code=304)
+            _hit_resp = Response(content=cached_jpeg, media_type="image/jpeg")
+            _hit_resp.headers["ETag"] = etag
+            if _cfg.CDN_CACHE_TTL > 0:
+                _hit_resp.headers["Cache-Control"] = f"public, max-age={_cfg.CDN_CACHE_TTL}"
+            return _hit_resp
     else:
         final_cache_key = None
 
@@ -901,7 +964,11 @@ async def get_poster(
         if _existing_fut is not None:
             logger.info(f"Coalescing request for {final_cache_key}")
             try:
-                return Response(content=await _existing_fut, media_type="image/jpeg")
+                _coal_resp = Response(content=await _existing_fut, media_type="image/jpeg")
+                _coal_resp.headers["ETag"] = f'"{final_cache_key}"'
+                if _cfg.CDN_CACHE_TTL > 0:
+                    _coal_resp.headers["Cache-Control"] = f"public, max-age={_cfg.CDN_CACHE_TTL}"
+                return _coal_resp
             except Exception:
                 # The in-flight render failed; fall through and try ourselves.
                 pass
@@ -1019,7 +1086,7 @@ async def get_poster(
         quality_tokens = cached_tokens or []
 
     quality_needs_fetch = (
-        rcfg.badge_display_mode in (1, 2)
+        rcfg.badge_display_mode in (1, 2, 4)
         and not quality
         and cached_tokens is None
     )
@@ -1074,14 +1141,15 @@ async def get_poster(
 
         # Quality is always fetched in the background (never inline); the 4th
         # gather slot was removed after quality_needs_fetch was made always-False.
+        is_no_poster = poster_path is None
         (
             image,
             logo,
             rating_result,
             trending_rank,
         ) = await asyncio.gather(
-            fetch_poster_image(client, tmdb_id, type, poster_path),
-            fetch_logo(client, logos, rcfg.logo_language) if is_textless else _resolved(None),
+            _resolved(_make_fallback_canvas()) if is_no_poster else fetch_poster_image(client, tmdb_id, type, poster_path),
+            fetch_logo(client, logos, rcfg.logo_language) if (is_textless and not is_no_poster) else _resolved(None),
             rating_coro,
             fetch_trending_rank(client, tmdb_id, effective_tmdb_key, type),
         )
@@ -1191,21 +1259,58 @@ async def get_poster(
             is_digital_release_override=is_digital_release(imdb_id),
         )
 
+        # ------------------------------------------------------------------
+        # Debug mode: return diagnostic JSON instead of rendering the poster.
+        # Useful for troubleshooting wrong sashes, missing ratings, etc.
+        # Activate with ?debug=1 (never cached, never stored).
+        # ------------------------------------------------------------------
+        if debug and debug.strip() in ("1", "true"):
+            _sash_result = pick_sash(discovery_meta, rcfg.sash_priority)
+            return JSONResponse({
+                "imdb_id":           imdb_id,
+                "tmdb_id":           tmdb_id,
+                "type":              type,
+                "score":             score if isinstance(score, str) else int(score),
+                "genre":             genre,
+                "release_year":      release_year,
+                "release_date":      rel,
+                "quality_tokens":    quality_tokens,
+                "age_rating":        age_rating,
+                "award_wins":        award_wins,
+                "award_noms":        award_noms,
+                "festival_label":    festival_label,
+                "sash":              {"label": _sash_result[0], "type": _sash_result[1]} if _sash_result else None,
+                "is_cult":           discovery_meta.is_cult,
+                "is_true_story":     discovery_meta.is_true_story,
+                "is_metacritic":     discovery_meta.is_metacritic_must_see,
+                "is_new_release":    discovery_meta.is_new_release,
+                "is_digital_release":discovery_meta.is_digital_release,
+                "trending_rank":     discovery_meta.trending_rank,
+                "original_language": discovery_meta.original_language,
+                "matched_studios":   discovery_meta.matched_studios,
+                "matched_directors": discovery_meta.matched_directors,
+                "matched_cast":      discovery_meta.matched_cast,
+                "sash_priority":     rcfg.sash_priority,
+                "badge_display_mode":rcfg.badge_display_mode,
+                "rating_display_mode":rcfg.rating_display_mode,
+            })
+
         # Offload CPU-bound PIL compositing + JPEG encoding to the thread pool
         # so the event loop stays free for concurrent requests.
         _bp_args = dict(
-            logo=logo if is_textless else None,
-            fallback_title=title if is_textless and not logo else None,
+            logo=logo if (is_textless and not is_no_poster and not rcfg.textless) else None,
+            fallback_title="No Image Available" if is_no_poster else (title if is_textless and not logo and not rcfg.textless else None),
             discovery_meta=discovery_meta,
             quality_tokens=quality_tokens,
             release_year=release_year,
             age_rating=age_rating,
+            no_poster=is_no_poster,
         )
 
         def _composite_and_encode() -> bytes:
             result = build_poster(image, score, genre, rcfg, **_bp_args)
             buf = io.BytesIO()
-            result.convert("RGB").save(buf, format="JPEG", quality=85)
+            result.convert("RGB").save(buf, format="JPEG", quality=_cfg.JPEG_QUALITY)
             return buf.getvalue()
 
         img_bytes = await asyncio.get_running_loop().run_in_executor(
@@ -1224,10 +1329,22 @@ async def get_poster(
             _render_fut.set_result(img_bytes)
 
         response = Response(content=img_bytes, media_type="image/jpeg")
+        if final_cache_key is not None:
+            response.headers["ETag"] = f'"{final_cache_key}"'
         if _cfg.CDN_CACHE_TTL > 0:
             response.headers["Cache-Control"] = f"public, max-age={_cfg.CDN_CACHE_TTL}"
         return response
 
+    except ValueError as exc:
+        if _render_fut is not None and not _render_fut.done():
+            _render_fut.set_exception(exc)
+        logger.warning(f"No poster available for tmdb_id={tmdb_id}: {exc}")
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        if _render_fut is not None and not _render_fut.done():
+            _render_fut.set_exception(exc)
+        logger.warning(f"No poster available for tmdb_id={tmdb_id}: {exc}")
+        raise HTTPException(status_code=404, detail=str(exc))
     except httpx.TimeoutException as exc:
         if _render_fut is not None and not _render_fut.done():
             _render_fut.set_exception(exc)
