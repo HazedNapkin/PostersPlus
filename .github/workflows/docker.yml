@@ -17,6 +17,10 @@ on:
       - 'discovery_overrides.example.json'
       - '.github/**'
       - 'Showcase/**'
+  # Manual trigger from the Actions tab — useful for re-publishing :latest
+  # after a registry-state hiccup, or when paths-ignore swallowed a push
+  # that you actually want rebuilt.
+  workflow_dispatch:
 
 jobs:
   build-and-push:
@@ -47,6 +51,13 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/umbraprojects/postersplus
+          # Disable the metadata-action's automatic :latest behaviour — its
+          # default (latest=auto) adds :latest to every semver tag push, so
+          # parallel v1.0.0 / v1.0.1 / v1.0.2 builds race to claim it and
+          # the last one to finish wins (which is rarely the highest version).
+          # The explicit type=raw rule below owns :latest exclusively now.
+          flavor: |
+            latest=false
           tags: |
             # main branch → :latest and :main
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}

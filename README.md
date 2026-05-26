@@ -195,9 +195,10 @@ PostersPlus uses a SQLite database (WAL mode) for all caching. The cache volume 
 
 ---
 
-## Donate
+## Donate & Discord
 
 If you'd like to support development, I'd appreciate it: https://ko-fi.com/umbraprojects
+Join the discord here to request features or report bugs: https://discord.com/invite/wEgTPNXUMU
 
 ---
 
