@@ -69,9 +69,25 @@ def _ensure_detector():
 def detect_faces(image) -> list[tuple[float, float, float]]:
     """
     Return [(centre_x, width, weight), …] for detected faces, where
-    weight = area × score (larger / more confident faces dominate the crop).
+    weight = score³ × area.
+
     Empty list when there are no faces or detection is unavailable.  Called from
     the thread pool (backdrop crop), so inference is serialised with _infer_lock.
+
+    Why score is cubed rather than used linearly: YuNet occasionally throws a
+    low-confidence "face" that's actually a large blurred blob in the
+    background (a dark dresser / sofa cushions reading as a face-ish shape at
+    just-above-_SCORE_THRESHOLD confidence).  Such a blob's bounding box can be
+    2-3× the area of the genuine face elsewhere in frame, so a linear
+    `score × area` lets it outrank — and the crop centres on empty background,
+    slicing the actual subject almost entirely out of frame (observed in the
+    wild on TMDB 450545 "Secret Santa", where a score=0.6/509×613px background
+    blob beat the real score=0.9/293×482px face purely on size, landing the
+    crop on a couch instead of the actress).  Cubing the score punishes
+    borderline-confidence detections heavily enough that a genuine, confident
+    face reliably wins regardless of the false positive's inflated bbox, while
+    still letting bounding-box area break ties between two similarly-confident
+    real faces (e.g. lead vs. background extra) as originally intended.
     """
     det = _ensure_detector()
     if det is None:
@@ -89,7 +105,7 @@ def detect_faces(image) -> list[tuple[float, float, float]]:
         out = []
         for f in faces:
             x, fw, fh, score = float(f[0]), float(f[2]), float(f[3]), float(f[-1])
-            out.append((x + fw / 2.0, fw, max(score, 0.0) * fw * fh))
+            out.append((x + fw / 2.0, fw, max(score, 0.0) ** 3 * fw * fh))
         return out
     except Exception as exc:
         logger.warning(f"face detect error: {exc}")

@@ -554,7 +554,11 @@ async def fetch_poster_image(
 #   v2 = face-aware cropping
 #   v3 = focus a single face when subjects are too far apart to both fit
 #   v4 = derive text avoidance from PP-OCR polygons
-_CROP_VERSION = "v4"
+#   v5 = cube confidence in the face "prominence" weight so a large
+#        low-confidence false-positive blob can no longer outrank a smaller,
+#        genuinely-confident face purely on bounding-box size (see
+#        face_detect.detect_faces docstring — observed on TMDB 450545)
+_CROP_VERSION = "v5"
 
 
 def _face_crop_left(image: Image.Image, crop_w: int) -> "int | None":
