@@ -1685,7 +1685,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
       <div class="notch"></div>
       <div class="panel-header">
         <span class="panel-title">Configuration</span>
-        <button type="button" class="panel-index whatsnew-version" id="whatsnew-version" onclick="openWhatsNew()" data-acked="true" title="What's new">v1.1-dev</button>
+        <button type="button" class="panel-index whatsnew-version" id="whatsnew-version" onclick="openWhatsNew()" data-acked="true" title="What's new">v1.2-dev</button>
       </div>
       <div class="panel-body">
 
@@ -2163,6 +2163,16 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <input type="range" id="cfg-logo-bottom" min="0.05" max="0.60" step="0.01" value="0.28" oninput="updateRange(this,'rng-lb'); build(); queuePreviewReload()">
                 <span class="range-val" id="rng-lb">0.28</span>
               </div>
+            </div>
+            <div class="toggle-row" style="border-bottom:none;">
+              <div>
+                <div class="toggle-label">Bottom Anchor</div>
+                <div class="field-hint">Logos only expand upwards, ideal for bottom logo placement. By default logos share a midline, expanding in both directions vertically. Configure this using a horizontal logo, for example 2022 "Let the Right one in". </div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="tog-logo-bottom-anchor" onchange="build(); queuePreviewReload()">
+                <div class="toggle-track"><div class="toggle-thumb"></div></div>
+              </label>
             </div>
             </div>
           </div>
@@ -3520,8 +3530,9 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   params.set('logo_priority',         vEl('cfg-logo-priority') || 'native_original');
   params.set('fallback_bg_style',     vEl('cfg-fallback-bg-style') || 'minimal');
   params.set('logo_max_w_ratio',      n('cfg-logo-w').toFixed(2));
-  params.set('logo_max_h_ratio',  n('cfg-logo-h').toFixed(2));
-  params.set('logo_bottom_ratio', n('cfg-logo-bottom').toFixed(2));
+  params.set('logo_max_h_ratio',      n('cfg-logo-h').toFixed(2));
+  params.set('logo_bottom_ratio',     n('cfg-logo-bottom').toFixed(2));
+  if (c('tog-logo-bottom-anchor')) params.set('logo_bottom_anchor', 'true');
 
   // ── Info Sash ──────────────────────────────────────────────────────────────
   params.set('sash_mode', sashMode);
@@ -4122,10 +4133,11 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   updateOriginalArt();
 
   // ── Logo ────────────────────────────────────────────────────────────────
-  if (p.has('logo_max_w_ratio'))   _setEl('cfg-logo-w',      p.get('logo_max_w_ratio'));
-  if (p.has('logo_max_h_ratio'))   _setEl('cfg-logo-h',      p.get('logo_max_h_ratio'));
-  if (p.has('logo_bottom_ratio'))  _setEl('cfg-logo-bottom', p.get('logo_bottom_ratio'));
-  if (p.has('textless'))           _setEl('tog-textless',    p.get('textless'));
+  if (p.has('logo_max_w_ratio'))     _setEl('cfg-logo-w',              p.get('logo_max_w_ratio'));
+  if (p.has('logo_max_h_ratio'))     _setEl('cfg-logo-h',              p.get('logo_max_h_ratio'));
+  if (p.has('logo_bottom_ratio'))    _setEl('cfg-logo-bottom',         p.get('logo_bottom_ratio'));
+  if (p.has('logo_bottom_anchor'))   _setEl('tog-logo-bottom-anchor',  p.get('logo_bottom_anchor'));
+  if (p.has('textless'))             _setEl('tog-textless',            p.get('textless'));
   if (p.has('use_original_art'))   _setEl('tog-original-art', p.get('use_original_art'));
   if (p.has('original_art_source')) _setEl('cfg-original-art-source', p.get('original_art_source'));
 

@@ -683,9 +683,10 @@ class RequestConfig:
     bar_match_notch:         bool  = False  # share one frosted tint with the sash notch
     bar_append:              str   = "rating_year"  # "rating_year"|"rating"|"year"|"sash"
 
-    logo_max_w_ratio:  float = field(default_factory=lambda: _cfg.LOGO_MAX_W_RATIO)
-    logo_max_h_ratio:  float = field(default_factory=lambda: _cfg.LOGO_MAX_H_RATIO)
-    logo_bottom_ratio: float = field(default_factory=lambda: _cfg.LOGO_BOTTOM_RATIO)
+    logo_max_w_ratio:   float = field(default_factory=lambda: _cfg.LOGO_MAX_W_RATIO)
+    logo_max_h_ratio:   float = field(default_factory=lambda: _cfg.LOGO_MAX_H_RATIO)
+    logo_bottom_ratio:  float = field(default_factory=lambda: _cfg.LOGO_BOTTOM_RATIO)
+    logo_bottom_anchor: bool  = False
 
     badge_height:            int   = field(default_factory=lambda: _cfg.BADGE_HEIGHT)
     badge_gap:               int   = field(default_factory=lambda: _cfg.BADGE_GAP)
@@ -909,9 +910,10 @@ def build_request_config(params: dict) -> RequestConfig:
     if _bap in ("rating_year", "rating", "year", "sash"):
         cfg.bar_append = _bap
 
-    cfg.logo_max_w_ratio  = _f("logo_max_w_ratio",  cfg.logo_max_w_ratio,  0.0, 1.5)
-    cfg.logo_max_h_ratio  = _f("logo_max_h_ratio",  cfg.logo_max_h_ratio,  0.0, 1.0)
-    cfg.logo_bottom_ratio = _f("logo_bottom_ratio", cfg.logo_bottom_ratio, 0.0, 1.0)
+    cfg.logo_max_w_ratio   = _f("logo_max_w_ratio",   cfg.logo_max_w_ratio,  0.0, 1.5)
+    cfg.logo_max_h_ratio   = _f("logo_max_h_ratio",   cfg.logo_max_h_ratio,  0.0, 1.0)
+    cfg.logo_bottom_ratio  = _f("logo_bottom_ratio",  cfg.logo_bottom_ratio, 0.0, 1.0)
+    cfg.logo_bottom_anchor = _b("logo_bottom_anchor", cfg.logo_bottom_anchor)
 
     # badge_height in pixels — generous enough to cover any reasonable customisation
     # but well below the size that would cost real memory on resize.
@@ -1362,6 +1364,7 @@ def build_poster(
             max_w_ratio=cfg.logo_max_w_ratio,
             max_h_ratio=cfg.logo_max_h_ratio,
             bottom_ratio=cfg.logo_bottom_ratio,
+            bottom_anchor=cfg.logo_bottom_anchor,
         )
     elif fallback_title:
         # ── Genre-aware font selection ────────────────────────────────────────

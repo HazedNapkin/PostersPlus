@@ -1173,6 +1173,7 @@ def composite_logo(
     max_w_ratio: float = LOGO_MAX_W_RATIO,
     max_h_ratio: float = LOGO_MAX_H_RATIO,
     bottom_ratio: float = LOGO_BOTTOM_RATIO,
+    bottom_anchor: bool = False,
 ) -> None:
     width, height = image.size
 
@@ -1251,15 +1252,24 @@ def composite_logo(
     logo = logo.resize((max(1, int(new_w)), max(1, int(new_h))), Image.LANCZOS)
 
     # ── Position ─────────────────────────────────────────────────────────────
-    # Centre every logo on a fixed vertical line rather than sharing a common
-    # bottom edge.  Bottom-anchoring made short single-line logos sit low and
-    # feel like they lacked presence next to tall multi-line logos.  The centre
-    # line is the midline of the tallest possible logo (the height cap plus its
-    # aspect flex), so the tallest logos still bottom out at the intended
-    # baseline while shorter logos float up to share that same centre.
-    logo_x   = round((width - logo.width) / 2)
-    centre_y = logo_centre_y(height, bottom_ratio)
-    logo_y   = int(centre_y - logo.height / 2)
+    # Two anchor modes:
+    #
+    # Centre (default): every logo shares a fixed vertical midline — the
+    # midpoint of the tallest possible logo zone.  Tall logos bottom out at the
+    # intended baseline; shorter logos float up to share the same centre.
+    # Visually consistent for centred designs where logo size varies a lot.
+    #
+    # Bottom anchor (legacy): every logo's bottom edge is pinned to the same
+    # baseline regardless of height, so logos only ever expand upward.  Useful
+    # when the logo is placed low and a centred expansion would spill the top
+    # edge into an overlay sitting above it.
+    logo_x = round((width - logo.width) / 2)
+    if bottom_anchor:
+        baseline = height - int(height * bottom_ratio)
+        logo_y   = baseline - logo.height
+    else:
+        centre_y = logo_centre_y(height, bottom_ratio)
+        logo_y   = int(centre_y - logo.height / 2)
 
     # ── Background-aware legibility adjustments ──────────────────────────────
     # Sample the poster region the logo will cover (pure poster, sampled before
