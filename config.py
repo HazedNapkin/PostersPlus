@@ -7,7 +7,6 @@
 #     See the docstring at the top of discovery.py for the full format,
 #     or the project README for a ready-made sample.
 import os
-import json
 
 # Storage
 
@@ -21,8 +20,22 @@ TMDB_LOGO_CACHE_DIR   = "/app/cache/tmdb_logos" # base logos from TMDB
 ACCESS_KEY            = os.environ.get("ACCESS_KEY")
 AIOSTREAMS_URL        = os.environ.get("AIOSTREAMS_URL", "")
 AIOSTREAMS_AUTH       = os.environ.get("AIOSTREAMS_AUTH", "")
+
+# Quality source selection.
+# QUALITY_SOURCE: "aiostreams" (default) or "scraper".
+# SCRAPER_URL:    Stremio addon manifest/base URL — only used when QUALITY_SOURCE=scraper.
+#                 Example: https://torrentio.stremio.ru/{config}/manifest.json
+# Setting QUALITY_SOURCE=scraper while AIOSTREAMS_URL/AUTH are also set is a
+# misconfiguration — the scraper path is ignored and a warning is logged at startup.
+QUALITY_SOURCE        = os.environ.get("QUALITY_SOURCE", "aiostreams").lower().strip()
+SCRAPER_URL           = os.environ.get("SCRAPER_URL", "").strip()
 SERVER_TMDB_KEY       = os.environ.get("TMDB_API_KEY", "").strip()
 SERVER_MDBLIST_KEY    = os.environ.get("MDBLIST_API_KEY", "").strip()
+SERVER_MDBLIST_KEY_2  = os.environ.get("MDBLIST_API_KEY_2", "").strip()
+
+# Ordered list of all configured server-side MDBList keys (primary first).
+# Used by the key-rotation logic in main.py to fall back when a key is exhausted.
+SERVER_MDBLIST_KEYS: list[str] = [k for k in [SERVER_MDBLIST_KEY, SERVER_MDBLIST_KEY_2] if k]
 
 # Workers
 # CDN cache TTL (seconds). When > 0, poster responses include a
@@ -59,8 +72,8 @@ SCORE_GLOW_ALPHA     = 40   # alpha of the glow applied
 
 # Logo Defaults
 
-LOGO_MAX_W_RATIO  = 0.84   # max width of logo
-LOGO_MAX_H_RATIO  = 0.17   # max height of logo
+LOGO_MAX_W_RATIO  = 0.75   # target/max width of logo — the span every logo normalises to
+LOGO_MAX_H_RATIO  = 0.25   # max height of logo (paired with LOGO_ABS_MAX_H px cap)
 LOGO_BOTTOM_RATIO = 0.28   # distance of logo from the bottom
 DEFAULT_LOGO_LANGUAGE = os.environ.get("DEFAULT_LOGO_LANGUAGE", "en")
 
@@ -89,6 +102,11 @@ QUALITY_OLD_CACHE_DURATION   = int(os.environ.get("QUALITY_OLD_CACHE_DURATION", 
 # titles scroll into view simultaneously so AIOStreams isn't overwhelmed.
 QUALITY_BG_CONCURRENCY       = int(os.environ.get("QUALITY_BG_CONCURRENCY", "5"))
 
+# Seconds to wait for a quality fetch when wait_for_quality=true is requested.
+# Should be generous enough to allow for slow scrapers (Torrentio, Comet) but
+# not so long it stalls a poster-warm run indefinitely.
+QUALITY_WAIT_TIMEOUT         = float(os.environ.get("QUALITY_WAIT_TIMEOUT", "30"))
+
 # Max concurrent outbound MDBlist API calls.  MDBlist queues or drops requests
 # when hit with too many simultaneous connections from the same key, causing
 # ReadTimeouts even when the service is healthy.  3 is comfortably within their
@@ -108,6 +126,10 @@ COMPOSITE_CACHE_TTL        = int(os.environ.get("COMPOSITE_CACHE_TTL", "604800")
 # Maximum number of composite cache entries. When exceeded the oldest entries are
 # evicted on each insert to keep the table at this size. 0 = no cap (rely on TTL alone).
 COMPOSITE_MAX_ENTRIES      = int(os.environ.get("COMPOSITE_MAX_ENTRIES", "0"))
+# Set to any truthy value (1, true, yes) to skip composite cache reads and writes
+# entirely. Every request re-renders from scratch. Useful during development when
+# iterating on rendering changes and you don't want stale renders served.
+DISABLE_COMPOSITE_CACHE    = os.environ.get("DISABLE_COMPOSITE_CACHE", "").strip().lower() in ("1", "true", "yes")
 
 def _parse_bool_env(key: str, default: bool = False) -> bool:
     val = os.environ.get(key, "").strip().lower()
@@ -115,9 +137,67 @@ def _parse_bool_env(key: str, default: bool = False) -> bool:
         return default
     return val not in ("0", "false", "no")
 
+# Logo legibility: when a flat logo's average colour is too close to the poster
+# background, recolour it (white / black / complementary accent) so it reads.
+# Experimental and off by default while it's being tested — it can mis-handle
+# some logos.  Set LOGO_CONTRAST_RESCUE=true to enable.
+LOGO_CONTRAST_RESCUE       = _parse_bool_env("LOGO_CONTRAST_RESCUE", False)
+# Emit per-logo sizing telemetry (source dims, aspect, final dims) at INFO level.
+# Off by default — handy when tuning the logo size caps.
+DEBUG_LOGO_SIZING          = _parse_bool_env("DEBUG_LOGO_SIZING", False)
+
+# Prefer textless posters with enough votes to be meaningful, but never allow
+# vote count alone to select art rated far below the best available option.
+TMDB_POSTER_MIN_VOTES      = max(0, int(os.environ.get("TMDB_POSTER_MIN_VOTES", "3")))
+TMDB_POSTER_MAX_SCORE_DROP = max(
+    0.0, float(os.environ.get("TMDB_POSTER_MAX_SCORE_DROP", "1.0"))
+)
+
+# Logo fill-stretch: a slim logo whose clamped size leaves it looking lost may be
+# enlarged toward its size cap by up to this factor (one axis only) so it has more
+# presence.  1.0 = no enlargement.  Off by default — set LOGO_STRETCH_DISABLED=false
+# to enable it; LOGO_STRETCH_FACTOR then sets how aggressive the enlargement is.
+LOGO_STRETCH_DISABLED      = _parse_bool_env("LOGO_STRETCH_DISABLED", True)
+LOGO_STRETCH_FACTOR        = max(1.0, float(os.environ.get("LOGO_STRETCH_FACTOR", "1.2")))
+
+# Detect burned-in title text on posters TMDB mislabelled as "textless".  When
+# detected, PostersPlus skips compositing its own logo/title so you don't get a
+# double title.  Uses the PP-OCRv5 Mobile detector (one-time ~4.6MB model
+# download). Foreground scans are vote-gated to protect burst latency; skipped
+# assets are scanned later by the idle background queue.
+#
+# On by default; set TEXTLESS_TEXT_DETECTION=false to opt out.
+#
+# 3000 covers most titles while excluding the high-vote bulk of large libraries.
+# Raise it for maximum foreground accuracy or lower it for faster stale-cache bursts.
+# Changing it invalidates cached composites.
+TEXTLESS_TEXT_DETECTION    = _parse_bool_env("TEXTLESS_TEXT_DETECTION", True)
+TEXTLESS_DETECTION_MAX_VOTES = max(0, int(os.environ.get("TEXTLESS_DETECTION_MAX_VOTES", "3000")))
+# Keep a small, deduplicated list of TMDB posters rejected by OCR so operators
+# can review and correct upstream metadata manually.
+TEXTLESS_FAKE_REPORT       = _parse_bool_env("TEXTLESS_FAKE_REPORT", True)
+TEXTLESS_FAKE_REPORT_PATH  = os.environ.get(
+    "TEXTLESS_FAKE_REPORT_PATH",
+    "/app/cache/fake_textless_posters.txt",
+).strip() or "/app/cache/fake_textless_posters.txt"
+# Minimum PP-OCR box confidence. Higher is stricter (fewer false positives,
+# lower recall). Wide title-shaped regions use the PPOCR_WIDE_* fallback.
+PPOCR_BOX_THRESHOLD        = max(0.0, min(
+    1.0, float(os.environ.get("PPOCR_BOX_THRESHOLD", "0.70"))
+))
+# Independent PP-OCR sessions used for parallel cold-cache scans. Sessions run in
+# a dedicated executor and split available ONNX threads between them. Each extra
+# session costs roughly 25-40 MB with the bundled mobile model. Capped at four and at the detected CPU count.
+# Default 2 suits typical 3+ core hosts; use 1 on smaller hosts. Across worker
+# processes, keep WORKERS x this value at or below available CPU cores.
+TEXTLESS_DETECTION_CONCURRENCY = max(1, min(
+    4, os.cpu_count() or 1,
+    int(os.environ.get("TEXTLESS_DETECTION_CONCURRENCY", "2")),
+))
+
 # Rating Score Weight Defaults
 
-#  note to AI: do NOT remove the extras in this section that are set to 0. They are config options.
+# Keep zero-weight providers here: they remain available as user-configurable options.
 
 MOVIE_WEIGHTS = {   # set weight of movie ranking providers, must sum to 1
     "letterboxd":     0.8,
@@ -142,6 +222,8 @@ TV_WEIGHTS = {   # set weight of TV ranking providers, must sum to 1
     "tmdb":           0,
     "myanimelist":    0,
 }
+
+RATING_MIN_VOTES = max(0, int(os.environ.get("RATING_MIN_VOTES", "10")))
 
 # Map badge file names to strings (no need to touch)
 
@@ -225,4 +307,5 @@ SASH_PRIORITY: list[str] = [
     "metacritic",
     "true_story",
     "structural",
+    "release_status",
 ]

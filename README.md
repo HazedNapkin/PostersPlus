@@ -31,13 +31,15 @@ Non self hosters can [visit the public instance.](https://postersplus.elfhosted.
 
 - **Award sashes** - Oscar Best Picture, Golden Globe (film and TV, five major categories), Emmy Outstanding Series (Drama, Comedy, Limited), festival winners, notable studios/directors/cast, trending titles, newly streaming (release-date recency plus r/movieleaks tracking), cult classics, true stories, and Metacritic Must-See. Priority order is fully configurable and any sash can be disabled. Optional Badge Style render with adjustable X/Y position.
 
-- **Quality badges** - five display modes: Quality Notch (vertical tier-coloured accent pill), Quality + Age Rating (age numeral tinted by 4K/Remux/HDR tier), Badge Row (PNG icons for 4K, 1080p, Remux, Web, DV, HDR10+, HDR10), Age Rating Only, or hidden. Sourced from an AIOStreams integration and fetched in the background on first request.
+- **Quality badges** - six display modes: Quality Notch (vertical tier-coloured accent pill), Quality + Age Rating (age numeral tinted by 4K/Remux/HDR tier), Badge Row (PNG icons for 4K, 1080p, Remux, Web, DV, HDR10+, HDR10), Combined Text Badge (compact "4K REMUX · DV" label), Age Rating Only, or hidden. A minimum quality threshold (`badge_min_score`) can suppress the badge when stream quality falls below a configurable bar. Sourced from either an AIOStreams integration or any Stremio stream addon (Torrentio, Comet, etc.) and fetched in the background on first request.
 
-- **Title logos** - TMDB logos composited over the poster with configurable size and position. Language preference falls back through requested → English → language-neutral. Optional Textless toggle skips the logo entirely for clients that render the title separately.
+- **Title logos** - TMDB logos composited over the poster with configurable size and position. Language preference supports requested → original, original → requested, requested → text, and native-if-original → English → original modes before the language-neutral and Metahub fallbacks. This preserves native-language branding for native content while allowing English branding for foreign titles. Optional Textless toggle skips the logo entirely for clients that render the title separately.
 
-- **Art fallback chain** - when a title has no textless poster on TMDB the landscape backdrop is centre-cropped to portrait; when no poster art exists at all, a genre-tinted gradient canvas is generated with the title text. 
+- **Art fallback chain** - when a title has no textless poster on TMDB the landscape backdrop is cropped to portrait using face and visual-saliency detection; when no poster art exists at all, an atmospheric genre background (a starfield for Sci-Fi, blood drips for Horror, a dusty sunset for Western, …) is used with the title text and a genre mascot. Backgrounds live in style folders under `static/genre_bg/` — regenerate the minimal set with `python genre_backgrounds.py`, or replace `static/genre_bg/<style>/<Genre>.png` with your own 500×750 PNG. Preview the full set in the configurator (Logo section → **Preview fallback art**) or at `/debug/fallback-gallery`.
 
-- **Web configurator** - browser-based UI to tune every parameter and generate a ready-to-paste URL template. Per-section info modals, URL import (paste any /poster URL to hydrate every control), persistent settings via localStorage, and a mobile-optimised expanded preview.
+- **Web configurator** - browser-based UI to tune every parameter and generate a ready-to-paste URL template. Tabbed layout covering Core, Rating, Logo, Sash, Quality, and Weights. Per-section info modals, URL import (paste any `/poster` URL to hydrate every control), persistent settings, a preset gallery with ready-made styles, light/dark mode toggle, and a mobile-optimised expanded preview.
+
+- **Plex and Jellyfin sync** - companion scripts (`plex_sync.py` / `jellyfin_sync.py`) that read your media library, derive quality tokens from each title's actual file metadata, and push PostersPlus-generated posters back as library covers. Includes an `--inspect` mode for auditing token derivation without writing anything.
 
 - **Composite poster cache** - fully rendered posters are cached by config hash and served directly on repeat requests, with configurable TTL and max-entry cap.
 
@@ -51,18 +53,18 @@ Non self hosters can [visit the public instance.](https://postersplus.elfhosted.
 - A free [TMDB API key](https://www.themoviedb.org/settings/api) for posters, logos and metadata.
 - A free [MDBList API key](https://mdblist.com/) for ratings and keywords.
 - An [AIOMetadata](https://github.com/cedya77/aiometadata) config. Self hosted or public instance are both fine.
-- An [AIOStreams](https://github.com/Viren070/AIOStreams) self hosted instance, optionally used for quality badges.
+- A quality source for quality badges — choose **one** of:
+  - An [AIOStreams](https://github.com/Viren070/AIOStreams) self hosted instance (set `AIOSTREAMS_URL` + `AIOSTREAMS_AUTH`), **or**
+  - Any standalone Stremio stream addon such as [Torrentio](https://torrentio.strem.fun) or [Comet](https://comet.elfhosted.com) (set `QUALITY_SOURCE=scraper` + `SCRAPER_URL` to the addon's base URL, e.g. `https://torrentio.strem.fun/`). Note: Stremthru Torz requires authentication and won't work standalone — use it via AIOStreams instead. Quality badges are optional — both sources can be left unconfigured.
 
 ---
 
 ## Quick Start
 
-> **HTTPS is required for production use.**
-> Stremio addons like AIOMetadata are served over HTTPS. Browsers enforce mixed content blocking, meaning any poster URLs referenced by an HTTPS addon must also be HTTPS - HTTP image URLs will be silently blocked, including in Stremio's web client. You will need a reverse proxy with a valid SSL certificate in front of PostersPlus before using it with Stremio.
->
-> Good choices are [Traefik](https://traefik.io/) which has great support from Viren's templates or [Caddy](https://caddyserver.com/) which is very simple. 
->
-> `http://localhost:8000` is only suitable for accessing the configurator locally during setup.
+> **HTTPS or AIOMetadata's proxy option is required for production use.**
+> If going HTTPS route ensure the access_key env is set to protect your instance
+> Good reverse proxy choices are [Traefik](https://traefik.io/) which has great support from Viren's templates or [Caddy](https://caddyserver.com/) which is very simple.
+> If going for AIOMetadata's proxy you don't expose PostersPlus to the internet. Use http://postersplus:8000 in the URL instead of a domain to have them communicate via Docker's internal network. The proxy route is slightly slower but maximizes security.
 
 ### Using the pre-built image (recommended)
 
@@ -82,8 +84,10 @@ services:
     environment:
       - TMDB_API_KEY=your_tmdb_key
       - MDBLIST_API_KEY=your_mdblist_key
-      - WORKERS=2
-      - ACCESS_KEY=youraccesskey 
+      - WORKERS=1
+      - TEXTLESS_DETECTION_CONCURRENCY=2
+      - TEXTLESS_DETECTION_MAX_VOTES=3000
+      - ACCESS_KEY=youraccesskey # Highly suggested if exposing to the internet.*
       # See .env.example for all available options
 ```
 
@@ -93,7 +97,7 @@ Then start it:
 docker compose up -d
 ```
 
-Once your reverse proxy is set up, open the configurator at your public HTTPS domain to tune your settings and generate a URL template for AIOMetadata. The URL it generates is based on the domain you access it from, so always open it via your real domain — not localhost.
+Once your reverse proxy is set up, open the configurator at your public HTTPS domain to tune your settings and generate a URL template for AIOMetadata. The URL it generates is based on the domain you access it from.
 
 ### Building from source
 
@@ -114,17 +118,108 @@ All configuration is done via environment variables. Copy `.env.example` to `.en
 |---|---|---|
 | `TMDB_API_KEY` | - | TMDB API key for poster/metadata fetching |
 | `MDBLIST_API_KEY` | - | MDBList API key for ratings and award data |
+| `MDBLIST_API_KEY_2` | - | Optional second MDBList key. Retried in the same request when the primary key is rate-limited |
+| `MDBLIST_CONCURRENCY` | `3` | Maximum concurrent outbound MDBList requests per worker |
 | `ACCESS_KEY` | - | Shared secret for request authentication. Leave blank to allow open access |
-| `WORKERS` | `2` | Number of Uvicorn worker processes |
-| `AIOSTREAMS_URL` | - | Base URL of your AIOStreams instance |
+| `WORKERS` | `1` | Uvicorn worker processes. One worker avoids duplicate uncached renders, scans, and API work across processes |
+| `AIOSTREAMS_URL` | - | Base URL of your AIOStreams instance (used when `QUALITY_SOURCE=aiostreams`) |
 | `AIOSTREAMS_AUTH` | - | AIOStreams credentials as Base64 `user:password` |
+| `QUALITY_SOURCE` | `aiostreams` | Quality data source: `aiostreams` or `scraper`. Set to `scraper` to use any Stremio stream addon instead of AIOStreams |
+| `SCRAPER_URL` | - | Base URL of a Stremio stream addon (e.g. `https://torrentio.strem.fun/`). Only used when `QUALITY_SOURCE=scraper`. Standalone addons like Torrentio and Comet work best; Stremthru Torz requires auth and should be used via AIOStreams instead |
 | `QUALITY_OLD_CACHE_DURATION` | `90` | Days to cache quality data for titles older than 2 weeks |
 | `QUALITY_BG_CONCURRENCY` | `5` | Max concurrent background quality fetches |
+| `QUALITY_WAIT_TIMEOUT` | `30` | Maximum seconds to wait when a request enables synchronous quality fetching |
 | `CDN_CACHE_TTL` | `0` | Adds `Cache-Control: public, max-age=N` to poster responses. Set to `0` to disable |
 | `JPEG_QUALITY` | `85` | JPEG output quality for composited posters (70–95). Raise to `92` for higher fidelity; lower to reduce file size |
 | `COMPOSITE_CACHE_TTL` | `604800` | Seconds to keep a rendered poster before re-rendering (default 7 days) |
 | `COMPOSITE_MAX_ENTRIES` | `0` | Cap on composite cache entries. `0` = no cap |
+| `DISABLE_COMPOSITE_CACHE` | - | Set to `true` to skip composite cache reads and writes entirely. Every request re-renders from scratch. For development only |
+| `LOGO_CONTRAST_RESCUE` | `false` | Recolour a flat logo (white/black/accent) when it blends into the poster background. Multi-colour/outline logos are never touched. Experimental — off by default while tested; set `true` to enable |
+| `LOGO_STRETCH_DISABLED` | `true` | Fill-stretch is off by default — every logo is kept at its true clamped size. Set `false` to enable the stretch below |
+| `LOGO_STRETCH_FACTOR` | `1.2` | When stretching is enabled, a slim logo is enlarged toward its size cap by up to this factor (one axis only). `1.0` = no enlargement |
+| `DEBUG_LOGO_SIZING` | `false` | Log per-logo sizing telemetry at INFO level. For tuning only |
+| `TMDB_POSTER_MIN_VOTES` | `3` | Prefer textless posters with at least this many votes when they remain competitively rated |
+| `TMDB_POSTER_MAX_SCORE_DROP` | `1.0` | Maximum rating downgrade allowed when preferring a textless poster that meets the vote minimum |
+| `RATING_MIN_VOTES` | `10` | Ignore provider ratings below this vote count. Roger Ebert is exempt |
+| `TEXTLESS_TEXT_DETECTION` | `true` | Detect burned-in title text on posters TMDB mislabelled as "textless" and skip our own logo so the title isn't doubled. Set `false` to opt out |
+| `TEXTLESS_DETECTION_MAX_VOTES` | `3000` | Foreground OCR vote limit. Higher-vote assets render without waiting, skip composite caching, and enter the idle background scan queue. Raise for foreground accuracy; lower for faster stale-cache bursts |
+| `TEXTLESS_FAKE_REPORT` | `true` | Record OCR-rejected TMDB posters in a deduplicated human-review report |
+| `TEXTLESS_FAKE_REPORT_PATH` | `/app/cache/fake_textless_posters.txt` | Report location. The default persists in the existing cache volume |
+| `PPOCR_BOX_THRESHOLD` | `0.70` | Minimum PP-OCR text-box confidence. Higher is stricter; changing it invalidates cached detections and composites |
+| `PPOCR_WIDE_BOX_THRESHOLD` | `0.30` | Lower confidence accepted for wide, title-shaped text regions |
+| `PPOCR_WIDE_MIN_ASPECT` | `3.0` | Minimum width-to-height ratio for the lower-confidence title fallback |
+| `PPOCR_WIDE_MIN_AREA` | `0.01` | Minimum fraction of image area occupied by a lower-confidence title box |
+| `PPOCR_WIDE_MIN_Y` | `0.55` | Minimum vertical centre for the poster-only geometric fallback when OCR cannot read a centred title block |
+| `TEXTLESS_DETECTION_CONCURRENCY` | `2` | Independent PP-OCR sessions in a dedicated executor. Use `1` on small hosts; each extra session uses roughly 25-40 MB; capped at 4 and CPU count |
+| `TEXTLESS_SCAN_TOP` | `0.08` | Fraction of poster height skipped from the top before counting text (covers top/middle/bottom titles; ignores top-edge logos) |
+| `BAKE_PPOCR_MODEL` | `true` | Build-time only. Bake the ~4.6MB PP-OCRv5 Mobile model into the image |
 | `DEFAULT_LOGO_LANGUAGE` | `en` | ISO 639-1 language code for title logos |
+| `DISCOVERY_OVERRIDES_PATH` | `/app/cache/discovery_overrides.json` | Optional custom path for discovery list overrides |
+
+> CPU guidance: keep `WORKERS × TEXTLESS_DETECTION_CONCURRENCY` at or below the CPU cores available to the container. Larger values can oversubscribe CPU, duplicate uncached work across workers, and reduce sustained throughput.
+
+> The ~4.6 MB PP-OCRv5 Mobile model is baked into the image by default. Set `BAKE_PPOCR_MODEL=false` to download it into the cache volume on first use.
+
+When OCR rejects a TMDB poster marked as textless, Posters Plus records it in
+`/app/cache/fake_textless_posters.txt`. Each image appears once, with direct
+TMDB and image links for manual review. The report is advisory only and never
+edits TMDB automatically; delete it at any time to start a fresh review list.
+
+---
+
+## Plex and Jellyfin Sync
+
+`plex_sync.py` and `jellyfin_sync.py` are companion scripts that read your media library, derive quality tokens from each title's own media-file metadata, and push PostersPlus-generated posters back as library covers. This keeps your Plex or Jellyfin art consistent with the same quality-badge logic used by the Stremio-facing poster endpoint — without relying on AIOStreams or a scraper addon for quality data.
+
+### Requirements
+
+```bash
+# Plex
+pip install -r requirements-plex.txt
+
+# Jellyfin  (httpx only — likely already installed)
+pip install -r requirements-jellyfin.txt
+```
+
+### Configuration
+
+Set the following environment variables before running, or edit the `_DEFAULT` constants near the top of each script:
+
+**Plex**
+
+| Variable | Description |
+|---|---|
+| `PLEX_BASE_URL` | Base URL of your Plex server, e.g. `http://192.168.1.50:32400` |
+| `PLEX_TOKEN` | Your Plex auth token (sign in at plex.tv → Account → XML → `X-Plex-Token`) |
+| `POSTERSPLUS_URL` | Full PostersPlus URL template including your preferred query parameters |
+
+**Jellyfin**
+
+| Variable | Description |
+|---|---|
+| `JELLYFIN_BASE_URL` | Base URL of your Jellyfin server, e.g. `http://192.168.1.50:8096` |
+| `JELLYFIN_API_KEY` | API key from Jellyfin Dashboard → Advanced → API Keys |
+| `POSTERSPLUS_URL` | Full PostersPlus URL template including your preferred query parameters |
+
+The `POSTERSPLUS_URL` value should be the full URL template you'd normally give AIOMetadata — copy it straight from the configurator's output box, replacing the `{tmdb_id}`, `{imdb_id}`, and `{type}` placeholders. Both scripts fill these in automatically from library metadata.
+
+### Usage
+
+Run with `--inspect` first. It logs every library title with the quality tokens that would be derived from its media streams, without writing any posters:
+
+```bash
+python plex_sync.py --inspect
+python jellyfin_sync.py --inspect
+```
+
+Once the output looks correct, run without the flag to fetch and push posters:
+
+```bash
+python plex_sync.py
+python jellyfin_sync.py
+```
+
+Both scripts process Movies and TV Shows. TV quality tokens are derived from a representative episode selected by watch progress, air date, and episode count. Titles where no quality can be determined — unmatched files, virtual library entries from stream plugins — produce no quality badge and are skipped without error.
 
 ---
 
@@ -137,6 +232,15 @@ https://yourdomain.com/poster?tmdb_id={tmdb_id}&imdb_id={imdb_id}&type={type}
 ```
 
 Append `&debug=1` to any poster URL to receive a JSON response with all computed metadata — score, genre, sash label, quality tokens, award data, matched cast/directors — instead of rendering the image. Useful for diagnosing unexpected sashes or missing ratings.
+
+Append `&nocache=1` (requires `ACCESS_KEY` to be set and valid) to force a fresh render of a single title, bypassing the composite cache read and re-caching the result. Lets you refresh one poster without flushing the whole cache.
+
+### Operator endpoints
+
+These are gated behind `access_key` when one is configured:
+
+- `GET /stats` — cache row counts / sizes plus live runtime state (in-flight renders, background fetches, MDBList key cooldowns). Handy for spotting issues before they surface.
+- `GET /debug/fallback-gallery` — a gallery of every genre's no-art fallback card (mascot + genre font), also reachable via the **Preview fallback art** button in the configurator's Logo section.
 
 ---
 
@@ -162,7 +266,7 @@ Sashes display contextual metadata about a title - awards, festival recognition,
 | True Story | Based on a true story |
 | Short / Mini / Binge | Short film, miniseries, or bingeable series |
 
-Sash priority order is configurable in the web configurator via drag-and-drop. Individual sashes can be disabled entirely with the ✕ button - disabled sashes are serialised as `-slot_name` in the URL (e.g. `&sash_priority=wins,cast,-trending`).
+Sash priority order is configurable in the web configurator via drag-and-drop. The Primary Client selector sets recommended edge insets: Stremio TV, Nuvio, Plex, and Jellyfin use `0` for both bar and notch; Stremio Desktop/Web use `0.007` for the bar and `0.004` for the notch. Both sliders remain manually adjustable, and loading a preset preserves them. Existing URLs can override the notch with `sash_badge_inset` and the bar with `bar_bottom_inset`. Individual sashes can be disabled entirely with the ✕ button - disabled sashes are serialised as `-slot_name` in the URL (e.g. `&sash_priority=wins,cast,-trending`).
 
 ### Customising Directors, Studios, and Cast
 
@@ -178,9 +282,19 @@ Scores from multiple providers are normalised to a 0–100 scale and combined us
 
 ---
 
+## Poster Translations
+
+Text rendered onto posters (genre labels and info-sash labels) can be localised. The language follows the request's **poster/logo language** setting.
+
+To add a language, copy `languages/en.json` to `languages/<code>.json` (e.g. `fr.json`) and translate the **values** only — the keys are the canonical English strings and must stay unchanged. Translation is display-only with per-key English fallback: any missing key, malformed file, or language with no JSON falls back to English, so partial translations are safe.
+
+> Note: contributed languages must be **Latin-script**. The bundled font has no CJK/Arabic glyphs and no right-to-left shaping, so those scripts will not render correctly.
+
+---
+
 ## Caching
 
-PostersPlus uses a SQLite database (WAL mode) for all caching. The cache volume is mounted at `/app/cache` and persists across container restarts.
+PostersPlus uses SQLite (WAL mode) for metadata and rendered-poster caching, plus filesystem caches for TMDB images. The cache volume is mounted at `/app/cache` and persists across container restarts. Expired database rows and image files are pruned automatically; render-affecting server settings and bundled assets are included in the composite cache signature.
 
 | Cache | Default TTL |
 |---|---|

@@ -3,6 +3,11 @@ services:
     build:
       context: .
       dockerfile: ./dockerfile
+      args:
+        # Bake the PP-OCRv5 Mobile detector into the image (default). Set
+        # BAKE_PPOCR_MODEL=false in your .env for a lean image that downloads the
+        # model once at runtime instead.
+        BAKE_PPOCR_MODEL: "${BAKE_PPOCR_MODEL:-true}"
     image: PostersPlus
     ports:
       - "8000:8000"
@@ -15,7 +20,9 @@ services:
       - TMDB_API_KEY=${TMDB_API_KEY:-}
       - MDBLIST_API_KEY=${MDBLIST_API_KEY:-}
       - ACCESS_KEY=${ACCESS_KEY:-}
-      - WORKERS=${WORKERS:-2}
+      - WORKERS=${WORKERS:-1}
+      - TEXTLESS_DETECTION_CONCURRENCY=${TEXTLESS_DETECTION_CONCURRENCY:-2}
+      - TEXTLESS_DETECTION_MAX_VOTES=${TEXTLESS_DETECTION_MAX_VOTES:-3000}
       - AIOSTREAMS_URL=${AIOSTREAMS_URL:-}
       - AIOSTREAMS_AUTH=${AIOSTREAMS_AUTH:-}
       - QUALITY_OLD_CACHE_DURATION=${QUALITY_OLD_CACHE_DURATION:-90}
