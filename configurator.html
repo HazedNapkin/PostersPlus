@@ -205,6 +205,20 @@
     color: var(--gold);
     font-weight: bold;
   }
+  .whatsnew-body {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    max-height: 50vh;
+    overflow-y: auto;
+  }
+  .whatsnew-section-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--gold);
+  }
 
   .status-bar {
     display: flex;
@@ -3976,7 +3990,7 @@ function applyImport() {
 // Bump WHATS_NEW_VERSION whenever the modal content changes — existing users
 // will see the unread dot on the chip until they open and acknowledge it.
 // The chip itself stays visible so users can re-open the list whenever.
-const WHATS_NEW_VERSION = '1.0.0';
+const WHATS_NEW_VERSION = '1.2-dev';
 
 function openWhatsNew() {
   document.getElementById('whatsnew-modal').classList.add('open');
@@ -4372,15 +4386,31 @@ initCustomMobileSliders();
 
 <div class="import-modal" id="whatsnew-modal" onclick="if(event.target===this)closeWhatsNew()">
   <div class="import-modal-box">
-    <div class="import-modal-title">What's new in v1.0.0</div>
-    <ul class="whatsnew-list">
-      <li>Info Sash badge style — rounded rectangle alternative to the diagonal sash, with adjustable X/Y position</li>
-      <li>Golden Globe wins and nominations now have their own dedicated sash slots</li>
-      <li>Backdrop fallback — TMDB landscape backdrop is cropped to portrait when no textless poster (or no poster at all) is available</li>
-      <li>Genre-tinted fallback canvas — atmospheric colour matched to genre when no art exists</li>
-      <li>Smoother edges — Cairo antialiasing on award badge corners and pill renders</li>
-      <li>MDBlist rate-limit cooldown — automatic global pause on 429 to prevent cascade failures</li>
-    </ul>
+    <div class="import-modal-title">What's new</div>
+    <div class="whatsnew-body">
+      <div>
+        <div class="whatsnew-section-title">v1.2-dev</div>
+        <ul class="whatsnew-list">
+          <li>Award sash labels are now clearer: "Globe Winner" / "Globe Nominee" replace the ambiguous "Golden Globe" label, matching the Oscar/Emmy naming pattern</li>
+          <li>New toggle to show a star icon instead of win/nominee text on award sashes</li>
+          <li>Background cache pre-warming: proactively refreshes posters, logos, and metadata for trending/popular titles ahead of requests, with configurable TMDB/MDBList budgets and an optional (off by default) quality-badge pre-fetch for self-hosted instances</li>
+        </ul>
+      </div>
+      <div>
+        <div class="whatsnew-section-title">v1.1.0</div>
+        <ul class="whatsnew-list">
+          <li>New Frosted Bar poster layout, with frosted, black, silver, gold, and rating-focused styles</li>
+          <li>Rebuilt textless-poster detection around a new OCR model, with background scanning and load controls for live installations</li>
+          <li>Smarter TMDB poster selection: a tiny number of votes can no longer promote a badly rated poster over substantially better artwork</li>
+          <li>Expanded artwork selection: original-art controls, language-aware poster matching, improved logo fallback, and face- and saliency-aware cropping</li>
+          <li>New notch sash style, plus release-status sashes for BluRay, Streaming, Cinema, and Production</li>
+          <li>Backdrop fallback and genre-tinted fallback canvas when no poster or textless art is available</li>
+          <li>MDBList rate-limit cooldown: automatic global pause on 429 to prevent cascade failures</li>
+          <li>New preset gallery and a reorganized, mobile-friendly tabbed configurator</li>
+          <li>New poster-output translations for French, Portuguese, and Italian</li>
+        </ul>
+      </div>
+    </div>
     <div class="import-modal-btns">
       <button class="btn btn-primary" onclick="closeWhatsNew()">Got it</button>
     </div>
