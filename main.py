@@ -491,13 +491,14 @@ async def _background_quality_fetch(
 from age_badge import draw_quality_age_badge, draw_tier_bar, _score_points
 from awards import sample_frosted_notch_rgb, sample_frosted_sash_rgb
 from ratings import sample_frosted_bar_rgb
-from awards import FETCH_FAILED, _RateLimited, draw_award_badge, draw_award_sash, parse_mdblist_awards, _STAR_WIN_AWARDS
+from awards import FETCH_FAILED, _RateLimited, draw_award_badge, draw_award_sash, parse_mdblist_awards
 from i18n import load_languages, translate_genre, translate_sash
 from cache import (
     get_cached_quality,
     get_cached_rating,
     get_cached_final_poster,
     get_cached_tmdb_poster,
+    get_cached_tmdb_metadata,
     set_cached_final_poster,
     get_cached_text_detection,
     set_cached_text_detection,
@@ -689,7 +690,8 @@ class RequestConfig:
     logo_max_w_ratio:   float = field(default_factory=lambda: _cfg.LOGO_MAX_W_RATIO)
     logo_max_h_ratio:   float = field(default_factory=lambda: _cfg.LOGO_MAX_H_RATIO)
     logo_bottom_ratio:  float = field(default_factory=lambda: _cfg.LOGO_BOTTOM_RATIO)
-    logo_bottom_anchor: bool  = False
+    logo_bottom_anchor:  bool  = False
+    sash_winner_star:    bool  = False
 
     badge_height:            int   = field(default_factory=lambda: _cfg.BADGE_HEIGHT)
     badge_gap:               int   = field(default_factory=lambda: _cfg.BADGE_GAP)
@@ -917,6 +919,7 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.logo_max_h_ratio   = _f("logo_max_h_ratio",   cfg.logo_max_h_ratio,  0.0, 1.0)
     cfg.logo_bottom_ratio  = _f("logo_bottom_ratio",  cfg.logo_bottom_ratio, 0.0, 1.0)
     cfg.logo_bottom_anchor = _b("logo_bottom_anchor", cfg.logo_bottom_anchor)
+    cfg.sash_winner_star   = _b("sash_winner_star",   cfg.sash_winner_star)
 
     # badge_height in pixels — generous enough to cover any reasonable customisation
     # but well below the size that would cost real memory on resize.
@@ -1510,7 +1513,7 @@ def build_poster(
                 image, translate_sash(sash_result[0], cfg.logo_language), sash_type=sash_result[1],
                 size_ratio_w=cfg.sash_badge_size_w, size_ratio_h=cfg.sash_badge_size_h,
                 font_size_ratio=cfg.sash_badge_font_ratio, notch_inset=cfg.sash_badge_inset,
-                star=(sash_result[1] == "win" and sash_result[0] in _STAR_WIN_AWARDS),
+                star=(cfg.sash_winner_star and sash_result[1] == "win"),
             )
         else:
             _sash_rgb = sample_frosted_sash_rgb(image)
@@ -1531,9 +1534,9 @@ def build_poster(
             #
             # The separator immediately before the sash text becomes "★" when
             # the sash is a winner (sash_type == "win") rather than "·".  Same
-            # disambiguation trick used by Compact mode — Best Picture /
-            # Golden Globe / festival wins and nominees share their label
-            # text, so without this they'd be indistinguishable here.
+            # disambiguation trick used by Compact mode — festival wins and
+            # nominees can share their label text, so without this they'd be
+            # indistinguishable here.
             _append_year = cfg.accent_bar_append_mode in (0, 2)
             _append_sash = cfg.accent_bar_append_mode in (1, 2)
             _sash_text_for_label, _sash_type_for_label = (
@@ -1546,8 +1549,7 @@ def build_poster(
             _label_main = " · ".join(_pre_sash)
 
             if _sash_text_for_label:
-                _sash_sep = " ★ " if _sash_type_for_label == "win" else " · "
-                label = _label_main + _sash_sep + translate_sash(_sash_text_for_label, cfg.logo_language)
+                label = _label_main + " · " + translate_sash(_sash_text_for_label, cfg.logo_language)
             else:
                 label = _label_main
             rating_cy = height * cfg.accent_bar_y_offset
@@ -1719,10 +1721,7 @@ def build_poster(
     # --- Discovery sash / badge ---
     if cfg.sash_mode != "hidden" and sash_result is not None:
         label, sash_type = sash_result
-        # Decide the ★ winner marker on the CANONICAL English label, then render
-        # the translated label.  (The renderers' own English set-match would miss
-        # a translated label and drop the star.)
-        _is_star  = sash_type == "win" and label in _STAR_WIN_AWARDS
+        _is_star  = cfg.sash_winner_star and sash_type == "win"
         _label_tr = translate_sash(label, cfg.logo_language)
         if cfg.sash_mode == "notch":
             image = draw_award_badge(image, _label_tr, sash_type=sash_type,
@@ -1741,7 +1740,8 @@ def build_poster(
             image = draw_award_sash(image, _label_tr, sash_type=sash_type, muted=cfg.muted,
                                     length_ratio=cfg.sash_length_ratio,
                                     height_ratio=cfg.sash_height_ratio,
-                                    poster_color=_poster_color)
+                                    poster_color=_poster_color,
+                                    star=_is_star)
 
     return image
 

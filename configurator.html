@@ -2223,6 +2223,16 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <div class="toggle-track"><div class="toggle-thumb"></div></div>
               </label>
             </div>
+            <div class="toggle-row">
+              <div>
+                <div class="toggle-label">Winner Star</div>
+                <div class="field-hint">Prefix a ★ before award winners.</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="tog-sash-winner-star" onchange="build(); queuePreviewReload()">
+                <div class="toggle-track"><div class="toggle-thumb"></div></div>
+              </label>
+            </div>
             <div class="toggle-row" id="sash-muted-row">
               <div>
                 <div class="toggle-label">Muted Sashes</div>
@@ -2613,10 +2623,10 @@ const TMDB_IMG = 'https://image.tmdb.org/t/p/w92';
 
 const SASH_SLOTS = [
   { id:'wins',       label:'Best Picture / Major Emmy Win',     color:'#c9a84c' },
-  { id:'gg_wins',    label:'Golden Globe Win',                  color:'#c9a84c' },
+  { id:'gg_wins',    label:'Major Golden Globe Win',                  color:'#c9a84c' },
   { id:'festival',   label:'Festival Winner',                   color:'#c9a84c' },
   { id:'pic_noms',   label:'Best Picture / Major Emmy Nom',     color:'#9a9a9a' },
-  { id:'gg_noms',    label:'Golden Globe Nom',                  color:'#9a9a9a' },
+  { id:'gg_noms',    label:'Major Golden Globe Nom',                  color:'#9a9a9a' },
   { id:'studio',     label:'Notable Studio Name',               color:'#9060cc' },
   { id:'director',   label:'Notable Director Name',             color:'#9060cc' },
   { id:'cast',       label:'Notable Cast Name',                 color:'#4ab87a' },
@@ -2627,7 +2637,7 @@ const SASH_SLOTS = [
   { id:'metacritic', label:'Metacritic Must-See',               color:'#9a9a9a' },
   { id:'true_story', label:'True Story',                        color:'#3ab0a8' },
   { id:'structural',     label:'Short / Mini / Binge',              color:'#3ab0a8' },
-  { id:'release_status', label:'Release Status (extra API call)',    color:'#e05555' },
+  { id:'release_status', label:'Release Status',    color:'#e05555' },
 ];
 
 // All sash slots are enabled by default.  "release_status" sits last in the
@@ -3540,6 +3550,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   params.set('cinema_greyscale_skip_if_available', c('tog-cinema-greyscale-skip') ? 'true' : 'false');
   params.set('release_status_cinema_only', c('tog-release-cinema-only') ? 'true' : 'false');
   if (showSash) {
+    if (c('tog-sash-winner-star')) params.set('sash_winner_star', 'true');
     if (sashMode === 'notch') {
       params.set('sash_badge_style',         vEl('cfg-sash-badge-style') || 'silver');
       params.set('sash_badge_size_w',        n('cfg-sash-badge-size-w').toFixed(2));
@@ -4070,6 +4081,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
 
   // ── Sash ────────────────────────────────────────────────────────────────
   if (p.has('sash_poster_color')) _setEl('tog-sash-poster-color', p.get('sash_poster_color'));
+  if (p.has('sash_winner_star')) _setEl('tog-sash-winner-star',  p.get('sash_winner_star'));
   if (p.has('cinema_greyscale')) _setEl('tog-cinema-greyscale', p.get('cinema_greyscale'));
   if (p.has('cinema_greyscale_skip_if_available')) _setEl('tog-cinema-greyscale-skip', p.get('cinema_greyscale_skip_if_available'));
   if (p.has('release_status_cinema_only')) _setEl('tog-release-cinema-only', p.get('release_status_cinema_only'));
