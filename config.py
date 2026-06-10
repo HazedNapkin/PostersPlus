@@ -125,6 +125,17 @@ CACHE_WARM_TMDB_BUDGET       = int(os.environ.get("CACHE_WARM_TMDB_BUDGET", "200
 CACHE_WARM_MDBLIST_BUDGET    = int(os.environ.get("CACHE_WARM_MDBLIST_BUDGET", "500"))
 CACHE_WARM_INTERVAL_HOURS    = float(os.environ.get("CACHE_WARM_INTERVAL_HOURS", "24"))
 
+# Also pre-fetch quality badge data (resolution/source/HDR tokens) for each
+# warmed title via the configured quality source (AIOStreams or scraper).
+# Series default to S01E01. Off by default: this is a *per-title* request
+# against your scraper/debrid-backed addon, separate from TMDB/MDBList, and
+# at a budget of a couple thousand it can mean thousands of scrape requests
+# in a short window. WARNING: if your quality source is a public Stremio
+# addon (rather than your own self-hosted instance), this volume of traffic
+# in a short period can get your server's IP rate-limited or blocked by that
+# addon. Only enable this if you understand and accept that risk.
+CACHE_WARM_QUALITY_ENABLED   = os.environ.get("CACHE_WARM_QUALITY_ENABLED", "false").strip().lower() == "true"
+
 # Digital release (r/movieleaks) scraper settings
 DIGITAL_RELEASE_MIN_AGE_DAYS = 1    # ignore posts younger than this (mods still cleaning up)
 DIGITAL_RELEASE_MAX_AGE_DAYS = 30   # expire entries older than this from the cache

@@ -1788,8 +1788,13 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
     the loop continues warming TMDB-only for the remainder. Both budgets
     only count actual cache-miss metadata/rating API calls — entries already
     warm (including images and logos) cost nothing.
+
+    If CACHE_WARM_QUALITY_ENABLED is set, also pre-fetches quality badge
+    data (resolution/source/HDR tokens) for every processed candidate via
+    the configured quality source (series default to S01E01). This is off
+    by default — see the config comment for why.
     """
-    global _mdblist_semaphore, _mdblist_active_key_idx
+    global _mdblist_semaphore, _mdblist_active_key_idx, _quality_bg_semaphore
 
     if not _cfg.SERVER_TMDB_KEY:
         logger.info("Cache warm: skipped — no server TMDB key configured")
@@ -1841,6 +1846,7 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
 
     tmdb_calls    = 0
     mdblist_calls = 0
+    quality_calls = 0
     titles_seen   = 0
 
     for candidate in candidates:
@@ -1856,7 +1862,7 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
 
         if cached_meta is None:
             try:
-                genre_ids, is_textless, logos, _year, _title, poster_path, backdrop_path, tmdb_data = (
+                genre_ids, is_textless, logos, release_year, _title, poster_path, backdrop_path, tmdb_data = (
                     await fetch_poster_metadata(client, tmdb_id, _cfg.SERVER_TMDB_KEY, media_type, "en")
                 )
             except Exception as exc:
@@ -1873,6 +1879,7 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
             poster_path       = cached_meta.get("poster_path")
             backdrop_path     = cached_meta.get("backdrop_path")
             original_language = cached_meta.get("original_language")
+            release_year      = cached_meta.get("release_year")
 
         titles_seen += 1
 
@@ -1905,6 +1912,41 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
                 )
         except Exception as exc:
             logger.warning(f"Cache warm: image/logo fetch failed for {media_type}/{tmdb_id}: {exc}")
+
+        # Optionally pre-fetch quality badge data (resolution/source/HDR) via
+        # the configured quality source. Series default to S01E01 — the warm
+        # cycle has no concept of "which episode", so this is a best-effort
+        # warm of the most commonly requested entry point. Off by default;
+        # see CACHE_WARM_QUALITY_ENABLED for why.
+        if _cfg.CACHE_WARM_QUALITY_ENABLED and imdb_id:
+            _has_quality_source = (
+                bool(_cfg.AIOSTREAMS_URL and _cfg.AIOSTREAMS_AUTH)
+                or (_cfg.QUALITY_SOURCE == "scraper" and bool(_cfg.SCRAPER_URL))
+            )
+            if _has_quality_source and _quality_backoff_remaining() <= 0:
+                if get_cached_quality(imdb_id, release_year) is None:
+                    if _quality_bg_semaphore is None:
+                        _quality_bg_semaphore = asyncio.Semaphore(_cfg.QUALITY_BG_CONCURRENCY)
+                    try:
+                        async with _quality_bg_semaphore:
+                            if _cfg.QUALITY_SOURCE == "scraper" and _cfg.SCRAPER_URL:
+                                q_result = await _with_retry(
+                                    fetch_quality_from_scraper,
+                                    client, _cfg.SCRAPER_URL, imdb_id, media_type, 1, 1, release_year,
+                                )
+                            else:
+                                q_result = await _with_retry(
+                                    fetch_quality_from_aiostreams,
+                                    client, imdb_id, media_type, 1, 1, release_year,
+                                )
+                        quality_calls += 1
+                        _record_quality_result(q_result)
+                        if q_result is FETCH_FAILED:
+                            logger.warning(f"Cache warm: quality fetch failed for {imdb_id}")
+                    except Exception as exc:
+                        quality_calls += 1
+                        _record_quality_result(FETCH_FAILED)
+                        logger.warning(f"Cache warm: quality fetch failed for {imdb_id}: {exc}")
 
         if mdblist_calls >= mdblist_budget or not imdb_id:
             continue
@@ -1969,7 +2011,8 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
 
     logger.info(
         f"Cache warm: cycle complete — {titles_seen} titles processed, "
-        f"{tmdb_calls} TMDB calls, {mdblist_calls} MDBList calls"
+        f"{tmdb_calls} TMDB calls, {mdblist_calls} MDBList calls, "
+        f"{quality_calls} quality calls"
     )
 
 
