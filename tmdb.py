@@ -307,6 +307,7 @@ async def fetch_poster_metadata(
             "text_backdrop_path":    meta.get("text_backdrop_path"),
             "original_poster_path":  meta.get("original_poster_path"),
             "poster_langs":          meta.get("poster_langs", {}),
+            "imdb_id":               meta.get("imdb_id"),
         }
         return (
             meta["genre_ids"],
@@ -332,12 +333,17 @@ async def fetch_poster_metadata(
         f"https://api.themoviedb.org/3/{endpoint}/{tmdb_id}",
         params={
             "api_key": tmdb_key,
-            "append_to_response": "images,credits",
+            "append_to_response": "images,credits,external_ids",
             "include_image_language": _img_langs,
         },
     )
     resp.raise_for_status()
     data = resp.json()
+
+    # imdb_id from external_ids — used by cache warming to look up MDBList
+    # ratings/awards without a separate API call. TV's external_ids also
+    # includes imdb_id (the show's IMDb entry).
+    imdb_id = (data.get("external_ids") or {}).get("imdb_id") or None
 
     original_title = data.get("original_title") or data.get("original_name")
 
@@ -488,6 +494,7 @@ async def fetch_poster_metadata(
         text_backdrop_path=text_backdrop_path,
         original_poster_path=original_poster_path,
         poster_langs=poster_langs,
+        imdb_id=imdb_id,
     )
 
     tmdb_data = {
@@ -503,6 +510,7 @@ async def fetch_poster_metadata(
         "text_backdrop_path":   text_backdrop_path,
         "original_poster_path": original_poster_path,
         "poster_langs":         poster_langs,
+        "imdb_id":              imdb_id,
     }
 
     return genre_ids, is_textless, logos, release_year, title, poster_path, backdrop_path, tmdb_data
@@ -1051,6 +1059,130 @@ async def fetch_trending_rank(
         logger.info(f"Trending rank for {tmdb_id}: #{rank}")
 
     return rank
+
+
+async def fetch_trending_candidates(
+    client: httpx.AsyncClient,
+    tmdb_key: str,
+    max_items: int = 500,
+) -> list[dict]:
+    """
+    Build a deduped, ranked list of currently-trending titles for cache
+    warming, by paginating TMDB's trending endpoint across movie/tv and
+    day/week windows.
+
+    Returns a list of dicts: ``{"tmdb_id": str, "media_type": "movie"|"tv"}``,
+    ordered with the hottest (day-trending) titles first. Each (media_type,
+    tmdb_id) pair appears at most once. May return fewer than *max_items* if
+    TMDB's trending lists are exhausted first.
+    """
+    pages_per_list = max(1, (max_items + 19) // 20)  # 20 results per page
+
+    async def _fetch_list(media_type: str, window: str) -> list[dict]:
+        results: list[dict] = []
+        for page in range(1, pages_per_list + 1):
+            try:
+                resp = await client.get(
+                    f"https://api.themoviedb.org/3/trending/{media_type}/{window}",
+                    params={"api_key": tmdb_key, "page": page},
+                )
+                resp.raise_for_status()
+                page_results = resp.json().get("results", [])
+            except Exception as exc:
+                logger.warning(f"Cache warm: trending fetch failed ({media_type}/{window} p{page}): {exc}")
+                break
+            if not page_results:
+                break
+            for item in page_results:
+                results.append({"tmdb_id": str(item["id"]), "media_type": media_type})
+        return results
+
+    lists = await asyncio.gather(
+        _fetch_list("movie", "day"),
+        _fetch_list("tv", "day"),
+        _fetch_list("movie", "week"),
+        _fetch_list("tv", "week"),
+    )
+
+    # Round-robin merge so the result mixes movie/tv and prioritises the
+    # day-trending lists before the week-trending ones, deduping as we go.
+    seen: set[tuple[str, str]] = set()
+    candidates: list[dict] = []
+    for group in zip(*[l + [None] * (max(len(x) for x in lists) - len(l)) for l in lists]):
+        for item in group:
+            if item is None:
+                continue
+            key = (item["media_type"], item["tmdb_id"])
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(item)
+            if len(candidates) >= max_items:
+                return candidates
+
+    return candidates
+
+
+async def fetch_popular_candidates(
+    client: httpx.AsyncClient,
+    tmdb_key: str,
+    max_items: int = 500,
+) -> list[dict]:
+    """
+    Build a deduped, ranked list of TMDB's "popular" titles for cache
+    warming, by paginating the movie/tv popular endpoints.
+
+    Unlike trending (day/week, very volatile), "popular" is a broad,
+    slow-moving long-tail list — a useful complement to trending for cache
+    warming since it covers steady-demand catalogue staples that trending
+    alone would miss.
+
+    Returns a list of dicts: ``{"tmdb_id": str, "media_type": "movie"|"tv"}``,
+    each (media_type, tmdb_id) pair appearing at most once. May return fewer
+    than *max_items* if TMDB's popular lists are exhausted first.
+    """
+    pages_per_list = max(1, (max_items + 19) // 20)  # 20 results per page
+
+    async def _fetch_list(media_type: str) -> list[dict]:
+        results: list[dict] = []
+        for page in range(1, pages_per_list + 1):
+            try:
+                resp = await client.get(
+                    f"https://api.themoviedb.org/3/{media_type}/popular",
+                    params={"api_key": tmdb_key, "page": page},
+                )
+                resp.raise_for_status()
+                page_results = resp.json().get("results", [])
+            except Exception as exc:
+                logger.warning(f"Cache warm: popular fetch failed ({media_type} p{page}): {exc}")
+                break
+            if not page_results:
+                break
+            for item in page_results:
+                results.append({"tmdb_id": str(item["id"]), "media_type": media_type})
+        return results
+
+    lists = await asyncio.gather(
+        _fetch_list("movie"),
+        _fetch_list("tv"),
+    )
+
+    # Round-robin merge so the result mixes movie/tv, deduping as we go.
+    seen: set[tuple[str, str]] = set()
+    candidates: list[dict] = []
+    for group in zip(*[l + [None] * (max(len(x) for x in lists) - len(l)) for l in lists]):
+        for item in group:
+            if item is None:
+                continue
+            key = (item["media_type"], item["tmdb_id"])
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(item)
+            if len(candidates) >= max_items:
+                return candidates
+
+    return candidates
 
 
 async def fetch_release_status(

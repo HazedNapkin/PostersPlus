@@ -113,6 +113,18 @@ QUALITY_WAIT_TIMEOUT         = float(os.environ.get("QUALITY_WAIT_TIMEOUT", "30"
 # apparent per-key concurrency limit while still allowing good parallelism.
 MDBLIST_CONCURRENCY          = int(os.environ.get("MDBLIST_CONCURRENCY", "3"))
 
+# Cache warming — proactively populate the TMDB metadata cache (logos, posters,
+# credits) and the MDBList rating/award cache for currently-trending titles, so
+# the first real requests for them are fast and don't all hit upstream APIs at
+# once. Off by default — enable explicitly once the server keys' quotas are
+# understood. Each budget is a ceiling on actual API calls (cache hits don't
+# count), so steady-state runs after the first one are typically far cheaper
+# than the configured budgets.
+CACHE_WARM_ENABLED           = os.environ.get("CACHE_WARM_ENABLED", "false").strip().lower() == "true"
+CACHE_WARM_TMDB_BUDGET       = int(os.environ.get("CACHE_WARM_TMDB_BUDGET", "2000"))
+CACHE_WARM_MDBLIST_BUDGET    = int(os.environ.get("CACHE_WARM_MDBLIST_BUDGET", "500"))
+CACHE_WARM_INTERVAL_HOURS    = float(os.environ.get("CACHE_WARM_INTERVAL_HOURS", "24"))
+
 # Digital release (r/movieleaks) scraper settings
 DIGITAL_RELEASE_MIN_AGE_DAYS = 1    # ignore posts younger than this (mods still cleaning up)
 DIGITAL_RELEASE_MAX_AGE_DAYS = 30   # expire entries older than this from the cache
