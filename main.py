@@ -529,7 +529,7 @@ from quality import (
     render_badges_left,
 )
 from ratings import calculate_weighted_score, draw_score_bar, fetch_rating, draw_score_bar_vertical, _draw_solid_pip, draw_frosted_bar, _score_color, _score_color_alt, _score_color_metal
-from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_trending_rank, fetch_trending_candidates, fetch_popular_candidates, fetch_release_status, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION
+from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_trending_rank, fetch_trending_candidates, fetch_popular_candidates, fetch_catalog_candidates, fetch_release_status, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION
 
 # ---------------------------------------------------------------------------
 # Persistent HTTP client
@@ -1782,12 +1782,18 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
     burst-traffic pile-up against a stale cache, so every processed
     candidate gets the same default art fetched as a real view would.
 
-    Single pass over a ranked, deduped trending list: walks until the TMDB
-    metadata budget is spent or the candidate list is exhausted. MDBList
-    lookups are interleaved for as long as the MDBList budget allows, then
-    the loop continues warming TMDB-only for the remainder. Both budgets
-    only count actual cache-miss metadata/rating API calls — entries already
-    warm (including images and logos) cost nothing.
+    If CACHE_WARM_CATALOG_URLS is set, the catalogs exposed by those addon
+    manifests are fetched first (the same way a Stremio client would when a
+    user opens that catalog) and warmed ahead of trending/popular, capped at
+    CACHE_WARM_CATALOG_MAX_ITEMS items per catalog.
+
+    Single pass over a ranked, deduped candidate list (catalog, then
+    trending, then popular): walks until the TMDB metadata budget is spent
+    or the candidate list is exhausted. MDBList lookups are interleaved for
+    as long as the MDBList budget allows, then the loop continues warming
+    TMDB-only for the remainder. Both budgets only count actual cache-miss
+    metadata/rating API calls — entries already warm (including images and
+    logos) cost nothing.
 
     If CACHE_WARM_QUALITY_ENABLED is set, also pre-fetches quality badge
     data (resolution/source/HDR tokens) for every processed candidate via
@@ -1820,14 +1826,20 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
     trending_target = (target_total + 1) // 2
     popular_target  = target_total - trending_target
 
-    trending_candidates, popular_candidates = await asyncio.gather(
+    catalog_candidates, trending_candidates, popular_candidates = await asyncio.gather(
+        fetch_catalog_candidates(
+            client, _cfg.CACHE_WARM_CATALOG_URLS, _cfg.SERVER_TMDB_KEY,
+            max_items_per_catalog=_cfg.CACHE_WARM_CATALOG_MAX_ITEMS,
+        ),
         fetch_trending_candidates(client, _cfg.SERVER_TMDB_KEY, max_items=trending_target),
         fetch_popular_candidates(client, _cfg.SERVER_TMDB_KEY, max_items=popular_target),
     )
 
+    # Catalog candidates come first so a user-requested catalog is warmed
+    # ahead of generic trending/popular within the shared budgets.
     seen: set[tuple[str, str]] = set()
     candidates: list[dict] = []
-    for item in trending_candidates + popular_candidates:
+    for item in catalog_candidates + trending_candidates + popular_candidates:
         key = (item["media_type"], item["tmdb_id"])
         if key in seen:
             continue
@@ -1836,8 +1848,9 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
 
     logger.info(
         f"Cache warm: starting cycle — {len(candidates)} candidates "
-        f"({len(trending_candidates)} trending, {len(popular_candidates)} popular, "
-        f"{len(trending_candidates) + len(popular_candidates) - len(candidates)} overlap), "
+        f"({len(catalog_candidates)} catalog, {len(trending_candidates)} trending, "
+        f"{len(popular_candidates)} popular, "
+        f"{len(catalog_candidates) + len(trending_candidates) + len(popular_candidates) - len(candidates)} overlap), "
         f"tmdb_budget={tmdb_budget}, mdblist_budget={mdblist_budget}"
     )
 

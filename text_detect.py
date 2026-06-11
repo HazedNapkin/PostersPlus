@@ -42,8 +42,8 @@ _MODEL_PATH = os.environ.get("PPOCR_MODEL_PATH") or (
     else "/app/cache/ch_PP-OCRv5_det_mobile.onnx"
 )
 _RAPIDOCR_MODELS = importlib.resources.files("rapidocr").joinpath("models") if _HAS_RAPIDOCR else None
-_CLS_MODEL_PATH = str(_RAPIDOCR_MODELS.joinpath("ch_ppocr_mobile_v2.0_cls_infer.onnx")) if _RAPIDOCR_MODELS else ""
-_REC_MODEL_PATH = str(_RAPIDOCR_MODELS.joinpath("ch_PP-OCRv4_rec_infer.onnx")) if _RAPIDOCR_MODELS else ""
+_CLS_MODEL_PATH = str(_RAPIDOCR_MODELS.joinpath("ch_ppocr_mobile_v2.0_cls_mobile.onnx")) if _RAPIDOCR_MODELS else ""
+_REC_MODEL_PATH = str(_RAPIDOCR_MODELS.joinpath("ch_PP-OCRv4_rec_mobile.onnx")) if _RAPIDOCR_MODELS else ""
 
 try:
     _BOX_THRESHOLD = float(os.environ.get("PPOCR_BOX_THRESHOLD", "0.70"))

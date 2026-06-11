@@ -136,6 +136,20 @@ CACHE_WARM_INTERVAL_HOURS    = float(os.environ.get("CACHE_WARM_INTERVAL_HOURS",
 # addon. Only enable this if you understand and accept that risk.
 CACHE_WARM_QUALITY_ENABLED   = os.environ.get("CACHE_WARM_QUALITY_ENABLED", "false").strip().lower() == "true"
 
+# Optionally pre-warm specific Stremio catalogs in addition to TMDB
+# trending/popular — useful when a user has a particular addon catalog
+# (e.g. a custom list) that they want fast on first load. Comma-separated
+# list of addon manifest URLs (the same install links pasted into Stremio).
+# Each catalog the manifest exposes is fetched (with pagination) and its
+# items are resolved to TMDB ids and warmed first, ahead of trending/popular,
+# within the same TMDB/MDBList budgets above.
+CACHE_WARM_CATALOG_URLS = [
+    u.strip() for u in os.environ.get("CACHE_WARM_CATALOG_URLS", "").split(",") if u.strip()
+]
+# Max items pre-warmed per catalog (across pagination), so a single large
+# catalog can't consume the entire warm budget.
+CACHE_WARM_CATALOG_MAX_ITEMS = int(os.environ.get("CACHE_WARM_CATALOG_MAX_ITEMS", "100"))
+
 # Digital release (r/movieleaks) scraper settings
 DIGITAL_RELEASE_MIN_AGE_DAYS = 1    # ignore posts younger than this (mods still cleaning up)
 DIGITAL_RELEASE_MAX_AGE_DAYS = 30   # expire entries older than this from the cache

@@ -1185,6 +1185,157 @@ async def fetch_popular_candidates(
     return candidates
 
 
+async def resolve_tmdb_id_from_imdb(
+    client: httpx.AsyncClient,
+    imdb_id: str,
+    tmdb_key: str,
+    media_type_hint: str | None = None,
+) -> dict | None:
+    """
+    Resolve an IMDB id (``tt...``) to a TMDB id via TMDB's /find endpoint.
+
+    Returns ``{"tmdb_id": str, "media_type": "movie"|"tv"}``, preferring a
+    result matching *media_type_hint* when both movie and tv results are
+    present, or ``None`` if TMDB has no match for either.
+    """
+    try:
+        resp = await client.get(
+            f"https://api.themoviedb.org/3/find/{imdb_id}",
+            params={"api_key": tmdb_key, "external_source": "imdb_id"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        logger.warning(f"Cache warm: TMDB find failed for {imdb_id}: {exc}")
+        return None
+
+    movie_results = data.get("movie_results") or []
+    tv_results    = data.get("tv_results") or []
+
+    if media_type_hint == "tv" and tv_results:
+        return {"tmdb_id": str(tv_results[0]["id"]), "media_type": "tv"}
+    if media_type_hint == "movie" and movie_results:
+        return {"tmdb_id": str(movie_results[0]["id"]), "media_type": "movie"}
+    if movie_results:
+        return {"tmdb_id": str(movie_results[0]["id"]), "media_type": "movie"}
+    if tv_results:
+        return {"tmdb_id": str(tv_results[0]["id"]), "media_type": "tv"}
+    return None
+
+
+
+def _normalize_manifest_url(url: str) -> str:
+    """Normalise a user-pasted addon install link to a manifest.json URL."""
+    url = url.strip()
+    if url.startswith("stremio://"):
+        url = "https://" + url[len("stremio://"):]
+    if not url.endswith("/manifest.json"):
+        url = url.rstrip("/") + "/manifest.json"
+    return url
+
+
+async def fetch_catalog_candidates(
+    client: httpx.AsyncClient,
+    catalog_urls: list[str],
+    tmdb_key: str,
+    max_items_per_catalog: int = 100,
+) -> list[dict]:
+    """
+    Build a deduped list of ``{"tmdb_id", "media_type"}`` candidates by
+    fetching the catalogs exposed by the given Stremio addon manifest URLs,
+    the same way a Stremio client would when a user opens that catalog.
+
+    IMDB ids (the common case for Cinemeta-backed catalogs) are resolved to
+    TMDB ids via TMDB's /find endpoint. ``tmdb:<id>`` ids are used directly.
+    Any other id namespace (kitsu/mal/anilist/etc.) is skipped — there's no
+    TMDB mapping for those, so warming can't cover that title.
+    """
+    if not catalog_urls or not tmdb_key:
+        return []
+
+    seen: set[tuple[str, str]] = set()
+    candidates: list[dict] = []
+    resolve_sem = asyncio.Semaphore(10)
+
+    async def _resolve(meta_id: str, media_type: str) -> dict | None:
+        if meta_id.startswith("tmdb:"):
+            return {"tmdb_id": meta_id.split(":", 1)[1], "media_type": media_type}
+        if meta_id.startswith("tt"):
+            async with resolve_sem:
+                return await resolve_tmdb_id_from_imdb(client, meta_id, tmdb_key, media_type)
+        return None
+
+    for raw_url in catalog_urls:
+        manifest_url = _normalize_manifest_url(raw_url)
+        try:
+            resp = await client.get(manifest_url, timeout=15.0, follow_redirects=True)
+            resp.raise_for_status()
+            manifest = resp.json()
+        except Exception as exc:
+            logger.warning(f"Cache warm: catalog manifest fetch failed for {manifest_url}: {exc}")
+            continue
+
+        base = manifest_url[: -len("/manifest.json")]
+        catalogs = manifest.get("catalogs") or []
+        if not catalogs:
+            logger.warning(f"Cache warm: no catalogs in manifest {manifest_url}")
+            continue
+
+        for catalog in catalogs:
+            cat_type = catalog.get("type")
+            cat_id   = catalog.get("id")
+            if not cat_type or not cat_id:
+                continue
+
+            metas: list[dict] = []
+            while len(metas) < max_items_per_catalog:
+                skip = len(metas)
+                path = (
+                    f"/catalog/{cat_type}/{cat_id}.json"
+                    if skip == 0
+                    else f"/catalog/{cat_type}/{cat_id}/skip={skip}.json"
+                )
+                try:
+                    page_resp = await client.get(f"{base}{path}", timeout=15.0, follow_redirects=True)
+                    page_resp.raise_for_status()
+                    page_metas = page_resp.json().get("metas") or []
+                except Exception as exc:
+                    logger.warning(f"Cache warm: catalog fetch failed for {base}{path}: {exc}")
+                    break
+                if not page_metas:
+                    break
+                metas.extend(page_metas)
+
+            metas = metas[:max_items_per_catalog]
+
+            resolved = await asyncio.gather(*(
+                _resolve(
+                    meta.get("id", ""),
+                    "tv" if meta.get("type") in ("series", "tv") else "movie",
+                )
+                for meta in metas
+                if meta.get("id")
+            ))
+
+            added = 0
+            for item in resolved:
+                if item is None:
+                    continue
+                key = (item["media_type"], item["tmdb_id"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                candidates.append(item)
+                added += 1
+
+            logger.info(
+                f"Cache warm: catalog {cat_type}/{cat_id} from {base} — "
+                f"{len(metas)} items, {added} new candidates"
+            )
+
+    return candidates
+
+
 async def fetch_release_status(
     client: httpx.AsyncClient,
     tmdb_id: str,
