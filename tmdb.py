@@ -80,43 +80,101 @@ def normalise_poster(image: Image.Image) -> Image.Image:
 
 
 def ensure_light_logo(logo: Image.Image,
-                       lum_threshold: float = 0.2,
-                       sat_threshold: float = 0.25) -> Image.Image:
+                      lum_threshold: float = 0.2,
+                      sat_threshold: float = 0.25,
+                      light_lum: float = 0.6,
+                      light_frac_min: float = 0.05,
+                      card_coverage_max: float = 0.6) -> Image.Image:
     """
-    If the visible pixels of a logo are too dark AND mostly achromatic (low
-    saturation), force them to white so they read on dark poster backgrounds.
-    Coloured logos (red titles, branded colours, etc.) are left untouched —
-    only neutral black/dark-grey logos are converted.
+    Whiten a logo's pixels *only* when we are confident it is a dark, achromatic
+    wordmark that would otherwise be invisible on a dark poster — and leave every
+    other logo completely untouched. Doing nothing is always preferable to a
+    recolour that could make the logo worse.
+
+    The asset this primarily guards against is a logo that is a *filled dark card
+    with light text baked in* (e.g. white "JURY DUTY" letters on a solid black
+    rectangle). Averaging the luminance of every opaque pixel — the naive test —
+    is dominated by the dark card, mislabels the asset "dark", and blanket-whitens
+    it into a solid white block, erasing the text. Two complementary structural
+    guards catch that before any recolour:
+
+      • Light-content guard — if a non-trivial share of the solid pixels are
+        already light, the logo carries its own legible content (light text,
+        free-standing or on a dark card) and reads fine on a dark poster. This
+        is the signal that tells a "black card + white text" asset (has a light
+        population) apart from plain "black text" (has none).
+
+      • Card guard — if the solid pixels fill most of their own bounding box, the
+        logo is a filled card/emblem rather than glyphs on transparency.
+        Whitening it would produce a solid block, so never touch it. This backs
+        up the light-content guard for the dark-card / dark-or-no-text case,
+        where there is no light population to detect.
+
+    Only after both guards pass do the original tests apply — the ink must be
+    dark (low mean luminance) and achromatic (low saturation), so coloured or
+    branded logos keep their hues. Colour statistics are computed over *solid*
+    pixels (alpha >= 128) so a soft anti-aliased fringe can't skew them; the
+    recolour itself still covers the full visible mask (alpha > 30) to keep
+    edge anti-aliasing intact.
     """
     rgba = np.array(logo.convert("RGBA"), dtype=np.float32)
     alpha = rgba[:, :, 3]
-    visible = alpha > 30
 
-    if not visible.any():
+    # Analyse only solidly-opaque pixels so a semi-transparent AA halo can't
+    # skew the luminance/saturation/coverage statistics below.
+    solid = alpha >= 128
+    if not solid.any():
+        return logo  # nothing solid to analyse — leave as-is
+
+    r = rgba[:, :, 0][solid]
+    g = rgba[:, :, 1][solid]
+    b = rgba[:, :, 2][solid]
+    lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0  # per-pixel 0–1
+
+    # Guard 1 — the logo already carries light content (white text, on a card
+    # or free-standing), so it already reads on a dark poster. Leave it alone.
+    light_frac = float((lum >= light_lum).mean())
+    if light_frac >= light_frac_min:
+        logger.debug(
+            f"ensure_light_logo: skip (light content {light_frac:.0%} >= "
+            f"{light_frac_min:.0%}) — already legible on dark"
+        )
         return logo
 
-    r = rgba[:, :, 0][visible]
-    g = rgba[:, :, 1][visible]
-    b = rgba[:, :, 2][visible]
+    # Guard 2 — a filled card/emblem fills most of its bounding box. Whitening
+    # it would produce a solid block, so never touch it.
+    ys, xs = np.nonzero(solid)
+    bbox_area = (int(ys.max()) - int(ys.min()) + 1) * (int(xs.max()) - int(xs.min()) + 1)
+    coverage = float(solid.sum()) / bbox_area if bbox_area else 0.0
+    if coverage >= card_coverage_max:
+        logger.debug(
+            f"ensure_light_logo: skip (coverage {coverage:.0%} >= "
+            f"{card_coverage_max:.0%}) — filled card/shape, not a wordmark"
+        )
+        return logo
 
-    avg_lum = (0.2126 * r + 0.7152 * g + 0.0722 * b).mean() / 255.0
+    # Original gates — only whiten genuinely dark, achromatic ink.
+    avg_lum = float(lum.mean())
     if avg_lum > lum_threshold:
-        return logo  # Already light enough
+        return logo  # already light enough
 
-    # Check average saturation of visible pixels.
     # Saturation = (max - min) / max per pixel (HSV definition).
     max_c = np.maximum(np.maximum(r, g), b)
     min_c = np.minimum(np.minimum(r, g), b)
     coloured = max_c > 0
     if coloured.any():
-        avg_sat = (((max_c - min_c) / np.where(coloured, max_c, 1.0)) * coloured).mean()
+        avg_sat = float((((max_c - min_c) / np.where(coloured, max_c, 1.0)) * coloured).mean())
     else:
         avg_sat = 0.0
-
     if avg_sat > sat_threshold:
-        return logo  # Coloured logo — preserve original hues
+        return logo  # coloured/branded logo — preserve original hues
 
-    # Dark, achromatic logo — force to white
+    logger.debug(
+        f"ensure_light_logo: whitening dark wordmark "
+        f"(light={light_frac:.0%}, coverage={coverage:.0%}, "
+        f"avg_lum={avg_lum:.2f}, avg_sat={avg_sat:.2f})"
+    )
+    visible = alpha > 30
     out = rgba.copy()
     out[:, :, 0][visible] = 255
     out[:, :, 1][visible] = 255
