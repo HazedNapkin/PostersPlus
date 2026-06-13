@@ -529,7 +529,7 @@ from quality import (
     render_badges_left,
 )
 from ratings import calculate_weighted_score, draw_score_bar, fetch_rating, draw_score_bar_vertical, _draw_solid_pip, draw_frosted_bar, _score_color, _score_color_alt, _score_color_metal
-from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_trending_rank, fetch_trending_candidates, fetch_popular_candidates, fetch_catalog_candidates, fetch_release_status, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION
+from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_trending_rank, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION
 
 # ---------------------------------------------------------------------------
 # Persistent HTTP client
@@ -1784,14 +1784,15 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
 
     If CACHE_WARM_CATALOG_URLS is set, the catalogs exposed by those addon
     manifests are fetched first (the same way a Stremio client would when a
-    user opens that catalog) and warmed ahead of trending/popular, capped at
-    CACHE_WARM_CATALOG_MAX_ITEMS items per catalog.
+    user opens that catalog) and warmed ahead of trending/popular/
+    supplemental, capped at CACHE_WARM_CATALOG_MAX_ITEMS items per catalog.
 
     Single pass over a ranked, deduped candidate list (catalog, then
-    trending, then popular): walks until the TMDB metadata budget is spent
-    or the candidate list is exhausted. MDBList lookups are interleaved for
-    as long as the MDBList budget allows, then the loop continues warming
-    TMDB-only for the remainder. Both budgets only count actual cache-miss
+    trending, then popular, then supplemental — top rated / now playing /
+    on the air): walks until the TMDB metadata budget is spent or the
+    candidate list is exhausted. MDBList lookups are interleaved for as long
+    as the MDBList budget allows, then the loop continues warming TMDB-only
+    for the remainder. Both budgets only count actual cache-miss
     metadata/rating API calls — entries already warm (including images and
     logos) cost nothing.
 
@@ -1816,30 +1817,34 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
     if not effective_mdblist_key:
         mdblist_budget = 0
 
-    # Mix two sources: trending (volatile, day/week hot list) and popular
-    # (broad, slow-moving catalogue staples). Split the target list roughly
-    # in half between the two so warming covers both "what's hot right now"
-    # and "what people steadily watch" — trending alone tends to miss the
-    # latter. Each source is independently ranked/deduped; the combined list
-    # is deduped again here so a title appearing in both only costs one slot.
+    # Mix three sources: trending (volatile, day/week hot list), popular
+    # (broad, slow-moving catalogue staples), and supplemental (top rated /
+    # now playing / on the air — acclaimed and currently-airing titles that
+    # trending and popular tend to miss). Split the target list across the
+    # three so warming covers "what's hot right now", "what people steadily
+    # watch", and "what's airing/acclaimed". Each source is independently
+    # ranked/deduped; the combined list is deduped again here so a title
+    # appearing in multiple sources only costs one slot.
     target_total  = max(tmdb_budget, mdblist_budget) or tmdb_budget
-    trending_target = (target_total + 1) // 2
-    popular_target  = target_total - trending_target
+    trending_target    = (target_total * 4 + 9) // 10  # ~40%
+    popular_target     = (target_total * 3 + 9) // 10  # ~30%
+    supplemental_target = target_total - trending_target - popular_target  # ~30%
 
-    catalog_candidates, trending_candidates, popular_candidates = await asyncio.gather(
+    catalog_candidates, trending_candidates, popular_candidates, supplemental_candidates = await asyncio.gather(
         fetch_catalog_candidates(
             client, _cfg.CACHE_WARM_CATALOG_URLS, _cfg.SERVER_TMDB_KEY,
             max_items_per_catalog=_cfg.CACHE_WARM_CATALOG_MAX_ITEMS,
         ),
         fetch_trending_candidates(client, _cfg.SERVER_TMDB_KEY, max_items=trending_target),
         fetch_popular_candidates(client, _cfg.SERVER_TMDB_KEY, max_items=popular_target),
+        fetch_supplemental_candidates(client, _cfg.SERVER_TMDB_KEY, max_items=supplemental_target),
     )
 
     # Catalog candidates come first so a user-requested catalog is warmed
-    # ahead of generic trending/popular within the shared budgets.
+    # ahead of generic trending/popular/supplemental within the shared budgets.
     seen: set[tuple[str, str]] = set()
     candidates: list[dict] = []
-    for item in catalog_candidates + trending_candidates + popular_candidates:
+    for item in catalog_candidates + trending_candidates + popular_candidates + supplemental_candidates:
         key = (item["media_type"], item["tmdb_id"])
         if key in seen:
             continue
@@ -1849,18 +1854,27 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
     logger.info(
         f"Cache warm: starting cycle — {len(candidates)} candidates "
         f"({len(catalog_candidates)} catalog, {len(trending_candidates)} trending, "
-        f"{len(popular_candidates)} popular, "
-        f"{len(catalog_candidates) + len(trending_candidates) + len(popular_candidates) - len(candidates)} overlap), "
+        f"{len(popular_candidates)} popular, {len(supplemental_candidates)} supplemental, "
+        f"{len(catalog_candidates) + len(trending_candidates) + len(popular_candidates) + len(supplemental_candidates) - len(candidates)} overlap), "
         f"tmdb_budget={tmdb_budget}, mdblist_budget={mdblist_budget}"
     )
 
     if _mdblist_semaphore is None:
         _mdblist_semaphore = asyncio.Semaphore(_cfg.MDBLIST_CONCURRENCY)
 
-    tmdb_calls    = 0
-    mdblist_calls = 0
-    quality_calls = 0
-    titles_seen   = 0
+    tmdb_calls      = 0
+    mdblist_calls   = 0
+    quality_calls   = 0
+    detection_calls = 0
+    titles_seen     = 0
+
+    # Text-detection scans (~400ms each) are pipelined: queue a scan and keep
+    # processing later candidates' metadata/image/rating work while it runs,
+    # only blocking once _DETECTION_PIPELINE_DEPTH scans are in flight. The
+    # existing TEXTLESS_DETECTION_CONCURRENCY semaphore still caps how many
+    # actually run at once — this just stops the loop from idling while they do.
+    _pending_detections: list[asyncio.Task] = []
+    _detection_pipeline_depth = _cfg.TEXTLESS_DETECTION_CONCURRENCY + 1
 
     for candidate in candidates:
         if tmdb_calls >= tmdb_budget:
@@ -1884,6 +1898,9 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
             tmdb_calls += 1
             imdb_id           = tmdb_data.get("imdb_id")
             original_language = tmdb_data.get("original_language")
+            original_title    = tmdb_data.get("original_title")
+            vote_count        = tmdb_data.get("vote_count")
+            title             = _title
         else:
             genre_ids         = cached_meta.get("genre_ids", [])
             imdb_id           = cached_meta.get("imdb_id")
@@ -1893,6 +1910,9 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
             backdrop_path     = cached_meta.get("backdrop_path")
             original_language = cached_meta.get("original_language")
             release_year      = cached_meta.get("release_year")
+            original_title    = cached_meta.get("original_title")
+            vote_count        = cached_meta.get("vote_count")
+            title             = cached_meta.get("title")
 
         titles_seen += 1
 
@@ -1925,6 +1945,56 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
                 )
         except Exception as exc:
             logger.warning(f"Cache warm: image/logo fetch failed for {media_type}/{tmdb_id}: {exc}")
+
+        # Pre-run burned-in-text detection on the textless art selected above —
+        # the same scan a real /poster request would trigger on first view, and
+        # by far the slowest per-request step (~400ms cold). Mirrors the
+        # /poster cache-key scheme exactly (source tag + crop version + conf +
+        # detector signature) so a warmed result is a hit on the real request.
+        # Unlike /poster, no vote-count gate: warming happens off the request
+        # path, so every textless title gets resolved up front.
+        if _cfg.TEXTLESS_TEXT_DETECTION and is_textless and (_use_backdrop or poster_path):
+            try:
+                from text_detect import DETECT_RES_SIG
+
+                if _use_backdrop:
+                    _det_src = f"bd:{backdrop_path}:{_CROP_VERSION}:plain"
+                    _image_cache_key = f"backdrop_{tmdb_id}_{backdrop_path.strip('/')}_{_CROP_VERSION}"
+                    _det_source = "backdrop"
+                else:
+                    _det_src = f"ps:{poster_path}"
+                    _image_cache_key = f"{media_type}_{tmdb_id}_{poster_path.strip('/')}"
+                    _det_source = "poster"
+
+                _det_key = f"{_det_src}|conf={_cfg.PPOCR_BOX_THRESHOLD}:{DETECT_RES_SIG}"
+                if get_cached_text_detection(_det_key) is None:
+                    _det_image = await asyncio.get_running_loop().run_in_executor(
+                        None, _load_detection_image, _image_cache_key
+                    )
+                    if _det_image is not None:
+                        _text_titles = tuple(dict.fromkeys(
+                            value for value in (title, original_title) if value
+                        ))
+                        _pending_detections.append(_start_text_detection(
+                            _det_key,
+                            _det_image,
+                            title=_text_titles,
+                            source=_det_source,
+                            tmdb_id=tmdb_id,
+                            vote_count=vote_count,
+                            source_key=_det_src,
+                            media_type=media_type,
+                            image_path=poster_path,
+                            foreground=False,
+                        ))
+                        detection_calls += 1
+                        if len(_pending_detections) >= _detection_pipeline_depth:
+                            _done, _pending = await asyncio.wait(
+                                _pending_detections, return_when=asyncio.FIRST_COMPLETED
+                            )
+                            _pending_detections = list(_pending)
+            except Exception as exc:
+                logger.warning(f"Cache warm: text detection failed for {media_type}/{tmdb_id}: {exc}")
 
         # Optionally pre-fetch quality badge data (resolution/source/HDR) via
         # the configured quality source. Series default to S01E01 — the warm
@@ -2022,10 +2092,13 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
             is_metacritic=is_metacritic,
         )
 
+    if _pending_detections:
+        await asyncio.gather(*_pending_detections, return_exceptions=True)
+
     logger.info(
         f"Cache warm: cycle complete — {titles_seen} titles processed, "
         f"{tmdb_calls} TMDB calls, {mdblist_calls} MDBList calls, "
-        f"{quality_calls} quality calls"
+        f"{quality_calls} quality calls, {detection_calls} text-detection scans"
     )
 
 
@@ -2043,6 +2116,21 @@ def _format_local(ts: float) -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
 
 
+def _seconds_until_next_hour(target_hour: float, now: float | None = None) -> float:
+    """Seconds from `now` until the next occurrence of `target_hour` (0-24,
+    local time, may be fractional e.g. 4.5 for 4:30am). Always returns a
+    positive value — if `target_hour` is the current hour, rolls to tomorrow.
+    """
+    if now is None:
+        now = time.time()
+    local = time.localtime(now)
+    midnight = now - (local.tm_hour * 3600 + local.tm_min * 60 + local.tm_sec)
+    target = midnight + target_hour * 3600
+    if target <= now:
+        target += 86400
+    return target - now
+
+
 async def _cache_warm_loop(digital_release_ready: asyncio.Event | None = None) -> None:
     """
     Periodically warm the TMDB metadata/image and MDBList rating caches for
@@ -2053,6 +2141,10 @@ async def _cache_warm_loop(digital_release_ready: asyncio.Event | None = None) -
     doesn't immediately re-run the whole cycle — it instead waits out the
     remainder of the interval. The very first run ever uses a short startup
     grace period instead.
+
+    If CACHE_WARM_AT_HOUR is set, steady-state cycles (after the first) are
+    instead scheduled for the next occurrence of that local hour-of-day,
+    rather than exactly CACHE_WARM_INTERVAL_HOURS after the previous run.
 
     On the very first cycle, also wait (briefly) for the digital-release
     (movieleaks) sync to finish first, so the two startup background jobs
@@ -2074,6 +2166,8 @@ async def _cache_warm_loop(digital_release_ready: asyncio.Event | None = None) -
 
     if last_run is None:
         wait = float(_CACHE_WARM_STARTUP_GRACE_SECS)
+    elif _cfg.CACHE_WARM_AT_HOUR is not None:
+        wait = max(_CACHE_WARM_MIN_WAIT_SECS, _seconds_until_next_hour(_cfg.CACHE_WARM_AT_HOUR))
     else:
         wait = max(_CACHE_WARM_MIN_WAIT_SECS, (last_run + interval_secs) - time.time())
 
@@ -2100,7 +2194,10 @@ async def _cache_warm_loop(digital_release_ready: asyncio.Event | None = None) -
                 logger.warning("Cache warm: HTTP client not ready — skipping this cycle")
         except Exception as exc:
             logger.error(f"Cache warm: cycle failed: {exc}")
-        wait = interval_secs
+        if _cfg.CACHE_WARM_AT_HOUR is not None:
+            wait = max(_CACHE_WARM_MIN_WAIT_SECS, _seconds_until_next_hour(_cfg.CACHE_WARM_AT_HOUR))
+        else:
+            wait = interval_secs
 
 
 @asynccontextmanager

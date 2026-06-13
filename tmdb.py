@@ -1185,6 +1185,68 @@ async def fetch_popular_candidates(
     return candidates
 
 
+async def fetch_supplemental_candidates(
+    client: httpx.AsyncClient,
+    tmdb_key: str,
+    max_items: int = 500,
+) -> list[dict]:
+    """
+    Build a deduped, ranked list of cache-warming candidates from TMDB lists
+    that trending/popular don't cover: critically-acclaimed catalogue staples
+    (top rated) and titles currently airing/in theatres (now playing, on the
+    air) — the kind of thing a user finds via a "Top Rated" or "Now Playing"
+    catalog rather than trending/popular.
+
+    Returns a list of dicts: ``{"tmdb_id": str, "media_type": "movie"|"tv"}``,
+    each (media_type, tmdb_id) pair appearing at most once. May return fewer
+    than *max_items* if these lists are exhausted first.
+    """
+    pages_per_list = max(1, (max_items + 19) // 20)  # 20 results per page
+
+    async def _fetch_list(media_type: str, list_name: str) -> list[dict]:
+        results: list[dict] = []
+        for page in range(1, pages_per_list + 1):
+            try:
+                resp = await client.get(
+                    f"https://api.themoviedb.org/3/{media_type}/{list_name}",
+                    params={"api_key": tmdb_key, "page": page},
+                )
+                resp.raise_for_status()
+                page_results = resp.json().get("results", [])
+            except Exception as exc:
+                logger.warning(f"Cache warm: {list_name} fetch failed ({media_type} p{page}): {exc}")
+                break
+            if not page_results:
+                break
+            for item in page_results:
+                results.append({"tmdb_id": str(item["id"]), "media_type": media_type})
+        return results
+
+    lists = await asyncio.gather(
+        _fetch_list("movie", "top_rated"),
+        _fetch_list("tv", "top_rated"),
+        _fetch_list("movie", "now_playing"),
+        _fetch_list("tv", "on_the_air"),
+    )
+
+    # Round-robin merge across the four lists, deduping as we go.
+    seen: set[tuple[str, str]] = set()
+    candidates: list[dict] = []
+    for group in zip(*[l + [None] * (max(len(x) for x in lists) - len(l)) for l in lists]):
+        for item in group:
+            if item is None:
+                continue
+            key = (item["media_type"], item["tmdb_id"])
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(item)
+            if len(candidates) >= max_items:
+                return candidates
+
+    return candidates
+
+
 async def resolve_tmdb_id_from_imdb(
     client: httpx.AsyncClient,
     imdb_id: str,

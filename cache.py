@@ -1,4 +1,5 @@
 #cache.py
+import hashlib
 import logging
 import os
 import sqlite3
@@ -20,13 +21,25 @@ from config import (
     TMDB_POSTER_CACHE_DURATION,
     TMDB_LOGO_CACHE_DIR,
     TMDB_LOGO_CACHE_DURATION,
+    TMDB_IMAGE_CACHE_JITTER_DAYS,
     TMDB_METADATA_CACHE_DURATION,
     COMPOSITE_CACHE_TTL,
+    COMPOSITE_CACHE_TTL_JITTER,
     COMPOSITE_MAX_ENTRIES,
     QUALITY_OLD_CACHE_DURATION,
     DIGITAL_RELEASE_MAX_AGE_DAYS,
     RATING_MIN_VOTES,
 )
+
+
+def _ttl_jitter(cache_key: str, window: float) -> float:
+    """Deterministic +/- window/2 offset derived from cache_key, so the same
+    key always gets the same jitter (stable across reads and cache-warm
+    cycles) while spreading expiry times across a batch of keys."""
+    if window <= 0:
+        return 0.0
+    digest = hashlib.sha256(cache_key.encode("utf-8")).hexdigest()[:8]
+    return (int(digest, 16) / 0xFFFFFFFF) * window - window / 2
 
 # One SQLite connection PER THREAD (thread-local).  A single shared connection
 # serialises every statement — reads included — on its internal mutex, so under
@@ -301,7 +314,8 @@ def get_cached_final_poster(cache_key: str) -> bytes | None:
             return None
         jpeg_bytes, cached_at = row
         age_secs = time.time() - cached_at
-        if age_secs > COMPOSITE_CACHE_TTL:
+        effective_ttl = COMPOSITE_CACHE_TTL + _ttl_jitter(cache_key, COMPOSITE_CACHE_TTL_JITTER)
+        if age_secs > effective_ttl:
             logger.info(f"Final poster cache expired for {cache_key} ({age_secs/86400:.1f}d old)")
             with _db_lock:
                 get_db().execute(
@@ -455,8 +469,11 @@ def prune_caches() -> None:
 
             db.commit()
 
-        _prune_file_cache(TMDB_POSTER_CACHE_DIR, TMDB_POSTER_CACHE_DURATION)
-        _prune_file_cache(TMDB_LOGO_CACHE_DIR, TMDB_LOGO_CACHE_DURATION)
+        # Use the high end of the per-key jitter range so prune never deletes
+        # a file before get_cached_tmdb_poster/_logo would (which apply the
+        # same jitter per cache_key).
+        _prune_file_cache(TMDB_POSTER_CACHE_DIR, TMDB_POSTER_CACHE_DURATION + TMDB_IMAGE_CACHE_JITTER_DAYS / 2)
+        _prune_file_cache(TMDB_LOGO_CACHE_DIR, TMDB_LOGO_CACHE_DURATION + TMDB_IMAGE_CACHE_JITTER_DAYS / 2)
 
         # Reclaim free pages left by the deletes.
         with _db_lock:
@@ -792,7 +809,7 @@ def _atomic_write(path: str, data: bytes) -> None:
                 pass
 
 
-def _prune_file_cache(base_dir: str, ttl_days: int) -> None:
+def _prune_file_cache(base_dir: str, ttl_days: float) -> None:
     cutoff = time.time() - ttl_days * 86400
     removed = 0
     try:
@@ -825,8 +842,9 @@ def get_cached_tmdb_poster(cache_key: str) -> bytes | None:
         return None
 
     age_days = (time.time() - os.path.getmtime(path)) / 86400
+    effective_days = TMDB_POSTER_CACHE_DURATION + _ttl_jitter(cache_key, TMDB_IMAGE_CACHE_JITTER_DAYS)
 
-    if age_days > TMDB_POSTER_CACHE_DURATION:
+    if age_days > effective_days:
         logger.info(f"TMDB poster cache expired for {cache_key}")
         try:
             os.remove(path)
@@ -879,8 +897,9 @@ def get_cached_tmdb_logo(cache_key: str) -> bytes | None:
         return None
 
     age_days = (time.time() - os.path.getmtime(path)) / 86400
+    effective_days = TMDB_LOGO_CACHE_DURATION + _ttl_jitter(cache_key, TMDB_IMAGE_CACHE_JITTER_DAYS)
 
-    if age_days > TMDB_LOGO_CACHE_DURATION:
+    if age_days > effective_days:
         logger.info(f"TMDB logo cache expired for {cache_key}")
         try:
             os.remove(path)
