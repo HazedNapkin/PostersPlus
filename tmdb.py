@@ -60,6 +60,7 @@ from config import (
     DEBUG_LOGO_SIZING,
     TMDB_POSTER_MIN_VOTES,
     TMDB_POSTER_MAX_SCORE_DROP,
+    CINEMA_MAX_AGE_YEARS,
 )
 
 
@@ -1525,6 +1526,7 @@ async def fetch_release_status(
                 resp.raise_for_status()
                 today = _date.today()
                 has_physical = has_digital = has_theatrical = False
+                earliest_theatrical: _date | None = None
                 for entry in resp.json().get("results", []):
                     for rd in entry.get("release_dates", []):
                         rtype = rd.get("type")
@@ -1541,13 +1543,25 @@ async def fetch_release_status(
                             has_digital = True
                         elif rtype == 3:
                             has_theatrical = True
+                            if earliest_theatrical is None or rdate < earliest_theatrical:
+                                earliest_theatrical = rdate
 
                 if has_physical:
                     result = "Physical"
                 elif has_digital:
                     result = "Streaming"
                 elif has_theatrical:
-                    result = "Cinema"
+                    # If the only known release is theatrical but is older than
+                    # CINEMA_MAX_AGE_YEARS, treat as Streaming — the title is almost
+                    # certainly available digitally and TMDB just never got updated.
+                    if (
+                        CINEMA_MAX_AGE_YEARS > 0
+                        and earliest_theatrical is not None
+                        and (today - earliest_theatrical).days > CINEMA_MAX_AGE_YEARS * 365
+                    ):
+                        result = "Streaming"
+                    else:
+                        result = "Cinema"
                 elif tmdb_status == "Released":
                     # Released per TMDB but no release date records found —
                     # incomplete TMDB data rather than genuinely unreleased.

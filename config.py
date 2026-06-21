@@ -200,6 +200,10 @@ COMPOSITE_MAX_ENTRIES      = int(os.environ.get("COMPOSITE_MAX_ENTRIES", "0"))
 # entirely. Every request re-renders from scratch. Useful during development when
 # iterating on rendering changes and you don't want stale renders served.
 DISABLE_COMPOSITE_CACHE    = os.environ.get("DISABLE_COMPOSITE_CACHE", "").strip().lower() in ("1", "true", "yes")
+# Movies with only a theatrical release date older than this many years are treated
+# as "Streaming" rather than "Cinema" — guards against stale TMDB data where a
+# physical/digital date was never added.  Set to 0 to disable the gate entirely.
+CINEMA_MAX_AGE_YEARS       = max(0, int(os.environ.get("CINEMA_MAX_AGE_YEARS", "3")))
 
 def _parse_bool_env(key: str, default: bool = False) -> bool:
     val = os.environ.get(key, "").strip().lower()
