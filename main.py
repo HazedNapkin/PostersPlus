@@ -2693,6 +2693,66 @@ async def resolve_imdb(
 
 
 # ---------------------------------------------------------------------------
+# Logo endpoint
+# ---------------------------------------------------------------------------
+
+@app.get("/logo")
+async def get_logo(
+    tmdb_id: str,
+    type: str = "movie",
+    lang: str = "en",
+    imdb_id: str | None = None,
+    access_key: str = "",
+    tmdb_key: str = "",
+):
+    """
+    Return the best available logo PNG for a title.
+
+    Checks the local file cache first (same cache the poster endpoint uses),
+    then falls through to TMDB and Metahub as needed.  No rendering is applied —
+    callers receive the original PNG exactly as stored.
+    """
+    if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    if _HTTP_CLIENT is None:
+        raise HTTPException(status_code=503, detail="Service unavailable")
+
+    effective_tmdb_key = _resolve_tmdb_key((tmdb_key or "").strip())
+    if not effective_tmdb_key:
+        raise HTTPException(status_code=503, detail="No TMDB API key configured")
+    media_type = "tv" if type in ("tv", "series") else "movie"
+    effective_lang = (lang or "en").strip() or "en"
+
+    client = _HTTP_CLIENT
+
+    _, _, logos, _, _, _, _, tmdb_data = await fetch_poster_metadata(
+        client, tmdb_id, effective_tmdb_key, media_type, effective_lang
+    )
+
+    # Use imdb_id from metadata if not supplied — needed for Metahub fallback
+    effective_imdb_id = (imdb_id or "").strip() or tmdb_data.get("imdb_id") or None
+    original_language = tmdb_data.get("original_language")
+
+    logo_image = await fetch_logo(
+        client, logos, effective_lang,
+        imdb_id=effective_imdb_id,
+        original_language=original_language,
+    )
+
+    if logo_image is None:
+        raise HTTPException(status_code=404, detail="No logo available")
+
+    buf = io.BytesIO()
+    logo_image.save(buf, format="PNG")
+    return Response(
+        content=buf.getvalue(),
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=2592000"},
+    )
+
+
+# ---------------------------------------------------------------------------
 # Poster endpoint
 # ---------------------------------------------------------------------------
 

@@ -196,6 +196,11 @@ COMPOSITE_CACHE_TTL_JITTER = int(os.environ.get("COMPOSITE_CACHE_TTL_JITTER", st
 # Maximum number of composite cache entries. When exceeded the oldest entries are
 # evicted on each insert to keep the table at this size. 0 = no cap (rely on TTL alone).
 COMPOSITE_MAX_ENTRIES      = int(os.environ.get("COMPOSITE_MAX_ENTRIES", "0"))
+# Number of fully-rendered composites kept in the in-memory LRU (L1) cache.
+# These are served without any SQLite read, keeping the hot working set off the
+# OS page cache.  Each entry is roughly 100-300 KB; 500 entries ≈ 50-150 MB.
+# Set to 0 to disable L1 entirely (fall through to SQLite for every request).
+COMPOSITE_MEM_ENTRIES      = int(os.environ.get("COMPOSITE_MEM_ENTRIES", "500"))
 # Set to any truthy value (1, true, yes) to skip composite cache reads and writes
 # entirely. Every request re-renders from scratch. Useful during development when
 # iterating on rendering changes and you don't want stale renders served.

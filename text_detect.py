@@ -151,7 +151,10 @@ def _new_ocr_session():
         "Rec.model_path": _REC_MODEL_PATH,
         "EngineConfig.onnxruntime.intra_op_num_threads": _ORT_THREADS,
         "EngineConfig.onnxruntime.inter_op_num_threads": 1,
-        "EngineConfig.onnxruntime.enable_cpu_mem_arena": True,
+        # Disable the ORT CPU memory arena so freed tensor allocations are
+        # returned to the OS rather than held at the inference high-water mark
+        # indefinitely.  Slightly slower first inference; no steady-state cost.
+        "EngineConfig.onnxruntime.enable_cpu_mem_arena": False,
     })
 
 
@@ -232,11 +235,16 @@ def _detect(image):
     pil_image = image.convert("RGB")
     width, height = pil_image.size
     if not height or not width:
+        pil_image.close()
         return None, None, width, height
-    with _borrow_ocr() as ocr:
-        result = ocr(pil_image, use_det=True, use_cls=False, use_rec=False)
-    boxes = [] if result.boxes is None else result.boxes
-    scores = [] if result.scores is None else result.scores
+    try:
+        with _borrow_ocr() as ocr:
+            result = ocr(pil_image, use_det=True, use_cls=False, use_rec=False)
+        boxes  = [] if result.boxes is None else list(result.boxes)
+        scores = [] if result.scores is None else list(result.scores)
+        del result
+    finally:
+        pil_image.close()
     return boxes, scores, width, height
 
 
@@ -291,64 +299,72 @@ def _recognised_title_match(
         return False, [], 0
 
     source = image.convert("RGB")
-    width, height = source.size
-    image_area = max(1, width * height)
-    texts = []
-    centred_lines = 0
-    for box, score in zip(boxes, scores):
-        box = np.asarray(box, dtype=np.float32)
-        box_width = float(box[:, 0].max() - box[:, 0].min())
-        box_height = float(box[:, 1].max() - box[:, 1].min())
-        aspect = box_width / max(1.0, box_height)
-        area_ratio = (box_width * box_height) / image_area
-        centre_x = float(box[:, 0].mean()) / max(1, width)
-        title_candidate = aspect >= 1.5 and area_ratio >= _WIDE_MIN_AREA
-        centred_candidate = (
-            aspect >= _WIDE_MIN_ASPECT
-            and area_ratio >= 0.0015
-            and 0.25 <= centre_x <= 0.75
-        )
-        if (
-            float(score) < _WIDE_BOX_THRESHOLD
-            or not (title_candidate or centred_candidate)
-        ):
-            continue
+    try:
+        width, height = source.size
+        image_area = max(1, width * height)
+        texts = []
+        centred_lines = 0
+        for box, score in zip(boxes, scores):
+            box = np.asarray(box, dtype=np.float32)
+            box_width = float(box[:, 0].max() - box[:, 0].min())
+            box_height = float(box[:, 1].max() - box[:, 1].min())
+            aspect = box_width / max(1.0, box_height)
+            area_ratio = (box_width * box_height) / image_area
+            centre_x = float(box[:, 0].mean()) / max(1, width)
+            title_candidate = aspect >= 1.5 and area_ratio >= _WIDE_MIN_AREA
+            centred_candidate = (
+                aspect >= _WIDE_MIN_ASPECT
+                and area_ratio >= 0.0015
+                and 0.25 <= centre_x <= 0.75
+            )
+            if (
+                float(score) < _WIDE_BOX_THRESHOLD
+                or not (title_candidate or centred_candidate)
+            ):
+                continue
 
-        pad = max(3, int(box_height * 0.2))
-        left = max(0, int(box[:, 0].min()) - pad)
-        top = max(0, int(box[:, 1].min()) - pad)
-        right = min(width, int(box[:, 0].max()) + pad)
-        bottom = min(height, int(box[:, 1].max()) + pad)
-        crop = np.asarray(source.crop((left, top, right, bottom)))
-
-        with _borrow_ocr() as ocr:
-            result = ocr(crop, use_det=False, use_cls=False, use_rec=True)
-        recognised = [] if result.txts is None else [
-            str(text) for text in result.txts
-        ]
-        texts.extend(recognised)
-        if centred_candidate and any(
-            len(re.sub(r"[^a-z]", "", text.lower())) >= 5
-            for text in recognised
-        ):
-            centred_lines += 1
-        if title_candidate and any(
-            _text_matches_title(text, alias)
-            for text in recognised
-            for alias in titles
-        ):
-            return True, texts, centred_lines
-        if float(score) >= 0.80 and area_ratio >= 0.10:
-            for text in recognised:
-                candidate = _normalise_text(text)
-                if any(
-                    len(candidate) >= 6
-                    and len(expected) >= 6
-                    and SequenceMatcher(None, candidate, expected).ratio() >= 0.70
-                    for expected in expected_titles
-                ):
-                    return True, texts, centred_lines
-    return False, texts, centred_lines
+            pad = max(3, int(box_height * 0.2))
+            left   = max(0,     int(box[:, 0].min()) - pad)
+            top    = max(0,     int(box[:, 1].min()) - pad)
+            right  = min(width, int(box[:, 0].max()) + pad)
+            bottom = min(height, int(box[:, 1].max()) + pad)
+            pil_crop = source.crop((left, top, right, bottom))
+            try:
+                crop = np.asarray(pil_crop)
+                with _borrow_ocr() as ocr:
+                    result = ocr(crop, use_det=False, use_cls=False, use_rec=True)
+            finally:
+                pil_crop.close()
+                del crop
+            recognised = [] if result.txts is None else [
+                str(text) for text in result.txts
+            ]
+            del result
+            texts.extend(recognised)
+            if centred_candidate and any(
+                len(re.sub(r"[^a-z]", "", text.lower())) >= 5
+                for text in recognised
+            ):
+                centred_lines += 1
+            if title_candidate and any(
+                _text_matches_title(text, alias)
+                for text in recognised
+                for alias in titles
+            ):
+                return True, texts, centred_lines
+            if float(score) >= 0.80 and area_ratio >= 0.10:
+                for text in recognised:
+                    candidate = _normalise_text(text)
+                    if any(
+                        len(candidate) >= 6
+                        and len(expected) >= 6
+                        and SequenceMatcher(None, candidate, expected).ratio() >= 0.70
+                        for expected in expected_titles
+                    ):
+                        return True, texts, centred_lines
+        return False, texts, centred_lines
+    finally:
+        source.close()
 
 
 def _qualifying_boxes(

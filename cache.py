@@ -7,6 +7,7 @@ import threading
 import tempfile
 import time
 import json
+from collections import OrderedDict
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ from config import (
     COMPOSITE_CACHE_TTL,
     COMPOSITE_CACHE_TTL_JITTER,
     COMPOSITE_MAX_ENTRIES,
+    COMPOSITE_MEM_ENTRIES,
     QUALITY_OLD_CACHE_DURATION,
     DIGITAL_RELEASE_MAX_AGE_DAYS,
     RATING_MIN_VOTES,
@@ -300,11 +302,36 @@ def _quality_ttl(release_date: str | None) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Final poster cache
+# Final poster cache  (L1 in-memory LRU + L2 SQLite)
 # ---------------------------------------------------------------------------
 
+# L1: bounded in-memory LRU — most-recently-used composites served without
+# any SQLite read, keeping the hot set off the OS page cache.
+_composite_l1: OrderedDict[str, bytes] = OrderedDict()
+_composite_l1_lock = threading.Lock()
+
+
+def composite_l1_stats() -> dict:
+    with _composite_l1_lock:
+        count = len(_composite_l1)
+        total_bytes = sum(len(v) for v in _composite_l1.values())
+    return {"entries": count, "bytes": total_bytes}
+
+
 def get_cached_final_poster(cache_key: str) -> bytes | None:
-    """Return cached JPEG bytes for a fully composited poster, or None on miss/expiry."""
+    """Return cached JPEG bytes for a fully composited poster, or None on miss/expiry.
+
+    Checks the in-memory LRU (L1) first; falls through to SQLite (L2) on miss
+    and promotes the result to L1 so the next hit is served entirely from RAM.
+    """
+    # L1: in-memory LRU — no disk I/O, no OS page-cache pressure
+    if COMPOSITE_MEM_ENTRIES > 0:
+        with _composite_l1_lock:
+            if cache_key in _composite_l1:
+                _composite_l1.move_to_end(cache_key)
+                return _composite_l1[cache_key]
+
+    # L2: SQLite with TTL check
     try:
         row = get_db().execute(
             "SELECT jpeg_bytes, cached_at FROM final_poster_cache WHERE cache_key = ?",
@@ -323,14 +350,31 @@ def get_cached_final_poster(cache_key: str) -> bytes | None:
                 )
                 get_db().commit()
             return None
-        return bytes(jpeg_bytes)
+        data = bytes(jpeg_bytes)
+        # Promote to L1
+        if COMPOSITE_MEM_ENTRIES > 0:
+            with _composite_l1_lock:
+                _composite_l1[cache_key] = data
+                _composite_l1.move_to_end(cache_key)
+                while len(_composite_l1) > COMPOSITE_MEM_ENTRIES:
+                    _composite_l1.popitem(last=False)
+        return data
     except Exception as exc:
         logger.error(f"Final poster cache read error: {exc}")
         return None
 
 
 def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes) -> None:
-    """Store a fully composited JPEG poster, evicting oldest entries if over the cap."""
+    """Store a fully composited JPEG poster into L1 (RAM) and L2 (SQLite)."""
+    # L1: always store the freshly-rendered composite so the next hit skips SQLite
+    if COMPOSITE_MEM_ENTRIES > 0:
+        with _composite_l1_lock:
+            _composite_l1[cache_key] = jpeg_bytes
+            _composite_l1.move_to_end(cache_key)
+            while len(_composite_l1) > COMPOSITE_MEM_ENTRIES:
+                _composite_l1.popitem(last=False)
+
+    # L2: persist to SQLite for warm restarts
     try:
         with _db_lock:
             get_db().execute(
@@ -391,6 +435,10 @@ def get_cache_stats() -> dict:
             stats["db_file_bytes"] = os.path.getsize(DB_PATH)
         except OSError:
             stats["db_file_bytes"] = None
+
+        l1 = composite_l1_stats()
+        stats["composite_l1_entries"] = l1["entries"]
+        stats["composite_l1_bytes"]   = l1["bytes"]
     except Exception as exc:
         logger.error(f"Cache stats error: {exc}")
     return stats
