@@ -120,6 +120,48 @@ logger = logging.getLogger(__name__)
 # burst pattern well enough at this scale.
 _render_inflight: dict[str, "asyncio.Future[bytes]"] = {}
 
+# Coalesces concurrent fetch_poster_metadata calls for the same (tmdb_id,
+# media_type, language) tuple.  Without this, simultaneous /poster + /logo
+# requests for the same cold title each fire their own TMDB API call.
+_metadata_inflight: dict[str, "asyncio.Future[tuple]"] = {}
+
+
+async def _coalesced_fetch_poster_metadata(
+    client: "httpx.AsyncClient",
+    tmdb_id: str,
+    tmdb_key: str,
+    media_type: str,
+    lang: str,
+) -> tuple:
+    endpoint = "tv" if media_type in ("tv", "series") else "movie"
+    inflight_key = tmdb_metadata_cache_key(endpoint, tmdb_id, lang)
+
+    existing = _metadata_inflight.get(inflight_key)
+    if existing is not None:
+        logger.debug(f"Coalescing metadata fetch for {media_type}/{tmdb_id} ({lang})")
+        return await existing
+
+    fut: "asyncio.Future[tuple]" = asyncio.get_running_loop().create_future()
+    fut.add_done_callback(
+        lambda f: f.exception() if not f.cancelled() and f.exception() else None
+    )
+    _metadata_inflight[inflight_key] = fut
+    try:
+        result = await fetch_poster_metadata(client, tmdb_id, tmdb_key, media_type, lang)
+        fut.set_result(result)
+        return result
+    except Exception as exc:
+        if not fut.done():
+            fut.set_exception(exc)
+        raise
+    except BaseException:
+        if not fut.done():
+            fut.cancel()
+        raise
+    finally:
+        _metadata_inflight.pop(inflight_key, None)
+
+
 # ---------------------------------------------------------------------------
 # Background quality fetching
 # ---------------------------------------------------------------------------
@@ -1890,7 +1932,7 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
         if cached_meta is None:
             try:
                 genre_ids, is_textless, logos, release_year, _title, poster_path, backdrop_path, tmdb_data = (
-                    await fetch_poster_metadata(client, tmdb_id, _cfg.SERVER_TMDB_KEY, media_type, "en")
+                    await _coalesced_fetch_poster_metadata(client, tmdb_id, _cfg.SERVER_TMDB_KEY, media_type, "en")
                 )
             except Exception as exc:
                 logger.warning(f"Cache warm: TMDB metadata fetch failed for {media_type}/{tmdb_id}: {exc}")
@@ -2726,7 +2768,7 @@ async def get_logo(
 
     client = _HTTP_CLIENT
 
-    _, _, logos, _, _, _, _, tmdb_data = await fetch_poster_metadata(
+    _, _, logos, _, _, _, _, tmdb_data = await _coalesced_fetch_poster_metadata(
         client, tmdb_id, effective_tmdb_key, media_type, effective_lang
     )
 
@@ -3119,7 +3161,7 @@ async def get_poster(
     _active_poster_renders += 1
     try:
         genre_ids, is_textless, logos, release_year, title, poster_path, backdrop_path, tmdb_data = (
-            await fetch_poster_metadata(client, tmdb_id, effective_tmdb_key, type, rcfg.logo_language)
+            await _coalesced_fetch_poster_metadata(client, tmdb_id, effective_tmdb_key, type, rcfg.logo_language)
         )
         _text_titles = tuple(dict.fromkeys(
             value for value in (title, tmdb_data.get("original_title")) if value
