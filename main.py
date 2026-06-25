@@ -786,12 +786,25 @@ class RequestConfig:
     sash_height_ratio: float = 0.12  # diagonal sash height (thickness) as fraction of poster width
     wait_for_quality: bool = False  # block response until quality is fetched (for poster-warm workflows)
     greyscale_no_quality: bool = False  # greyscale art when no quality found (needs wait_for_quality)
+    rating_text_color: tuple[int, int, int] | None = None
 
 
 def _parse_bool(val: str | None, default: bool) -> bool:
     if val is None:
         return default
     return val.strip().lower() not in ("0", "false", "no")
+
+
+def _parse_hex_color(val: str | None) -> tuple[int, int, int] | None:
+    if not val:
+        return None
+    v = val.strip().lstrip("#")
+    if len(v) != 6:
+        return None
+    try:
+        return (int(v[0:2], 16), int(v[2:4], 16), int(v[4:6], 16))
+    except ValueError:
+        return None
 
 
 def _parse_weights(raw: str | None, sources: list[str]) -> dict | None:
@@ -1001,6 +1014,7 @@ def build_request_config(params: dict) -> RequestConfig:
     if _oas in ("primary", "top_rated"):
         cfg.original_art_source = _oas
     cfg.sash_priority        = _parse_sash_priority(params.get("sash_priority"))
+    cfg.rating_text_color    = _parse_hex_color(params.get("rating_text_color"))
 
     return cfg
 
@@ -1606,7 +1620,7 @@ def build_poster(
                 (tx, ty - int(font_size * 0.10)),
                 label,
                 font=font_meta,
-                fill=(200, 200, 200, 255),
+                fill=(*cfg.rating_text_color, 255) if cfg.rating_text_color else (200, 200, 200, 255),
             )
             draw_score_bar(
                 image, score,
@@ -1641,7 +1655,7 @@ def build_poster(
                 (tx, ty - int(font_size * 0.10)),
                 label,
                 font=font_meta,
-                fill=(200, 200, 200, 255),
+                fill=(*cfg.rating_text_color, 255) if cfg.rating_text_color else (200, 200, 200, 255),
             )
 
         elif cfg.rating_display_mode == 3:
@@ -1654,7 +1668,7 @@ def build_poster(
 
             y = round(height * cfg.minimalist_mode_font_y_offset)
             right_edge = width - int(width * cfg.minimalist_mode_font_x_offset)
-            _ink = (235, 235, 235, 255)
+            _ink = (*cfg.rating_text_color, 255) if cfg.rating_text_color else (235, 235, 235, 255)
 
             # Segments, each tagged with the SEPARATOR that precedes it:
             #   "pip"  — silver vertical pip (before the year)
@@ -1758,6 +1772,7 @@ def build_poster(
                     )
                 ) if cfg.bar_style in ("rating_black", "rating_frosted") else None,
                 tint_rgb         = _shared_tint,
+                text_color       = cfg.rating_text_color,
             )
 
     # --- Discovery sash / badge ---
