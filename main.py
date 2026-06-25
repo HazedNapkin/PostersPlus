@@ -787,6 +787,7 @@ class RequestConfig:
     wait_for_quality: bool = False  # block response until quality is fetched (for poster-warm workflows)
     greyscale_no_quality: bool = False  # greyscale art when no quality found (needs wait_for_quality)
     rating_text_color: tuple[int, int, int] | None = None
+    sash_text_color:   tuple[int, int, int] | None = None
 
 
 def _parse_bool(val: str | None, default: bool) -> bool:
@@ -1015,6 +1016,7 @@ def build_request_config(params: dict) -> RequestConfig:
         cfg.original_art_source = _oas
     cfg.sash_priority        = _parse_sash_priority(params.get("sash_priority"))
     cfg.rating_text_color    = _parse_hex_color(params.get("rating_text_color"))
+    cfg.sash_text_color      = _parse_hex_color(params.get("sash_text_color"))
 
     return cfg
 
@@ -1789,7 +1791,8 @@ def build_poster(
                                      font_size_ratio=cfg.sash_badge_font_ratio,
                                      frost_opacity=cfg.sash_badge_frost_opacity,
                                      tint_rgb=_shared_tint,
-                                     star=_is_star)
+                                     star=_is_star,
+                                     text_color=cfg.sash_text_color)
         else:  # "sash" — diagonal
             _poster_color = None
             if cfg.sash_poster_color:
@@ -1798,7 +1801,8 @@ def build_poster(
                                     length_ratio=cfg.sash_length_ratio,
                                     height_ratio=cfg.sash_height_ratio,
                                     poster_color=_poster_color,
-                                    star=_is_star)
+                                    star=_is_star,
+                                    text_color=cfg.sash_text_color)
 
     return image
 

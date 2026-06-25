@@ -2265,6 +2265,18 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="gold">Black, Gold Trim</option>
               </select>
             </div>
+            <div class="field" id="sash-text-color-field" style="display:none; border-top:none; padding-top:0; margin-top:6px;">
+              <label class="field-label">Text Colour</label>
+              <div style="display:flex; gap:8px; align-items:center; width:100%;">
+                <input type="text" id="cfg-sash-text-color" placeholder="default" maxlength="6"
+                       style="flex:1; min-width:0; font-family:monospace; text-transform:uppercase; letter-spacing:0.05em;"
+                       oninput="_syncSashColorPicker(); build(); queuePreviewReload()">
+                <input type="color" id="cfg-sash-text-color-picker" value="#e1e1e1"
+                       style="width:36px; height:28px; flex-shrink:0; padding:2px; border:1px solid var(--border); border-radius:4px; background:var(--black3); cursor:pointer;"
+                       oninput="document.getElementById('cfg-sash-text-color').value=this.value.slice(1).toUpperCase(); build(); queuePreviewReload()">
+              </div>
+              <div class="field-hint">Hex colour for the sash/notch text. Leave blank for the mode default.</div>
+            </div>
             <div class="toggle-row">
               <div>
                 <div class="toggle-label">Greyscale Poster if Unavailable</div>
@@ -3616,6 +3628,8 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   params.set('release_status_cinema_only', c('tog-release-cinema-only') ? 'true' : 'false');
   if (showSash) {
     if (c('tog-sash-winner-star')) params.set('sash_winner_star', 'true');
+    const _stc = document.getElementById('cfg-sash-text-color').value.trim();
+    if (/^[0-9a-fA-F]{6}$/i.test(_stc)) params.set('sash_text_color', _stc);
     if (sashMode === 'notch') {
       params.set('sash_badge_style',         vEl('cfg-sash-badge-style') || 'silver');
       params.set('sash_badge_size_w',        n('cfg-sash-badge-size-w').toFixed(2));
@@ -3806,11 +3820,18 @@ function updateSashBadgeFields() {
   // Release-status-only filter does nothing when no sash is drawn.
   document.getElementById('sash-release-cinema-only-row').style.display = shown ? '' : 'none';
   document.getElementById('sash-style-field').style.display      = isNotch ? '' : 'none';
+  document.getElementById('sash-text-color-field').style.display = shown ? '' : 'none';
   document.getElementById('sash-muted-row').style.display        = isBand ? '' : 'none';
   document.getElementById('sash-poster-color-row').style.display = isBand ? '' : 'none';
   document.getElementById('sash-badge-offsets').style.display    = isNotch ? '' : 'none';
   document.getElementById('sash-size-fields').style.display      = isBand ? '' : 'none';
   if (isNotch) { initCustomMobileSliders(); updateBadgeStyleFields(); }
+}
+
+function _syncSashColorPicker() {
+  const hex = document.getElementById('cfg-sash-text-color').value.trim();
+  if (/^[0-9a-fA-F]{6}$/.test(hex))
+    document.getElementById('cfg-sash-text-color-picker').value = '#' + hex;
 }
 
 function onSashModeChange() {
@@ -4162,6 +4183,12 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
 
   // ── Sash ────────────────────────────────────────────────────────────────
   if (p.has('sash_poster_color')) _setEl('tog-sash-poster-color', p.get('sash_poster_color'));
+  if (p.has('sash_text_color')) {
+    const _stcVal = p.get('sash_text_color').replace('#', '').toUpperCase();
+    document.getElementById('cfg-sash-text-color').value = _stcVal;
+    if (/^[0-9A-F]{6}$/.test(_stcVal))
+      document.getElementById('cfg-sash-text-color-picker').value = '#' + _stcVal;
+  }
   if (p.has('sash_winner_star')) _setEl('tog-sash-winner-star',  p.get('sash_winner_star'));
   if (p.has('cinema_greyscale')) _setEl('tog-cinema-greyscale', p.get('cinema_greyscale'));
   if (p.has('cinema_greyscale_skip_if_available')) _setEl('tog-cinema-greyscale-skip', p.get('cinema_greyscale_skip_if_available'));
