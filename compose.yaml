@@ -4,18 +4,18 @@ services:
       context: .
       dockerfile: ./dockerfile
       args:
-        # Bake the PP-OCRv5 Mobile detector into the image (default). Set
-        # BAKE_PPOCR_MODEL=false in your .env for a lean image that downloads the
-        # model once at runtime instead.
         BAKE_PPOCR_MODEL: "${BAKE_PPOCR_MODEL:-true}"
-    image: PostersPlus
+    image: postersplus
+    # Maps the local port based on your .env file. Defaults to 8000.
     ports:
-      - "8000:8000"
+      - "${HOST_PORT:-8000}:8000"  
+    expose:
+      - "8000"
     restart: unless-stopped
     volumes:
-      - ./postersplus-cache:/app/cache  # cache DB, TMDB posters/logos, discovery_overrides.json
+      - ./postersplus-cache:/app/cache
     env_file:
-      - .env # see this file for an explanation of what each flag does
+      - .env
     environment: 
       - TMDB_API_KEY=${TMDB_API_KEY:-}
       - MDBLIST_API_KEY=${MDBLIST_API_KEY:-}
@@ -37,3 +37,13 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+
+  cloudflare:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    # This assigns the container to the 'tunnel' profile
+    profiles:
+      - tunnel
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
