@@ -43,7 +43,9 @@ SERVER_MDBLIST_KEYS: list[str] = [k for k in [SERVER_MDBLIST_KEY, SERVER_MDBLIST
 # edge. Set to 0 to disable (e.g. when running without a CDN).
 CDN_CACHE_TTL         = int(os.environ.get("CDN_CACHE_TTL", "0"))
 # JPEG output quality for composited posters (70–95). Higher = better quality, larger files.
-JPEG_QUALITY          = max(70, min(95, int(os.environ.get("JPEG_QUALITY", "85"))))
+JPEG_QUALITY  = max(70, min(95, int(os.environ.get("JPEG_QUALITY",  "85"))))
+WEBP_QUALITY  = max(70, min(95, int(os.environ.get("WEBP_QUALITY",  "82"))))
+OUTPUT_FORMAT = os.environ.get("OUTPUT_FORMAT", "jpeg").lower().strip()
 
 # Feature Defaults 
 
@@ -292,10 +294,12 @@ SCORE_NORMALISERS = {
 # Default Sash Priority
 
 SASH_PRIORITY: list[str] = [
-    "wins",
+    "oscar_win",
+    "emmy_win",
     "gg_wins",
     "festival",
-    "pic_noms",
+    "oscar_nom",
+    "emmy_nom",
     "gg_noms",
     "studio",
     "director",
@@ -306,6 +310,8 @@ SASH_PRIORITY: list[str] = [
     "new_release",
     "metacritic",
     "true_story",
-    "structural",
+    "short",
+    "miniseries",
+    "binge",
     "release_status",
 ]

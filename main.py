@@ -725,6 +725,7 @@ class RequestConfig:
     textless: bool = False
     score_color_mode: int = 2
     top_gradient:    str = "high"   # off | low | medium | high — strength of the top vignette
+    top_gradient_sash_only: bool = False # only apply top vignette if a sash is present
     bottom_gradient: str = "high"   # off | low | medium | high — strength of the bottom vignette
     sash_badge: bool = False              # legacy; superseded by sash_mode (kept for back-compat parsing)
     sash_mode: str = "sash"               # "sash" (diagonal) | "notch"
@@ -738,6 +739,7 @@ class RequestConfig:
     sash_height_ratio: float = 0.12  # diagonal sash height (thickness) as fraction of poster width
     wait_for_quality: bool = False  # block response until quality is fetched (for poster-warm workflows)
     greyscale_no_quality: bool = False  # greyscale art when no quality found (needs wait_for_quality)
+    show_genre: bool = True
 
 
 def _parse_bool(val: str | None, default: bool) -> bool:
@@ -836,6 +838,7 @@ def build_request_config(params: dict) -> RequestConfig:
     elif _tg_raw in ("false", "0", "no"):
         cfg.top_gradient = "off"
     # else: leave RequestConfig default ("high")
+    cfg.top_gradient_sash_only = _b("top_gradient_sash_only", cfg.top_gradient_sash_only)
 
     # bottom_gradient — same four-level enum as top.  Brand-new param so no
     # legacy boolean form to honour; unknown values fall through to the
@@ -951,6 +954,7 @@ def build_request_config(params: dict) -> RequestConfig:
     if _oas in ("primary", "top_rated"):
         cfg.original_art_source = _oas
     cfg.sash_priority        = _parse_sash_priority(params.get("sash_priority"))
+    cfg.show_genre           = _b("show_genre", cfg.show_genre)
 
     return cfg
 
@@ -1240,6 +1244,28 @@ def build_poster(
         genre_label = _genre_tr
     else:
         genre_label = _GENRE_LABEL_OVERRIDES.get(genre, genre)
+    
+    if not cfg.show_genre:
+        genre_label = ""
+
+    # --- RESOLVE SASH EARLY ---
+    # Resolve the info-sash pick once early, so gradients can depend on its presence. This is regardless of whether the diagonal sash
+    # itself is rendered independently.
+    #
+    # When greyscale is active on an unreleased title (Cinema / Production),
+    # force the release-status slot to the front so its badge always wins — that
+    # tells the user the poster is greyscale because it's unavailable, rather
+    # than a title whose art happens to be black & white.
+    _sash_priority = cfg.sash_priority
+    if (cfg.cinema_greyscale and discovery_meta is not None
+            and discovery_meta.release_status in ("Cinema", "Production")
+            and "release_status" in _sash_priority):
+        _sash_priority = ["release_status"] + [s for s in _sash_priority if s != "release_status"]
+    sash_result = (
+        pick_sash(discovery_meta, _sash_priority)
+        if discovery_meta is not None
+        else None
+    )
 
     # --- TOP GRADIENT (vectorised) ---
     # Darkens the top of the poster so the age-rating numeral and quality
@@ -1249,6 +1275,12 @@ def build_poster(
     # treated as "high" rather than skipped so a typo in a URL doesn't
     # silently disable the vignette.
     _tg_preset = _TOP_GRADIENT_LEVELS.get(cfg.top_gradient, _TOP_GRADIENT_LEVELS["high"])
+
+    # Check if gradient should be suppressed by sash not being present
+    _apply_top = True
+    if cfg.top_gradient_sash_only and (cfg.sash_mode == "hidden" or sash_result is None):
+        _apply_top = False
+
     if _tg_preset is not None:
         top_height_ratio, top_max_alpha = _tg_preset
         top_height = int(height * top_height_ratio)
@@ -1465,24 +1497,6 @@ def build_poster(
             draw.text((tx + shadow_offset, ty + shadow_offset), line, font=font, fill=(0, 0, 0, 180))
             draw.text((tx, ty),                                  line, font=font, fill=(255, 255, 255, 255))
 
-    # Resolve the info-sash pick once, regardless of whether the diagonal sash
-    # itself is rendered independently.
-    #
-    # When greyscale is active on an unreleased title (Cinema / Production),
-    # force the release-status slot to the front so its badge always wins — that
-    # tells the user the poster is greyscale because it's unavailable, rather
-    # than a title whose art happens to be black & white.
-    _sash_priority = cfg.sash_priority
-    if (cfg.cinema_greyscale and discovery_meta is not None
-            and discovery_meta.release_status in ("Cinema", "Production")
-            and "release_status" in _sash_priority):
-        _sash_priority = ["release_status"] + [s for s in _sash_priority if s != "release_status"]
-    sash_result = (
-        pick_sash(discovery_meta, _sash_priority)
-        if discovery_meta is not None
-        else None
-    )
-
     # --- Shared frosted tint (Match Notch Colour) ---------------------------
     # When the frosted rating bar (mode 4) and a poster-coloured sash element are
     # both on (a frosted notch badge OR a poster-coloured diagonal sash) and
@@ -1534,14 +1548,17 @@ def build_poster(
                 sash_result if (_append_sash and sash_result) else (None, None)
             )
 
-            _pre_sash = [genre_label]
+            _pre_sash = [genre_label] if genre_label else []
             if _append_year and release_year:
                 _pre_sash.append(str(release_year))
             _label_main = " · ".join(_pre_sash)
 
             if _sash_text_for_label:
                 _sash_sep = " ★ " if _sash_type_for_label == "win" else " · "
-                label = _label_main + _sash_sep + translate_sash(_sash_text_for_label, cfg.logo_language)
+                if _label_main:
+                    label = _label_main + _sash_sep + translate_sash(_sash_text_for_label, cfg.logo_language)
+                else:
+                    label = translate_sash(_sash_text_for_label, cfg.logo_language)
             else:
                 label = _label_main
             rating_cy = height * cfg.accent_bar_y_offset
@@ -1578,7 +1595,7 @@ def build_poster(
                 _score_text = "10" if score >= 100 else f"{score / 10:.1f}"
             else:
                 _score_text = str(score)
-            label = f"{genre_label} ★ {_score_text}"
+            label = f"{genre_label} ★ {_score_text}" if genre_label else f"★ {_score_text}"
             rating_cy = height * cfg.numeric_score_y_offset
 
             try:
@@ -1615,7 +1632,7 @@ def build_poster(
             # Mode 1 ("Rating"): genre ★ score
             # Mode 2 ("Year + Rating"): genre [pip] year ★ score
             _has_score = score not in ("N/A", None)
-            parts = [(genre_label, None)]   # (text, separator_before)
+            parts = [(genre_label, None)] if genre_label else []   # (text, separator_before)
             if cfg.minimalist_append_mode == 0:
                 if release_year:
                     parts.append((str(release_year), "rpip"))
@@ -1766,6 +1783,69 @@ async def _cache_prune_loop() -> None:
         await asyncio.sleep(6 * 3600)   # every 6 hours
 
 
+async def trending_warmup_loop(client: httpx.AsyncClient) -> None:
+    """Fetches TMDB trending daily and pre-warms the poster cache."""
+    # Wait 60 seconds on startup to ensure the API and caches are fully ready
+    await asyncio.sleep(60)
+    
+    while True:
+        logger.info("Starting daily trending pre-warm...")
+        tmdb_key = _resolve_tmdb_key("")
+        
+        if tmdb_key:
+            try:
+                # 1. Fetch Trending from TMDB
+                resp = await client.get(
+                    "https://api.themoviedb.org/3/trending/all/day",
+                    params={"api_key": tmdb_key}
+                )
+                
+                if resp.status_code == 200:
+                    results = resp.json().get("results", [])
+                    access_key = _cfg.ACCESS_KEY or ""
+                    
+                    # 2. Iterate through trending items
+                    for item in results:
+                        tmdb_id = str(item.get("id"))
+                        media_type = item.get("media_type")
+                        
+                        if media_type not in ("movie", "tv"):
+                            continue
+                            
+                        # 3. Resolve IMDB ID internally
+                        imdb_resp = await client.get(
+                            "http://127.0.0.1:8000/resolve-imdb",
+                            params={
+                                "tmdb_id": tmdb_id, 
+                                "type": media_type, 
+                                "access_key": access_key
+                            }
+                        )
+                        
+                        if imdb_resp.status_code == 200:
+                            imdb_id = imdb_resp.json().get("imdb_id")
+                            if imdb_id:
+                                logger.info(f"Pre-warming poster for {media_type} TMDB {tmdb_id}")
+                                # 4. Trigger Poster Generation
+                                # Calling the local endpoint routes through the exact same caching pipeline.
+                                await client.get(
+                                    "http://127.0.0.1:8000/poster",
+                                    params={
+                                        "tmdb_id": tmdb_id,
+                                        "imdb_id": imdb_id,
+                                        "type": media_type,
+                                        "access_key": access_key,
+                                    }
+                                )
+                                # 2-second delay to prevent hammering external APIs (TMDB/MDBList)
+                                await asyncio.sleep(2)
+                                
+            except Exception as e:
+                logger.error(f"Trending warmup failed: {e}")
+                
+        # Sleep for 24 hours (86400 seconds)
+        await asyncio.sleep(86400)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _HTTP_CLIENT, _configurator_html, _render_assets_signature
@@ -1828,9 +1908,11 @@ async def lifespan(app: FastAPI):
 
     prune_task   = asyncio.create_task(_cache_prune_loop())
     digital_task = asyncio.create_task(digital_release_poll_loop(_HTTP_CLIENT))
+    trending_task = asyncio.create_task(trending_warmup_loop(_HTTP_CLIENT))
     yield
     prune_task.cancel()
     digital_task.cancel()
+    trending_task.cancel()
     if _background_detection_task is not None:
         _background_detection_task.cancel()
     # Await the cancelled tasks so their finally: blocks finish unwinding
@@ -1839,6 +1921,8 @@ async def lifespan(app: FastAPI):
         await prune_task
     with suppress(asyncio.CancelledError):
         await digital_task
+    with suppress(asyncio.CancelledError):
+        await trending_task    
     if _background_detection_task is not None:
         with suppress(asyncio.CancelledError):
             await _background_detection_task
@@ -1975,7 +2059,8 @@ def _compute_render_assets_signature() -> str:
 def _server_render_signature() -> str:
     return "|".join((
         f"render={_RENDER_CACHE_VERSION}",
-        f"jpeg={_cfg.JPEG_QUALITY}",
+        f"format={_cfg.OUTPUT_FORMAT}",
+        f"quality={_cfg.WEBP_QUALITY if _cfg.OUTPUT_FORMAT == 'webp' else _cfg.JPEG_QUALITY}",
         f"contrast={int(_cfg.LOGO_CONTRAST_RESCUE)}",
         f"stretch={int(_cfg.LOGO_STRETCH_DISABLED)}:{_cfg.LOGO_STRETCH_FACTOR:g}",
         f"assets={_render_assets_signature}",
@@ -2068,9 +2153,11 @@ async def debug_canvas(genre: str = "Action", title: str = "Sample Title",
     cache_key = (genre, title, style, year, score)
     now = asyncio.get_running_loop().time()
     cached = _debug_canvas_cache.get(cache_key)
-    if cached is not None and now - cached[0] <= _DEBUG_CANVAS_TTL:
+    media_type = "image/webp" if _cfg.OUTPUT_FORMAT == "webp" else "image/jpeg"
+
+    if cached is not None and now - cached <= _DEBUG_CANVAS_TTL:
         return Response(
-            content=cached[1], media_type="image/jpeg",
+            content=cached, media_type=media_type,
             headers={"Cache-Control": "private, max-age=300"},
         )
     gid = _DEBUG_GENRE_IDS.get(genre)
@@ -2082,14 +2169,20 @@ async def debug_canvas(genre: str = "Action", title: str = "Sample Title",
     img = build_poster(canvas, _score, genre, cfg, fallback_title=title,
                        release_year=(year or None), no_poster=True)
     buf = io.BytesIO()
-    img.convert("RGB").save(buf, format="JPEG", quality=90)
-    jpeg = buf.getvalue()
+    if _cfg.OUTPUT_FORMAT == "webp":
+        img.convert("RGBA").save(buf, format="WEBP", quality=getattr(_cfg, 'WEBP_QUALITY', 90), method=4)
+    else:
+        img.convert("RGB").save(buf, format="JPEG", quality=getattr(_cfg, 'JPEG_QUALITY', 90))
+    
+    img_bytes = buf.getvalue()
+    
     if len(_debug_canvas_cache) >= _DEBUG_CANVAS_MAX_ENTRIES:
-        oldest = min(_debug_canvas_cache, key=lambda key: _debug_canvas_cache[key][0])
+        oldest = min(_debug_canvas_cache, key=lambda key: _debug_canvas_cache[key])
         _debug_canvas_cache.pop(oldest, None)
-    _debug_canvas_cache[cache_key] = (now, jpeg)
+    
+    _debug_canvas_cache[cache_key] = (now, img_bytes)
     return Response(
-        content=jpeg, media_type="image/jpeg",
+        content=img_bytes, media_type=media_type,
         headers={"Cache-Control": "private, max-age=300"},
     )
 
@@ -2297,6 +2390,7 @@ async def get_poster(
     muted: str | None = None,
     textless: str | None = None,
     score_color_mode: str | None = None,
+    show_genre: str | None = None,
     debug: str | None = None,
     nocache: str | None = None,
 ):
@@ -2381,15 +2475,17 @@ async def get_poster(
             ).encode()
         ).hexdigest()[:16]
         final_cache_key = f"{imdb_id}:{tmdb_id}:{type}:{_params_hash}"
-        cached_jpeg = None if _force_refresh else get_cached_final_poster(final_cache_key)
+        cached_image = None if _force_refresh else get_cached_final_poster(final_cache_key)
         if _force_refresh:
             logger.info(f"Force refresh (nocache) for {final_cache_key} — bypassing cache read")
-        if cached_jpeg is not None:
+        if cached_image is not None:
             logger.info(f"Final poster cache hit for {final_cache_key}")
             etag = f'"{final_cache_key}"'
             if request.headers.get("if-none-match") == etag:
                 return Response(status_code=304)
-            _hit_resp = Response(content=cached_jpeg, media_type="image/jpeg")
+            
+            _media_type = "image/webp" if _cfg.OUTPUT_FORMAT == "webp" else "image/jpeg"
+            _hit_resp = Response(content=cached_image, media_type=_media_type)
             _hit_resp.headers["ETag"] = etag
             # This path is only reached when composite caching is enabled, so a
             # no-store branch would be dead here — CDN TTL is the only option.
@@ -2411,7 +2507,8 @@ async def get_poster(
         if _existing_fut is not None:
             logger.info(f"Coalescing request for {final_cache_key}")
             try:
-                _coal_resp = Response(content=await _existing_fut, media_type="image/jpeg")
+                _media_type = "image/webp" if _cfg.OUTPUT_FORMAT == "webp" else "image/jpeg"
+                _coal_resp = Response(content=await _existing_fut, media_type=_media_type)
                 _coal_resp.headers["ETag"] = f'"{final_cache_key}"'
                 # Coalescing only happens when caching is on (final_cache_key set),
                 # so no-store can't apply here — CDN TTL only.
@@ -3203,7 +3300,10 @@ async def get_poster(
         def _composite_and_encode() -> bytes:
             result = build_poster(image, score, genre, rcfg, **_bp_args)
             buf = io.BytesIO()
-            result.convert("RGB").save(buf, format="JPEG", quality=_cfg.JPEG_QUALITY)
+            if _cfg.OUTPUT_FORMAT == "webp":
+                result.convert("RGBA").save(buf, format="WEBP", quality=_cfg.WEBP_QUALITY, method=4)
+            else:
+                result.convert("RGB").save(buf, format="JPEG", quality=_cfg.JPEG_QUALITY)
             return buf.getvalue()
 
         img_bytes = await asyncio.get_running_loop().run_in_executor(
@@ -3226,7 +3326,8 @@ async def get_poster(
         if _render_fut is not None:
             _render_fut.set_result(img_bytes)
 
-        response = Response(content=img_bytes, media_type="image/jpeg")
+        _media_type = "image/webp" if _cfg.OUTPUT_FORMAT == "webp" else "image/jpeg"
+        response = Response(content=img_bytes, media_type=_media_type)
         if final_cache_key is not None:
             response.headers["ETag"] = f'"{final_cache_key}"'
         if _cfg.DISABLE_COMPOSITE_CACHE:

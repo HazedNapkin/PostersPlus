@@ -264,25 +264,31 @@ LANGUAGE_LABELS: dict[str, str] = {
 
 # Sash type (controls colour) for each priority slot
 _SASH_TYPES: dict[str, str] = {
-    "wins":            "win",       # gold — Oscar Best Picture + Emmy Outstanding wins
-    "gg_wins":         "win",       # gold — Golden Globe wins (separate slot)
-    "pic_noms":        "nom",       # silver — Best Picture nom + Major Emmy nom (film vs TV, never coexist)
+    "oscar_win":       "win",       # gold — Oscar Best Picture
+    "emmy_win":        "win",       # gold — Emmy Outstanding wins
+    "gg_wins":         "win",       # gold — Golden Globe wins
+    "oscar_nom":       "nom",       # silver — Best Picture nom
+    "emmy_nom":        "nom",       # silver — Major Emmy nom
+    "pic_noms":        "nom",       # silver — legacy alias
     "gg_noms":         "nom",       # silver — Golden Globe nomination
-    "emmy_noms":       "nom",       # silver — legacy alias for pic_noms
-    "noms":            "nom",       # silver — legacy catch-all for any nomination
-    "festival":        "win",       # gold — major festival win is prestige-equivalent to Oscar
-    "studio":          "prestige",  # purple — production credit
-    "director":        "prestige",  # purple — production credit
-    "cast":            "cast",      # green — talent credit
+    "emmy_noms":       "nom",       # silver — legacy alias
+    "noms":            "nom",       # silver — legacy catch-all
+    "festival":        "win",       # gold
+    "studio":          "prestige",  # purple
+    "director":        "prestige",  # purple
+    "cast":            "cast",      # green
     "trending":        "trending",  # blue
-    "cult":            "trending",  # blue — popularity signal, closest to trending without a new colour
-    "foreign":         "info",      # teal — informational / discovery
-    "new_release":     "alert",     # red — newly streaming (release date or r/movieleaks)
-    "digital_release": "alert",     # red — legacy alias for new_release
-    "metacritic":      "nom",       # silver — critical award, fits with noms not production
+    "cult":            "trending",  # blue
+    "foreign":         "info",      # teal
+    "new_release":     "alert",     # red
+    "digital_release": "alert",     # red — legacy alias
+    "metacritic":      "nom",       # silver
     "true_story":      "info",      # teal
-    "structural":      "info",      # teal
-    "release_status":  "alert",     # red — Physical / Streaming / Cinema / Production
+    "short":           "info",      # teal — previously under "structural"
+    "miniseries":      "info",      # teal — previously under "structural"
+    "binge":           "info",      # teal — previously under "structural"
+    "structural":      "info",      # teal — legacy alias
+    "release_status":  "alert",     # red
 }
 
 NEW_RELEASE_DAYS = 14
@@ -495,7 +501,25 @@ def pick_sash(
 
 def _evaluate_slot(slot: str, meta: DiscoveryMeta) -> str | None:
     """Return a label string if this slot has a match, else None."""
+    
+    # --- New Granular Award Checks ---
+    if slot == "oscar_win":
+        w = [v for v in meta.award_wins if "Best Picture" in v]
+        return w[0] if w else None
 
+    if slot == "emmy_win":
+        w = [v for v in meta.award_wins if "Emmy" in v]
+        return w[0] if w else None
+        
+    if slot == "oscar_nom":
+        match = next((n for n in meta.award_noms if "Best Picture" in n), None)
+        return match
+
+    if slot == "emmy_nom":
+        match = next((n for n in meta.award_noms if "Emmy" in n), None)
+        return match
+
+    # --- Legacy Award Checks (for backward-compat with old URLs) ---
     if slot == "wins":
         # Oscar Best Picture wins and Emmy Outstanding wins only.
         # Golden Globe wins have their own slot (gg_wins) so they can be
@@ -565,7 +589,18 @@ def _evaluate_slot(slot: str, meta: DiscoveryMeta) -> str | None:
 
     if slot == "true_story":
         return "True Story" if meta.is_true_story else None
+    
+    # --- New Granular Structural Checks ---
+    if slot == "short":
+        return "Short Film" if meta.is_short_film else None
+        
+    if slot == "miniseries":
+        return "Mini Series" if meta.is_mini_series else None
+        
+    if slot == "binge":
+        return "Binge Ready" if meta.is_binge_ready else None
 
+    # --- Legacy Structural Check (for backward-compat) ---
     if slot == "structural":
         for key in _STRUCTURAL_CHECKS:
             if key == "short_film"  and meta.is_short_film:  return _STRUCTURAL_LABELS[key]
@@ -584,10 +619,12 @@ def _evaluate_slot(slot: str, meta: DiscoveryMeta) -> str | None:
 # ---------------------------------------------------------------------------
 
 ALL_PRIORITY_SLOTS: list[str] = [
-    "wins",
+    "oscar_win",
+    "emmy_win",
     "gg_wins",
     "festival",
-    "pic_noms",
+    "oscar_nom",
+    "emmy_nom",
     "gg_noms",
     "studio",
     "director",
@@ -598,11 +635,16 @@ ALL_PRIORITY_SLOTS: list[str] = [
     "new_release",
     "metacritic",
     "true_story",
-    "structural",
-    "emmy_noms",        # legacy alias for pic_noms — still accepted in sash_priority param
-    "digital_release",  # legacy alias for new_release
-    "noms",             # legacy alias for any nomination
-    "release_status",   # opt-in: Blu-ray / Streaming / Cinema / Production — requires extra API call for movies
+    "short",
+    "miniseries",
+    "binge",
+    "wins",             # legacy alias
+    "structural",       # legacy alias
+    "pic_noms",         # legacy alias
+    "emmy_noms",        # legacy alias
+    "digital_release",  # legacy alias 
+    "noms",             # legacy alias 
+    "release_status",   
 ]
 
 

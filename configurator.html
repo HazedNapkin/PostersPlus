@@ -1685,7 +1685,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
       <div class="notch"></div>
       <div class="panel-header">
         <span class="panel-title">Configuration</span>
-        <button type="button" class="panel-index whatsnew-version" id="whatsnew-version" onclick="openWhatsNew()" data-acked="true" title="What's new">v1.1.0</button>
+        <button type="button" class="panel-index whatsnew-version" id="whatsnew-version" onclick="openWhatsNew()" data-acked="true" title="What's new">v1.1-dev</button>
       </div>
       <div class="panel-body">
 
@@ -1867,6 +1867,16 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="medium" selected>Medium</option>
                 <option value="high">High</option>
               </select>
+              <div class="toggle-row">
+              <div>
+                <div class="toggle-label">Vignette Only With Sash</div>
+                <div class="field-hint">Only apply the top vignette if an info sash is active on the poster.</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="tog-top-gradient-sash-only" onchange="build(); queuePreviewReload()">
+                <div class="toggle-track"><div class="toggle-thumb"></div></div>
+              </label>
+            </div>
               <div class="field-hint">The power of the darkening applied to the top.</div>
             </div>
             <div class="field">
@@ -1899,6 +1909,16 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="3">Minimalist</option>
                 <option value="4">Bar</option>
               </select>
+            </div>
+            <div class="toggle-row cfg-sep" id="rating-show-genre-toggle" style="margin-bottom:14px;">
+              <div>
+                <div class="toggle-label">Show Genre</div>
+                <div class="field-hint">Display the genre text alongside the rating/score.</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="tog-show-genre" checked onchange="build(); queuePreviewReload()">
+                <div class="toggle-track"><div class="toggle-thumb"></div></div>
+              </label>
             </div>
             <div id="rating-alt-colors-toggle" style="margin-bottom:14px;">
               <div class="field">
@@ -2602,22 +2622,26 @@ function onPrimaryClientChange({ rebuild = true } = {}) {
 const TMDB_IMG = 'https://image.tmdb.org/t/p/w92';
 
 const SASH_SLOTS = [
-  { id:'wins',       label:'Best Picture / Major Emmy Win',     color:'#c9a84c' },
-  { id:'gg_wins',    label:'Golden Globe Win',                  color:'#c9a84c' },
-  { id:'festival',   label:'Festival Winner',                   color:'#c9a84c' },
-  { id:'pic_noms',   label:'Best Picture / Major Emmy Nom',     color:'#9a9a9a' },
-  { id:'gg_noms',    label:'Golden Globe Nom',                  color:'#9a9a9a' },
-  { id:'studio',     label:'Notable Studio Name',               color:'#9060cc' },
-  { id:'director',   label:'Notable Director Name',             color:'#9060cc' },
-  { id:'cast',       label:'Notable Cast Name',                 color:'#4ab87a' },
-  { id:'trending',   label:'TMDB Trending Top 40',              color:'#5aaaff' },
-  { id:'cult',       label:'Cult Classic',                      color:'#5aaaff' },
-  { id:'foreign',    label:'Foreign Language',                  color:'#3ab0a8' },
-  { id:'new_release', label:'Newly Streaming (New)',                              color:'#e05555' },
-  { id:'metacritic', label:'Metacritic Must-See',               color:'#9a9a9a' },
-  { id:'true_story', label:'True Story',                        color:'#3ab0a8' },
-  { id:'structural',     label:'Short / Mini / Binge',              color:'#3ab0a8' },
-  { id:'release_status', label:'Release Status (extra API call)',    color:'#e05555' },
+  { id:'oscar_win',   label:'Best Picture',             color:'#c9a84c' },
+  { id:'emmy_win',    label:'Major Emmy Win',           color:'#c9a84c' },
+  { id:'gg_wins',     label:'Golden Globe Win',         color:'#c9a84c' },
+  { id:'festival',    label:'Festival Winner',          color:'#c9a84c' },
+  { id:'oscar_nom',   label:'Best Picture Nom',         color:'#9a9a9a' },
+  { id:'emmy_nom',    label:'Major Emmy Nom',           color:'#9a9a9a' },
+  { id:'gg_noms',     label:'Golden Globe Nom',         color:'#9a9a9a' },
+  { id:'studio',      label:'Notable Studio Name',      color:'#9060cc' },
+  { id:'director',    label:'Notable Director Name',    color:'#9060cc' },
+  { id:'cast',        label:'Notable Cast Name',        color:'#4ab87a' },
+  { id:'trending',    label:'TMDB Trending Top 40',     color:'#5aaaff' },
+  { id:'cult',        label:'Cult Classic',             color:'#5aaaff' },
+  { id:'foreign',     label:'Foreign Language',         color:'#3ab0a8' },
+  { id:'new_release', label:'Newly Streaming (New)',    color:'#e05555' },
+  { id:'metacritic',  label:'Metacritic Must-See',      color:'#9a9a9a' },
+  { id:'true_story',  label:'True Story',               color:'#3ab0a8' },
+  { id:'short',       label:'Short Film',               color:'#3ab0a8' },
+  { id:'miniseries',  label:'Miniseries',               color:'#3ab0a8' },
+  { id:'binge',       label:'Binge',                    color:'#3ab0a8' },
+  { id:'release_status', label:'Release Status (extra API call)', color:'#e05555' },
 ];
 
 // All sash slots are enabled by default.  "release_status" sits last in the
@@ -3466,9 +3490,13 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   params.set('top_gradient',    vEl('cfg-top-gradient')    || 'high');
   params.set('bottom_gradient', vEl('cfg-bottom-gradient') || 'high');
   params.set('fallback_to_imdb', c('tog-fallback-imdb') ? 'true' : 'false');
+  params.set('top_gradient',    vEl('cfg-top-gradient')    || 'high');
+  params.set('top_gradient_sash_only', c('tog-top-gradient-sash-only') ? 'true' : 'false');
+  params.set('bottom_gradient', vEl('cfg-bottom-gradient') || 'high');
 
   // ── Rating / Genre Label ───────────────────────────────────────────────────
   params.set('rating_display_mode', ratingMode);
+  params.set('show_genre', c('tog-show-genre') ? 'true' : 'false');
   if (ratingMode !== 0) {
     // Colour palette: exposed for the modes whose pip/score colour visibly uses it
     if (ratingMode === 1 || ratingMode === 3) {
@@ -3954,7 +3982,7 @@ function applyImport() {
 // Bump WHATS_NEW_VERSION whenever the modal content changes — existing users
 // will see the unread dot on the chip until they open and acknowledge it.
 // The chip itself stays visible so users can re-open the list whenever.
-const WHATS_NEW_VERSION = '1.1.0';
+const WHATS_NEW_VERSION = '1.0.0';
 
 function openWhatsNew() {
   document.getElementById('whatsnew-modal').classList.add('open');
@@ -4051,6 +4079,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     if (_tg === 'false' || _tg === '0' || _tg === 'no')  _tg = 'off';
     if (['off','low','medium','high'].includes(_tg)) _setEl('cfg-top-gradient', _tg);
   }
+  if (p.has('top_gradient_sash_only')) _setEl('tog-top-gradient-sash-only', p.get('top_gradient_sash_only'));
   if (p.has('bottom_gradient')) {
     const _bg = (p.get('bottom_gradient') || '').toLowerCase();
     if (['off','low','medium','high'].includes(_bg)) _setEl('cfg-bottom-gradient', _bg);
@@ -4094,6 +4123,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
 
   // ── Rating display ──────────────────────────────────────────────────────
   if (p.has('rating_display_mode'))            _setEl('cfg-rating-mode',  p.get('rating_display_mode'));
+  if (p.has('show_genre'))                     _setEl('tog-show-genre',   p.get('show_genre'));
   if (p.has('accent_bar_font_size_ratio'))     _setEl('cfg-font-mode1',   p.get('accent_bar_font_size_ratio'));
   if (p.has('accent_bar_append_mode'))         _setEl('cfg-bar-append',   p.get('accent_bar_append_mode'));
   if (p.has('accent_bar_bottom_ratio'))        _setEl('cfg-bar-bottom',   p.get('accent_bar_bottom_ratio'));
@@ -4348,17 +4378,14 @@ initCustomMobileSliders();
 
 <div class="import-modal" id="whatsnew-modal" onclick="if(event.target===this)closeWhatsNew()">
   <div class="import-modal-box">
-    <div class="import-modal-title">What's new in v1.1.0</div>
+    <div class="import-modal-title">What's new in v1.0.0</div>
     <ul class="whatsnew-list">
-      <li>New Frosted Bar poster layout, with frosted, black, silver, gold, and rating-focused styles</li>
-      <li>Rebuilt textless-poster detection around a new OCR model, with background scanning and load controls for live installations</li>
-      <li>Smarter TMDB poster selection: a tiny number of votes can no longer promote a badly rated poster over substantially better artwork</li>
-      <li>Expanded artwork selection: original-art controls, language-aware poster matching, improved logo fallback, and face- and saliency-aware cropping</li>
-      <li>New notch sash style, plus release-status sashes for BluRay, Streaming, Cinema, and Production</li>
-      <li>Backdrop fallback and genre-tinted fallback canvas when no poster or textless art is available</li>
-      <li>MDBList rate-limit cooldown: automatic global pause on 429 to prevent cascade failures</li>
-      <li>New preset gallery and a reorganized, mobile-friendly tabbed configurator</li>
-      <li>New poster-output translations for French, Portuguese, and Italian</li>
+      <li>Info Sash badge style — rounded rectangle alternative to the diagonal sash, with adjustable X/Y position</li>
+      <li>Golden Globe wins and nominations now have their own dedicated sash slots</li>
+      <li>Backdrop fallback — TMDB landscape backdrop is cropped to portrait when no textless poster (or no poster at all) is available</li>
+      <li>Genre-tinted fallback canvas — atmospheric colour matched to genre when no art exists</li>
+      <li>Smoother edges — Cairo antialiasing on award badge corners and pill renders</li>
+      <li>MDBlist rate-limit cooldown — automatic global pause on 429 to prevent cascade failures</li>
     </ul>
     <div class="import-modal-btns">
       <button class="btn btn-primary" onclick="closeWhatsNew()">Got it</button>
