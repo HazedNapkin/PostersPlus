@@ -579,3 +579,35 @@ async def fetch_tvdb_poster(
     image.convert("RGB").save(buf, format="JPEG", quality=92)
     set_cached_tmdb_poster(cache_key, buf.getvalue())
     return image
+
+
+async def tvdb_poster(
+    client: httpx.AsyncClient,
+    *,
+    media_type: str,
+    language: str | None = None,
+    imdb_id: str | None = None,
+    tmdb_id: str | None = None,
+    tvdb_id_hint: int | str | None = None,
+) -> tuple[Image.Image | None, int | None]:
+    """One-call poster rescue: resolve id, pull artwork index, return the best
+    poster normalised to poster dimensions, plus the resolved id for the caller's
+    text-detection key. TVDB posters usually carry burned-in title text, so the
+    caller MUST vet the result before compositing a logo. Gated by TVDB_USE_POSTERS
+    (default off)."""
+    from config import TVDB_USE_POSTERS
+    if not tvdb_enabled() or not TVDB_USE_POSTERS:
+        return None, None
+    try:
+        tvdb_id = await resolve_tvdb_id(
+            client, media_type=media_type, tvdb_id_hint=tvdb_id_hint,
+            imdb_id=imdb_id, tmdb_id=tmdb_id,
+        )
+        if not tvdb_id:
+            return None, None
+        artworks = await fetch_tvdb_artworks(client, tvdb_id, media_type)
+        image = await fetch_tvdb_poster(client, artworks, tvdb_id, language)
+        return image, tvdb_id
+    except Exception as exc:
+        logger.warning(f"TVDB poster rescue failed: {exc}")
+        return None, None
