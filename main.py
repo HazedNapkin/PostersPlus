@@ -3189,6 +3189,9 @@ async def get_poster(
         genre_ids, is_textless, logos, release_year, title, poster_path, backdrop_path, tmdb_data = (
             await _coalesced_fetch_poster_metadata(client, tmdb_id, effective_tmdb_key, type, rcfg.logo_language)
         )
+        # Canonical IMDb id for downstream lookups (e.g. TVDB remoteid resolution):
+        # the request param if supplied, else the one TMDB returned in external_ids.
+        effective_imdb_id = (imdb_id or "").strip() or tmdb_data.get("imdb_id") or None
         _text_titles = tuple(dict.fromkeys(
             value for value in (title, tmdb_data.get("original_title")) if value
         ))
