@@ -33,6 +33,31 @@ SERVER_TMDB_KEY       = os.environ.get("TMDB_API_KEY", "").strip()
 SERVER_MDBLIST_KEY    = os.environ.get("MDBLIST_API_KEY", "").strip()
 SERVER_MDBLIST_KEY_2  = os.environ.get("MDBLIST_API_KEY_2", "").strip()
 
+# TheTVDB v4 API key.  Optional — when empty, every TVDB code path is skipped
+# and behaviour is identical to TMDB-only.  TVDB is used strictly as a fallback
+# source of art (logos, backdrops, optionally textless posters) for titles where
+# TMDB returns nothing usable, to reduce fallbacks to text titles / genre canvas.
+# Unlike TMDB/MDBList (api key per request), TVDB v4 requires a one-month bearer
+# token obtained from POST /login; the key is exchanged for a token internally.
+SERVER_TVDB_KEY       = os.environ.get("TVDB_API_KEY", "").strip()
+# Only required for user-supported ("subscriber") TVDB keys; blank for company keys.
+TVDB_SUBSCRIBER_PIN   = os.environ.get("TVDB_SUBSCRIBER_PIN", "").strip()
+
+def _tvdb_flag(key: str, default: bool) -> bool:
+    raw = os.environ.get(key, "").strip().lower()
+    if raw == "":
+        return default
+    return raw in ("1", "true", "yes")
+
+# Per-asset feature toggles.  Logos/backdrops default on (low regression risk —
+# pure fallback); posters default off because TVDB posters usually carry burned-in
+# title text and must be vetted by text detection before use.
+TVDB_USE_LOGOS        = _tvdb_flag("TVDB_USE_LOGOS",     True)
+TVDB_USE_BACKDROPS    = _tvdb_flag("TVDB_USE_BACKDROPS", True)
+TVDB_USE_POSTERS      = _tvdb_flag("TVDB_USE_POSTERS",   False)
+# Caps concurrent TVDB API calls so a burst of uncached misses can't stampede it.
+TVDB_CONCURRENCY      = max(1, int(os.environ.get("TVDB_CONCURRENCY", "3")))
+
 # Ordered list of all configured server-side MDBList keys (primary first).
 # Used by the key-rotation logic in main.py to fall back when a key is exhausted.
 SERVER_MDBLIST_KEYS: list[str] = [k for k in [SERVER_MDBLIST_KEY, SERVER_MDBLIST_KEY_2] if k]
@@ -96,6 +121,13 @@ TMDB_LOGO_CACHE_DURATION     = 60
 # same jitter.
 TMDB_IMAGE_CACHE_JITTER_DAYS = int(os.environ.get("TMDB_IMAGE_CACHE_JITTER_DAYS", "10"))
 TMDB_METADATA_CACHE_DURATION = 7    # re-check textless status / logos weekly
+# TVDB artwork listings change slowly; cache the per-title artwork index and the
+# resolved TVDB id for a fortnight.  Negative results (no TVDB match / no art) are
+# cached for a shorter window so newly-added TVDB art is picked up reasonably soon.
+TVDB_ARTWORK_CACHE_DURATION  = int(os.environ.get("TVDB_ARTWORK_CACHE_DURATION", "14"))   # days
+TVDB_NEG_CACHE_DURATION      = int(os.environ.get("TVDB_NEG_CACHE_DURATION", "3"))         # days
+# Artwork-type catalogue (/artwork/types) almost never changes — cache it long.
+TVDB_TYPES_CACHE_DURATION    = int(os.environ.get("TVDB_TYPES_CACHE_DURATION", "30"))      # days
 DAYS_CONSIDERED_NEW          = 14
 NEW_CACHE_DURATION           = 1
 OLD_CACHE_DURATION           = 14

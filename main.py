@@ -2321,6 +2321,12 @@ async def lifespan(app: FastAPI):
                 logger.warning(f"PP-OCR warm-up failed: {exc}")
         asyncio.create_task(_warm_text_detector())
 
+    try:
+        from tvdb import tvdb_status
+        logger.info(f"TVDB fallback art source: {tvdb_status()}")
+    except Exception as exc:
+        logger.warning(f"TVDB status check failed: {exc}")
+
     _digital_release_ready = asyncio.Event()
     prune_task   = asyncio.create_task(_cache_prune_loop())
     digital_task = asyncio.create_task(digital_release_poll_loop(_HTTP_CLIENT, _digital_release_ready))

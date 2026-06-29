@@ -254,6 +254,19 @@ def init_db() -> None:
         )
     """)
 
+    # Generic JSON cache for TVDB bookkeeping: resolved TVDB ids (incl. negative
+    # "no match" results), per-title artwork indexes, the artwork-type catalogue,
+    # and the auth token.  Each row carries its own TTL so different record kinds
+    # (long-lived artwork vs. short negative cache) coexist in one table.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tvdb_cache (
+            cache_key   TEXT PRIMARY KEY,
+            value_json  TEXT NOT NULL,
+            cached_at   INTEGER NOT NULL,
+            ttl_seconds INTEGER NOT NULL
+        )
+    """)
+
     # Migrate existing tmdb_metadata_cache rows.
     for col, definition in (
         ("credits_json",        "TEXT"),
@@ -514,6 +527,14 @@ def prune_caches() -> None:
             )
             if r.rowcount:
                 logger.info(f"Pruned {r.rowcount} old text-detection cache entries")
+
+            # Each tvdb_cache row stores its own TTL, so expiry is per-row rather
+            # than a single cutoff.
+            r = db.execute(
+                "DELETE FROM tvdb_cache WHERE (? - cached_at) > ttl_seconds", (now,)
+            )
+            if r.rowcount:
+                logger.info(f"Pruned {r.rowcount} expired TVDB cache entries")
 
             db.commit()
 
@@ -1142,6 +1163,48 @@ def delete_cached_tmdb_metadata(cache_key: str) -> None:
         logger.info(f"TMDB metadata cache invalidated for {cache_key}")
     except Exception as exc:
         logger.error(f"TMDB metadata cache delete error: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# TVDB generic JSON cache (resolved ids, artwork indexes, type catalogue, token)
+# ---------------------------------------------------------------------------
+
+def get_cached_tvdb_json(cache_key: str) -> dict | None:
+    """Return the cached JSON object for *cache_key*, or None on miss/expiry.
+    Expired rows are deleted on read so stale data never lingers."""
+    try:
+        row = get_db().execute(
+            "SELECT value_json, cached_at, ttl_seconds FROM tvdb_cache WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
+        if not row:
+            return None
+        value_json, cached_at, ttl_seconds = row
+        if (time.time() - cached_at) > ttl_seconds:
+            with _db_lock:
+                get_db().execute("DELETE FROM tvdb_cache WHERE cache_key = ?", (cache_key,))
+                get_db().commit()
+            return None
+        return json.loads(value_json)
+    except Exception as exc:
+        logger.error(f"TVDB cache read error: {exc}")
+        return None
+
+
+def set_cached_tvdb_json(cache_key: str, value: dict, ttl_seconds: int) -> None:
+    try:
+        with _db_lock:
+            get_db().execute(
+                """
+                INSERT OR REPLACE INTO tvdb_cache
+                    (cache_key, value_json, cached_at, ttl_seconds)
+                VALUES (?, ?, ?, ?)
+                """,
+                (cache_key, json.dumps(value), int(time.time()), int(ttl_seconds)),
+            )
+            get_db().commit()
+    except Exception as exc:
+        logger.error(f"TVDB cache write error: {exc}")
 
 
 # ---------------------------------------------------------------------------
