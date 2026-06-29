@@ -725,9 +725,13 @@ class RequestConfig:
     muted: bool = False
     textless: bool = False
     score_color_mode: int = 2
-    top_gradient:    str = "high"   # off | low | medium | high — strength of the top vignette
-    top_gradient_sash_only: bool = False # only apply top vignette if a sash is present
-    bottom_gradient: str = "high"   # off | low | medium | high — strength of the bottom vignette
+    top_gradient:           str   = "high"  # off | low | medium | high — strength of the top vignette
+    top_gradient_sash_only: bool  = False   # only apply top vignette if a sash is present
+    top_gradient_intensity: int   | None = None  # granular override: intensity 0–100 (None = use preset)
+    top_gradient_height:    int   | None = None  # granular override: height    0–100 (None = use preset)
+    bottom_gradient:        str   = "high"  # off | low | medium | high — strength of the bottom vignette
+    bottom_gradient_intensity: int | None = None  # granular override: intensity 0–100 (None = use preset)
+    bottom_gradient_height:    int | None = None  # granular override: height    0–100 (None = use preset)
     sash_badge: bool = False              # legacy; superseded by sash_mode (kept for back-compat parsing)
     sash_mode: str = "sash"               # "sash" (diagonal) | "notch"
     sash_badge_style:  str   = "frosted" # "silver" | "gold" | "frosted"
@@ -840,6 +844,21 @@ def build_request_config(params: dict) -> RequestConfig:
         cfg.top_gradient = "off"
     # else: leave RequestConfig default ("high")
     cfg.top_gradient_sash_only = _b("top_gradient_sash_only", cfg.top_gradient_sash_only)
+    # Granular top-vignette overrides.  When present these take priority over the
+    # preset level above; the configurator only sends them when the granular toggle
+    # is enabled so existing URLs are unaffected.
+    _tgi = params.get("top_gradient_intensity")
+    if _tgi is not None:
+        try:
+            cfg.top_gradient_intensity = max(0, min(100, int(_tgi)))
+        except (ValueError, TypeError):
+            pass
+    _tgh = params.get("top_gradient_height")
+    if _tgh is not None:
+        try:
+            cfg.top_gradient_height = max(0, min(100, int(_tgh)))
+        except (ValueError, TypeError):
+            pass
 
     # bottom_gradient — same four-level enum as top.  Brand-new param so no
     # legacy boolean form to honour; unknown values fall through to the
@@ -847,6 +866,19 @@ def build_request_config(params: dict) -> RequestConfig:
     _bg_raw = (params.get("bottom_gradient") or "").strip().lower()
     if _bg_raw in _BOTTOM_GRADIENT_LEVELS:
         cfg.bottom_gradient = _bg_raw
+    # Granular bottom-vignette overrides — same pattern as top.
+    _bgi = params.get("bottom_gradient_intensity")
+    if _bgi is not None:
+        try:
+            cfg.bottom_gradient_intensity = max(0, min(100, int(_bgi)))
+        except (ValueError, TypeError):
+            pass
+    _bgh = params.get("bottom_gradient_height")
+    if _bgh is not None:
+        try:
+            cfg.bottom_gradient_height = max(0, min(100, int(_bgh)))
+        except (ValueError, TypeError):
+            pass
     cfg.sash_badge              = _b("sash_badge",              cfg.sash_badge)
     # sash_mode supersedes the legacy sash_badge bool; fall back to it for old
     # URLs/presets (sash_badge=true → notch, false → diagonal sash).
@@ -1276,6 +1308,13 @@ def build_poster(
     # treated as "high" rather than skipped so a typo in a URL doesn't
     # silently disable the vignette.
     _tg_preset = _TOP_GRADIENT_LEVELS.get(cfg.top_gradient, _TOP_GRADIENT_LEVELS["high"])
+    # Granular override: if the configurator sent explicit intensity/height values,
+    # build a custom (height_ratio, max_alpha) tuple in place of the preset.
+    if cfg.top_gradient_intensity is not None or cfg.top_gradient_height is not None:
+        _tg_intensity = cfg.top_gradient_intensity if cfg.top_gradient_intensity is not None else 60
+        _tg_height    = cfg.top_gradient_height    if cfg.top_gradient_height    is not None else 30
+        # height 0–100 maps to 0.0–0.60 of poster height; intensity 0–100 maps to alpha 0–255
+        _tg_preset = (round(_tg_height / 100 * 0.60, 4), round(_tg_intensity / 100 * 255))
 
     # Check if gradient should be suppressed by sash not being present
     _apply_top = True
@@ -1302,6 +1341,12 @@ def build_poster(
     # Unknown level falls back to "high" so a typo can't accidentally turn
     # the fade off entirely (which would break label legibility).
     _bg_preset = _BOTTOM_GRADIENT_LEVELS.get(cfg.bottom_gradient, _BOTTOM_GRADIENT_LEVELS["high"])
+    # Granular override: same logic as the top — explicit values replace the preset tuple.
+    if cfg.bottom_gradient_intensity is not None or cfg.bottom_gradient_height is not None:
+        _bgi_val = cfg.bottom_gradient_intensity if cfg.bottom_gradient_intensity is not None else 70
+        _bgh_val = cfg.bottom_gradient_height    if cfg.bottom_gradient_height    is not None else 50
+        # height 0–100 maps to 0.0–0.70 of poster height; intensity 0–100 maps to alpha 0–255
+        _bg_preset = (round(_bgh_val / 100 * 0.70, 4), round(_bgi_val / 100 * 255))
     if _bg_preset is not None:
         bottom_height_ratio, bottom_max_alpha = _bg_preset
         bottom_height = int(height * bottom_height_ratio)

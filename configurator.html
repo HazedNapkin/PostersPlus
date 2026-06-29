@@ -1867,16 +1867,48 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="medium" selected>Medium</option>
                 <option value="high">High</option>
               </select>
-              <div class="toggle-row">
-              <div>
-                <div class="toggle-label">Vignette Only With Sash</div>
-                <div class="field-hint">Only apply the top vignette if an info sash is active on the poster.</div>
+              <!-- Granular top vignette controls: toggling this reveals per-axis
+                   intensity and height sliders for fine-tuned gradient control.
+                   When disabled the preset dropdown above is used instead. -->
+              <div class="toggle-row" style="margin-top:8px;">
+                <div>
+                  <div class="toggle-label">Granular Top Vignette Controls</div>
+                  <div class="field-hint">Override the preset with exact intensity and height values.</div>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-top-gradient-granular" onchange="updateVignetteControls(); build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
               </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="tog-top-gradient-sash-only" onchange="build(); queuePreviewReload()">
-                <div class="toggle-track"><div class="toggle-thumb"></div></div>
-              </label>
-            </div>
+              <!-- Granular sub-controls — hidden until the toggle above is enabled -->
+              <div id="top-gradient-granular-fields" style="display:none; margin-top:10px;">
+                <div class="field">
+                  <label class="field-label">Intensity (0–100)</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-top-gradient-intensity" min="0" max="100" step="1" value="40"
+                           oninput="updateRange(this,'rng-tgi'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-tgi">40</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="field-label">Height (0–100)</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-top-gradient-height" min="0" max="100" step="1" value="50"
+                           oninput="updateRange(this,'rng-tgh'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-tgh">50</span>
+                  </div>
+                </div>
+              </div>
+              <div class="toggle-row" style="margin-top:8px;">
+                <div>
+                  <div class="toggle-label">Vignette Only With Sash</div>
+                  <div class="field-hint">Only apply the top vignette if an info sash is active on the poster.</div>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-top-gradient-sash-only" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
               <div class="field-hint">The power of the darkening applied to the top.</div>
             </div>
             <div class="field">
@@ -1887,6 +1919,37 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="medium">Medium</option>
                 <option value="high" selected>High</option>
               </select>
+              <!-- Granular bottom vignette controls: mirrors the top vignette toggle.
+                   Exposes numeric intensity and height in place of the preset dropdown. -->
+              <div class="toggle-row" style="margin-top:8px;">
+                <div>
+                  <div class="toggle-label">Granular Bottom Vignette Controls</div>
+                  <div class="field-hint">Override the preset with exact intensity and height values.</div>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-bottom-gradient-granular" onchange="updateVignetteControls(); build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
+              <!-- Granular sub-controls — hidden until the toggle above is enabled -->
+              <div id="bottom-gradient-granular-fields" style="display:none; margin-top:10px;">
+                <div class="field">
+                  <label class="field-label">Intensity (0–100)</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-bottom-gradient-intensity" min="0" max="100" step="1" value="70"
+                           oninput="updateRange(this,'rng-bgi'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-bgi">70</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="field-label">Height (0–100)</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-bottom-gradient-height" min="0" max="100" step="1" value="60"
+                           oninput="updateRange(this,'rng-bgh'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-bgh">60</span>
+                  </div>
+                </div>
+              </div>
               <div class="field-hint">Lowering may hurt rating and logo legibility.</div>
             </div>
           </div>
@@ -3493,6 +3556,16 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   params.set('top_gradient',    vEl('cfg-top-gradient')    || 'high');
   params.set('top_gradient_sash_only', c('tog-top-gradient-sash-only') ? 'true' : 'false');
   params.set('bottom_gradient', vEl('cfg-bottom-gradient') || 'high');
+  // Granular vignette overrides — only emitted when the granular toggle is on.
+  // When present, the backend should use these in place of the preset level above.
+  if (c('tog-top-gradient-granular')) {
+    params.set('top_gradient_intensity', ni('cfg-top-gradient-intensity'));
+    params.set('top_gradient_height',    ni('cfg-top-gradient-height'));
+  }
+  if (c('tog-bottom-gradient-granular')) {
+    params.set('bottom_gradient_intensity', ni('cfg-bottom-gradient-intensity'));
+    params.set('bottom_gradient_height',    ni('cfg-bottom-gradient-height'));
+  }
 
   // ── Rating / Genre Label ───────────────────────────────────────────────────
   params.set('rating_display_mode', ratingMode);
@@ -3774,6 +3847,20 @@ function updateOriginalArt() {
   const sf = document.getElementById('original-art-source-field');
   if (lc) lc.style.display = on ? 'none' : '';
   if (sf) sf.style.display = on ? '' : 'none';
+}
+
+// ---------------------------------------------------------------------------
+// Granular vignette visibility
+// ---------------------------------------------------------------------------
+// Shows or hides the intensity/height sub-controls for both vignettes
+// depending on whether the granular override checkbox is checked.
+function updateVignetteControls() {
+  const topOn = c('tog-top-gradient-granular');
+  const botOn = c('tog-bottom-gradient-granular');
+  const tf = document.getElementById('top-gradient-granular-fields');
+  const bf = document.getElementById('bottom-gradient-granular-fields');
+  if (tf) tf.style.display = topOn ? '' : 'none';
+  if (bf) bf.style.display = botOn ? '' : 'none';
 }
 
 function _updateBarRatingRows() {
@@ -4084,6 +4171,21 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     const _bg = (p.get('bottom_gradient') || '').toLowerCase();
     if (['off','low','medium','high'].includes(_bg)) _setEl('cfg-bottom-gradient', _bg);
   }
+  // Granular vignette overrides — restore toggle state and slider values from URL,
+  // then re-run visibility so the sub-controls show/hide to match.
+  if (p.has('top_gradient_intensity') || p.has('top_gradient_height')) {
+    _setEl('tog-top-gradient-granular', 'true');
+    if (p.has('top_gradient_intensity')) _setEl('cfg-top-gradient-intensity', p.get('top_gradient_intensity'));
+    if (p.has('top_gradient_height'))    _setEl('cfg-top-gradient-height',    p.get('top_gradient_height'));
+  }
+  if (p.has('bottom_gradient_intensity') || p.has('bottom_gradient_height')) {
+    _setEl('tog-bottom-gradient-granular', 'true');
+    if (p.has('bottom_gradient_intensity')) _setEl('cfg-bottom-gradient-intensity', p.get('bottom_gradient_intensity'));
+    if (p.has('bottom_gradient_height'))    _setEl('cfg-bottom-gradient-height',    p.get('bottom_gradient_height'));
+  }
+  // Re-apply visibility after hydrating — _setEl dispatches 'input' for ranges but
+  // does not call updateVignetteControls(), so we call it explicitly here.
+  updateVignetteControls();
   if (p.has('fallback_to_imdb')) _setEl('tog-fallback-imdb', p.get('fallback_to_imdb'));
 
   // ── Sash ────────────────────────────────────────────────────────────────
@@ -4282,6 +4384,7 @@ updateOriginalArt();
 updateBadgeModeHint();
 updateSashBadgeFields();
 _initRangeValEditing();
+updateVignetteControls();  // initialise granular vignette sub-control visibility
 checkWhatsNew();
 showTab('core');   // start on the Core Config category
 build();
