@@ -131,6 +131,12 @@ All configuration is done via environment variables. Copy `.env.example` to `.en
 | `MDBLIST_API_KEY` | - | MDBList API key for ratings and award data |
 | `MDBLIST_API_KEY_2` | - | Optional second MDBList key. Retried in the same request when the primary key is rate-limited |
 | `MDBLIST_CONCURRENCY` | `3` | Maximum concurrent outbound MDBList requests per worker |
+| `TVDB_API_KEY` | - | Optional TheTVDB v4 API key. When set, TVDB is used as a *fallback* art source (logos, backdrops, optionally posters) for titles where TMDB returns nothing usable — reducing fallbacks to text titles / genre canvas. Leave blank to disable entirely |
+| `TVDB_SUBSCRIBER_PIN` | - | Only required for user-supported ("subscriber") TVDB keys; leave blank for company keys |
+| `TVDB_USE_LOGOS` | `true` | Use TVDB clearlogos when TMDB + Metahub have none |
+| `TVDB_USE_BACKDROPS` | `true` | Use TVDB backgrounds (fanart) when no textless TMDB poster/backdrop exists |
+| `TVDB_USE_POSTERS` | `false` | Use TVDB posters as a last resort. Off by default because they often carry burned-in title text; only used when text detection confirms a clean image |
+| `TVDB_CONCURRENCY` | `3` | Maximum concurrent outbound TVDB requests per worker |
 | `ACCESS_KEY` | - | Shared secret for request authentication. Leave blank to allow open access |
 | `WORKERS` | `1` | Uvicorn worker processes. One worker avoids duplicate uncached renders, scans, and API work across processes |
 | `AIOSTREAMS_URL` | - | Base URL of your AIOStreams instance (used when `QUALITY_SOURCE=aiostreams`) |
