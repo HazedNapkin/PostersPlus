@@ -973,6 +973,7 @@ async def fetch_logo(
     imdb_id: str | None = None,
     original_language: str | None = None,
     logo_priority: str = "native_original",
+    use_metahub: bool = True,
 ) -> Image.Image | None:
     """
     Fetch the best available logo for a title, with a Metahub CDN fallback.
@@ -1029,8 +1030,9 @@ async def fetch_logo(
     )
 
     if not candidates:
-        # No TMDB logo at all — try Metahub before giving up
-        if imdb_id:
+        # No TMDB logo at all — try Metahub before giving up (unless the caller
+        # has asked to skip it, e.g. to slot another source in between).
+        if use_metahub and imdb_id:
             return await _fetch_metahub_logo(client, imdb_id)
         return None
 
@@ -1057,7 +1059,7 @@ async def fetch_logo(
         if logo is None:
             # Rasterise failed — fall back to Metahub, then None.
             logger.warning(f"SVG logo unusable for {imdb_id} — trying Metahub fallback")
-            return await _fetch_metahub_logo(client, imdb_id) if imdb_id else None
+            return await _fetch_metahub_logo(client, imdb_id) if (use_metahub and imdb_id) else None
     else:
         logo = Image.open(io.BytesIO(resp.content)).convert("RGBA")
 

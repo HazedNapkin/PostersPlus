@@ -55,6 +55,15 @@ def _tvdb_flag(key: str, default: bool) -> bool:
 TVDB_USE_LOGOS        = _tvdb_flag("TVDB_USE_LOGOS",     True)
 TVDB_USE_BACKDROPS    = _tvdb_flag("TVDB_USE_BACKDROPS", True)
 TVDB_USE_POSTERS      = _tvdb_flag("TVDB_USE_POSTERS",   False)
+# Where a TVDB clearlogo sits in the logo source chain:
+#   1 = TVDB first      — beats both TMDB and the Metahub CDN
+#   2 = TVDB mid        — after TMDB's own logos, but before Metahub
+#   3 = TVDB last       — only when TMDB and Metahub both have nothing (default;
+#                         zero change to existing output)
+# TVDB clearlogos are often higher quality than TMDB/Metahub, so 1 or 2 generally
+# improves results — at the cost of altering logos that currently come from those
+# sources.  Ignored entirely when no TVDB key is set.
+TVDB_LOGO_PRIORITY    = max(1, min(3, int(os.environ.get("TVDB_LOGO_PRIORITY", "3"))))
 # Caps concurrent TVDB API calls so a burst of uncached misses can't stampede it.
 TVDB_CONCURRENCY      = max(1, int(os.environ.get("TVDB_CONCURRENCY", "3")))
 

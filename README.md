@@ -136,6 +136,7 @@ All configuration is done via environment variables. Copy `.env.example` to `.en
 | `TVDB_USE_LOGOS` | `true` | Use TVDB clearlogos when TMDB + Metahub have none |
 | `TVDB_USE_BACKDROPS` | `true` | Use TVDB backgrounds (fanart) when no textless TMDB poster/backdrop exists |
 | `TVDB_USE_POSTERS` | `false` | Use TVDB posters as a last resort. Off by default because they often carry burned-in title text; only used when text detection confirms a clean image |
+| `TVDB_LOGO_PRIORITY` | `3` | Where a TVDB clearlogo sits in the logo chain: `1` = before TMDB and Metahub, `2` = after TMDB but before Metahub, `3` = last resort (only when both have nothing). TVDB logos are often higher quality, so `1`/`2` improve results but change logos currently sourced from TMDB/Metahub |
 | `TVDB_CONCURRENCY` | `3` | Maximum concurrent outbound TVDB requests per worker |
 | `ACCESS_KEY` | - | Shared secret for request authentication. Leave blank to allow open access |
 | `WORKERS` | `1` | Uvicorn worker processes. One worker avoids duplicate uncached renders, scans, and API work across processes |
