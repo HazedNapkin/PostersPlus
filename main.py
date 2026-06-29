@@ -1278,10 +1278,11 @@ def build_poster(
 
     # Check if gradient should be suppressed by sash not being present
     _apply_top = True
+    _apply_top = True
     if cfg.top_gradient_sash_only and (cfg.sash_mode == "hidden" or sash_result is None):
         _apply_top = False
 
-    if _tg_preset is not None:
+    if _tg_preset is not None and _apply_top:
         top_height_ratio, top_max_alpha = _tg_preset
         top_height = int(height * top_height_ratio)
         t_top = np.linspace(0, 1, top_height, dtype=np.float32)
