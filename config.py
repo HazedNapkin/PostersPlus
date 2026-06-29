@@ -96,6 +96,9 @@ DAYS_CONSIDERED_NEW          = 14
 NEW_CACHE_DURATION           = 1
 OLD_CACHE_DURATION           = 14
 TRENDING_CACHE_DURATION      = 1
+# Time of day to run the daily trending pre-warm (HH:MM format, 24-hour clock).
+# Leave empty to default to running every 24 hours from startup.
+TRENDING_FETCH_TIME          = os.environ.get("TRENDING_FETCH_TIME", "").strip()
 # Quality (AIOStreams) TTL — separate from rating TTL because stream availability
 # for older titles is very stable.  New content keeps the 1-day window so fresh
 # encodes are picked up quickly; old content is cached for much longer.

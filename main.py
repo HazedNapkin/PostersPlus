@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import httpx
+from datetime import datetime, timedelta
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, suppress
@@ -1278,7 +1279,6 @@ def build_poster(
 
     # Check if gradient should be suppressed by sash not being present
     _apply_top = True
-    _apply_top = True
     if cfg.top_gradient_sash_only and (cfg.sash_mode == "hidden" or sash_result is None):
         _apply_top = False
 
@@ -1788,24 +1788,26 @@ async def trending_warmup_loop(client: httpx.AsyncClient) -> None:
     """Fetches TMDB trending daily and pre-warms the poster cache."""
     # Wait 60 seconds on startup to ensure the API and caches are fully ready
     await asyncio.sleep(60)
-    
-    while True:
-        logger.info("Starting daily trending pre-warm...")
+
+    # Define the fetch logic as an inner function so we can reuse it cleanly
+    async def _do_fetch():
+        logger.info("Starting daily trending pre-warm (grabbing 40 titles)...")
         tmdb_key = _resolve_tmdb_key("")
-        
-        if tmdb_key:
-            try:
-                # 1. Fetch Trending from TMDB
+        if not tmdb_key:
+            return
+            
+        try:
+            access_key = _cfg.ACCESS_KEY or ""
+            
+            for page in (1, 2):
                 resp = await client.get(
                     "https://api.themoviedb.org/3/trending/all/day",
-                    params={"api_key": tmdb_key}
+                    params={"api_key": tmdb_key, "page": page}
                 )
                 
                 if resp.status_code == 200:
                     results = resp.json().get("results", [])
-                    access_key = _cfg.ACCESS_KEY or ""
                     
-                    # 2. Iterate through trending items
                     for item in results:
                         tmdb_id = str(item.get("id"))
                         media_type = item.get("media_type")
@@ -1813,7 +1815,6 @@ async def trending_warmup_loop(client: httpx.AsyncClient) -> None:
                         if media_type not in ("movie", "tv"):
                             continue
                             
-                        # 3. Resolve IMDB ID internally
                         imdb_resp = await client.get(
                             "http://127.0.0.1:8000/resolve-imdb",
                             params={
@@ -1827,8 +1828,6 @@ async def trending_warmup_loop(client: httpx.AsyncClient) -> None:
                             imdb_id = imdb_resp.json().get("imdb_id")
                             if imdb_id:
                                 logger.info(f"Pre-warming poster for {media_type} TMDB {tmdb_id}")
-                                # 4. Trigger Poster Generation
-                                # Calling the local endpoint routes through the exact same caching pipeline.
                                 await client.get(
                                     "http://127.0.0.1:8000/poster",
                                     params={
@@ -1838,14 +1837,40 @@ async def trending_warmup_loop(client: httpx.AsyncClient) -> None:
                                         "access_key": access_key,
                                     }
                                 )
-                                # 2-second delay to prevent hammering external APIs (TMDB/MDBList)
                                 await asyncio.sleep(2)
                                 
-            except Exception as e:
-                logger.error(f"Trending warmup failed: {e}")
+        except Exception as e:
+            logger.error(f"Trending warmup failed: {e}")
+
+    # 1. Execute the initial fetch right after container startup
+    await _do_fetch()
+
+    # 2. Enter the scheduled loop
+    while True:
+        if _cfg.TRENDING_FETCH_TIME:
+            try:
+                # Parse the HH:MM string (e.g., "03:00")
+                target_time = datetime.strptime(_cfg.TRENDING_FETCH_TIME, "%H:%M").time()
+                now = datetime.now()
+                target_datetime = datetime.combine(now.date(), target_time)
+
+                # If the target time has already passed today, schedule for tomorrow
+                if now >= target_datetime:
+                    target_datetime += timedelta(days=1)
+
+                wait_seconds = (target_datetime - now).total_seconds()
+                logger.info(f"Next trending fetch scheduled for {target_datetime} (in {wait_seconds / 3600:.2f} hours).")
                 
-        # Sleep for 24 hours (86400 seconds)
-        await asyncio.sleep(86400)
+                await asyncio.sleep(wait_seconds)
+            except ValueError:
+                logger.error(f"Invalid TRENDING_FETCH_TIME format: '{_cfg.TRENDING_FETCH_TIME}'. Using 24-hour fallback.")
+                await asyncio.sleep(86400)
+        else:
+            # Fallback if no specific time is configured
+            await asyncio.sleep(86400)
+
+        # Execute the fetch after waiting
+        await _do_fetch()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
