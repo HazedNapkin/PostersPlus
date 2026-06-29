@@ -296,6 +296,10 @@ async def resolve_tvdb_id(
             if resolved is not None:
                 break
 
+    if resolved:
+        logger.info(f"TVDB id resolved: {want} imdb={imdb_id} tmdb={tmdb_id} -> {resolved}")
+    else:
+        logger.info(f"TVDB no match for {want} imdb={imdb_id} tmdb={tmdb_id}")
     set_cached_tvdb_json(
         cache_key,
         {"tvdb_id": resolved},
@@ -331,7 +335,10 @@ async def fetch_tvdb_artworks(
     async with _get_semaphore():
         type_map = await _type_map(client)
         endpoint = "series" if want == "series" else "movies"
-        data = await _authed_get(client, f"/{endpoint}/{tvdb_id}/extended")
+        # short=false guarantees the artworks array is included (short=true drops it).
+        data = await _authed_get(
+            client, f"/{endpoint}/{tvdb_id}/extended", params={"short": "false"}
+        )
     artworks = (data or {}).get("artworks") if isinstance(data, dict) else None
     if isinstance(artworks, list):
         id_to_cat = type_map.get(want, {})
@@ -352,6 +359,11 @@ async def fetch_tvdb_artworks(
             out[cat].sort(key=lambda a: a["score"], reverse=True)
 
     _has_any = any(out[c] for c in out)
+    logger.info(
+        f"TVDB artworks for tvdb_id={tvdb_id}: "
+        f"logos={len(out['logos'])} backgrounds={len(out['backgrounds'])} "
+        f"posters={len(out['posters'])}"
+    )
     set_cached_tvdb_json(
         cache_key,
         out,
@@ -462,6 +474,8 @@ async def tvdb_logo(
         logo = await fetch_tvdb_logo(client, artworks, logo_language)
         if logo is not None:
             logger.info(f"TVDB logo rescue succeeded for tvdb_id={tvdb_id}")
+        else:
+            logger.info(f"TVDB logo rescue found no usable logo for tvdb_id={tvdb_id}")
         return logo
     except Exception as exc:
         logger.warning(f"TVDB logo rescue failed: {exc}")

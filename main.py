@@ -3863,6 +3863,10 @@ async def get_poster(
         _want_logo = (is_textless and not is_no_poster and not rcfg.textless
                       and not _suppress_overlay)
         if logo is None and _want_logo and tvdb.tvdb_enabled():
+            logger.info(
+                f"No TMDB/Metahub logo for {tmdb_id} — attempting TVDB logo rescue "
+                f"(imdb={effective_imdb_id})"
+            )
             logo = await tvdb.tvdb_logo(
                 client,
                 media_type=type,
