@@ -224,6 +224,27 @@ def _record_type(media_type: str) -> str:
     return "series" if media_type in ("tv", "series") else "movie"
 
 
+# TVDB tags artwork with ISO 639-2/B (3-letter) codes; the rest of the app uses
+# ISO 639-1 (2-letter).  Map the common ones so language-preferred selection
+# works; unknown codes pass through unchanged (still matches the neutral/eng/best
+# fallbacks in _select_by_language).
+_LANG_2_TO_3 = {
+    "en": "eng", "es": "spa", "fr": "fra", "de": "deu", "it": "ita",
+    "pt": "por", "ja": "jpn", "ko": "kor", "zh": "zho", "ru": "rus",
+    "nl": "nld", "pl": "pol", "sv": "swe", "da": "dan", "no": "nor",
+    "fi": "fin", "tr": "tur", "ar": "ara", "hi": "hin", "cs": "ces",
+    "hu": "hun", "el": "ell", "he": "heb", "th": "tha", "uk": "ukr",
+    "ro": "ron",
+}
+
+
+def _to_tvdb_lang(code: str | None) -> str | None:
+    if not code:
+        return code
+    c = code.strip().lower()
+    return _LANG_2_TO_3.get(c, c)
+
+
 # ---------------------------------------------------------------------------
 # ID resolution
 # ---------------------------------------------------------------------------
@@ -386,7 +407,7 @@ async def fetch_tvdb_logo(
     logo_language: str | None = None,
 ) -> Image.Image | None:
     """Best TVDB clearlogo as an alpha-trimmed RGBA image, or None."""
-    chosen = _select_by_language(artworks.get("logos", []), logo_language)
+    chosen = _select_by_language(artworks.get("logos", []), _to_tvdb_lang(logo_language))
     if not chosen:
         return None
     url = chosen["url"]
@@ -411,6 +432,40 @@ async def fetch_tvdb_logo(
     logo.save(buf, format="PNG")
     set_cached_tmdb_logo(cache_key, buf.getvalue())
     return logo
+
+
+async def tvdb_logo(
+    client: httpx.AsyncClient,
+    *,
+    media_type: str,
+    logo_language: str | None = None,
+    imdb_id: str | None = None,
+    tmdb_id: str | None = None,
+    tvdb_id_hint: int | str | None = None,
+) -> Image.Image | None:
+    """One-call logo rescue: resolve the TVDB id, pull the artwork index, return
+    the best clearlogo. Safe to call unconditionally — yields None when TVDB is
+    disabled or has nothing. All sub-steps are cached, so calling this alongside
+    the backdrop/poster helpers in the same request costs at most one API burst.
+    """
+    from config import TVDB_USE_LOGOS
+    if not tvdb_enabled() or not TVDB_USE_LOGOS:
+        return None
+    try:
+        tvdb_id = await resolve_tvdb_id(
+            client, media_type=media_type, tvdb_id_hint=tvdb_id_hint,
+            imdb_id=imdb_id, tmdb_id=tmdb_id,
+        )
+        if not tvdb_id:
+            return None
+        artworks = await fetch_tvdb_artworks(client, tvdb_id, media_type)
+        logo = await fetch_tvdb_logo(client, artworks, logo_language)
+        if logo is not None:
+            logger.info(f"TVDB logo rescue succeeded for tvdb_id={tvdb_id}")
+        return logo
+    except Exception as exc:
+        logger.warning(f"TVDB logo rescue failed: {exc}")
+        return None
 
 
 async def fetch_tvdb_backdrop(
@@ -465,7 +520,7 @@ async def fetch_tvdb_poster(
     """Best TVDB poster, normalised to poster dimensions. NOTE: TVDB posters
     frequently carry burned-in title text — callers must vet with text detection
     before compositing a logo over one."""
-    chosen = _select_by_language(artworks.get("posters", []), language)
+    chosen = _select_by_language(artworks.get("posters", []), _to_tvdb_lang(language))
     if not chosen:
         return None
     url = chosen["url"]

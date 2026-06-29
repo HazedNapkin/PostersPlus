@@ -572,6 +572,7 @@ from quality import (
 )
 from ratings import calculate_weighted_score, draw_score_bar, fetch_rating, draw_score_bar_vertical, _draw_solid_pip, draw_frosted_bar, _score_color, _score_color_alt, _score_color_metal
 from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_trending_rank, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION
+import tvdb
 
 # ---------------------------------------------------------------------------
 # Persistent HTTP client
@@ -3748,6 +3749,23 @@ async def get_poster(
                     f"result was not cached ({text_detection_status()})"
                 )
                 _suppress_overlay = False
+
+        # TVDB logo rescue — pure fallback, evaluated only once every logo-use
+        # gate is known (so we never fetch a logo that would be discarded) and
+        # only when TMDB + Metahub returned nothing.  Never overrides an existing
+        # logo, so titles that render today are byte-identical.  No-op unless
+        # TVDB_API_KEY is set; the resolved id / artwork index it caches are
+        # reused by the later backdrop/poster phases.
+        _want_logo = (is_textless and not is_no_poster and not rcfg.textless
+                      and not _suppress_overlay)
+        if logo is None and _want_logo and tvdb.tvdb_enabled():
+            logo = await tvdb.tvdb_logo(
+                client,
+                media_type=type,
+                logo_language=rcfg.logo_language,
+                imdb_id=effective_imdb_id,
+                tmdb_id=tmdb_id,
+            )
 
         # Offload CPU-bound PIL compositing + JPEG encoding to the thread pool
         # so the event loop stays free for concurrent requests.
