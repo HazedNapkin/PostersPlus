@@ -511,6 +511,38 @@ async def fetch_tvdb_backdrop(
     return image
 
 
+async def tvdb_backdrop(
+    client: httpx.AsyncClient,
+    *,
+    media_type: str,
+    imdb_id: str | None = None,
+    tmdb_id: str | None = None,
+    tvdb_id_hint: int | str | None = None,
+    avoid_text: bool = False,
+) -> tuple[Image.Image | None, int | None]:
+    """One-call backdrop rescue: resolve id, pull artwork index, crop the best
+    background to portrait. Returns ``(image, tvdb_id)`` — the id is handed back
+    so the caller can build a stable text-detection cache key. ``(None, id)`` when
+    there's no usable background; ``(None, None)`` when TVDB is disabled/unmatched.
+    """
+    from config import TVDB_USE_BACKDROPS
+    if not tvdb_enabled() or not TVDB_USE_BACKDROPS:
+        return None, None
+    try:
+        tvdb_id = await resolve_tvdb_id(
+            client, media_type=media_type, tvdb_id_hint=tvdb_id_hint,
+            imdb_id=imdb_id, tmdb_id=tmdb_id,
+        )
+        if not tvdb_id:
+            return None, None
+        artworks = await fetch_tvdb_artworks(client, tvdb_id, media_type)
+        image = await fetch_tvdb_backdrop(client, artworks, tvdb_id, avoid_text=avoid_text)
+        return image, tvdb_id
+    except Exception as exc:
+        logger.warning(f"TVDB backdrop rescue failed: {exc}")
+        return None, None
+
+
 async def fetch_tvdb_poster(
     client: httpx.AsyncClient,
     artworks: dict[str, list[dict]],

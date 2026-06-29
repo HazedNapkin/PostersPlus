@@ -3287,6 +3287,27 @@ async def get_poster(
         _detection_deferred = False
         _vc = tmdb_data.get("vote_count")
         _vote_detection_ok = _detection_vote_ok(_vc)
+
+        async def _tvdb_bg_is_clean(cand_image, bg_id) -> bool:
+            """Inline burned-in-text vet for a TVDB background (mirrors the TMDB
+            text-backdrop rescue).  Returns True only when detection is available,
+            vote-gated, and reports no text.  Memoised per (tvdb id, crop, detector)."""
+            if not (_cfg.TEXTLESS_TEXT_DETECTION and _vote_detection_ok):
+                return False
+            try:
+                from text_detect import DETECT_RES_SIG
+                _src = f"tvdb_bd:{bg_id}:{_CROP_VERSION}:ta"
+                _key = f"{_src}|conf={_cfg.PPOCR_BOX_THRESHOLD}:{DETECT_RES_SIG}"
+                _res = get_cached_text_detection(_key)
+                if _res is None:
+                    _res = await asyncio.shield(_start_text_detection(
+                        _key, cand_image, title=_text_titles, source="backdrop",
+                        tmdb_id=tmdb_id, vote_count=_vc, source_key=_src))
+                return _res is False
+            except Exception as exc:
+                logger.warning(f"TVDB background vet failed for {tmdb_id}: {exc}")
+                return False
+
         is_no_poster = poster_path is None and not _use_backdrop
         if _use_backdrop:
             # Text-aware backdrop cropping also invokes PP-OCR, so apply the
@@ -3297,11 +3318,33 @@ async def get_poster(
             _image_coro = fetch_backdrop_image(
                 client, tmdb_id, backdrop_path, avoid_text=_backdrop_avoid_text)
         elif is_no_poster:
-            # Prefer the atmospheric genre background (minimal or photoreal set,
-            # per the request); fall back to the flat genre-tinted gradient if no
-            # background art exists for this genre in either set.
-            _bg = _load_genre_background(_tmdb_genre, rcfg.fallback_bg_style)
-            _image_coro = _resolved(_bg if _bg is not None else _make_fallback_canvas(genre_ids))
+            # No poster art at all.  Before settling for the genre canvas, try a
+            # TVDB background (curated fanart — usually textless).  Strictly an
+            # upgrade over a flat canvas.  Vet for burned-in text where possible;
+            # composite our logo only on a clean one, otherwise show it as-is.
+            _tvdb_bg = None
+            _tvdb_bg_id = None
+            if _cfg.TVDB_USE_BACKDROPS and tvdb.tvdb_enabled():
+                _bd_avoid = _cfg.TEXTLESS_TEXT_DETECTION and _vote_detection_ok
+                _tvdb_bg, _tvdb_bg_id = await tvdb.tvdb_backdrop(
+                    client, media_type=type, imdb_id=effective_imdb_id,
+                    tmdb_id=tmdb_id, avoid_text=_bd_avoid,
+                )
+            if _tvdb_bg is not None:
+                if await _tvdb_bg_is_clean(_tvdb_bg, _tvdb_bg_id):
+                    is_textless = True           # clean art → composite our logo
+                    logger.info(f"TVDB background for {tmdb_id} clean — using with logo")
+                else:
+                    logger.info(f"TVDB background for {tmdb_id} unvetted/texted — using as-is")
+                is_no_poster = False
+                _backdrop_rescued = True          # pre-vetted → skip the scan block
+                _image_coro = _resolved(_tvdb_bg)
+            else:
+                # Prefer the atmospheric genre background (minimal or photoreal set,
+                # per the request); fall back to the flat genre-tinted gradient if no
+                # background art exists for this genre in either set.
+                _bg = _load_genre_background(_tmdb_genre, rcfg.fallback_bg_style)
+                _image_coro = _resolved(_bg if _bg is not None else _make_fallback_canvas(genre_ids))
         else:
             # Option A: the title has only text-bearing art (no textless poster
             # or backdrop).  Before settling for the busy official poster, try a
@@ -3342,7 +3385,26 @@ async def get_poster(
                 _backdrop_rescued = True
                 _image_coro = _resolved(_rescued)
             else:
-                _image_coro = fetch_poster_image(client, tmdb_id, type, poster_path)
+                # Second rescue tier: a TVDB background, vetted the same way.  Only
+                # for text-bearing posters (not a clean TMDB textless one), gated to
+                # low-vote titles like the TMDB rescue above.  Falls through to the
+                # official poster when TVDB has nothing clean.
+                _tvdb_bg = None
+                _tvdb_bg_id = None
+                if (_cfg.TVDB_USE_BACKDROPS and tvdb.tvdb_enabled()
+                        and not is_textless and not _use_original_art
+                        and _detection_vote_ok(_vc)):
+                    _tvdb_bg, _tvdb_bg_id = await tvdb.tvdb_backdrop(
+                        client, media_type=type, imdb_id=effective_imdb_id,
+                        tmdb_id=tmdb_id, avoid_text=True,
+                    )
+                if _tvdb_bg is not None and await _tvdb_bg_is_clean(_tvdb_bg, _tvdb_bg_id):
+                    is_textless = True
+                    _backdrop_rescued = True
+                    _image_coro = _resolved(_tvdb_bg)
+                    logger.info(f"TVDB background rescue clean for {tmdb_id} — using with logo")
+                else:
+                    _image_coro = fetch_poster_image(client, tmdb_id, type, poster_path)
 
         # Start eligible foreground OCR as soon as the image arrives. Higher-vote
         # assets are recorded as deferred work instead: the request keeps waiting
