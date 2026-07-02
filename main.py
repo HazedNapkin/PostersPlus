@@ -571,7 +571,7 @@ from quality import (
     render_badges_left,
 )
 from ratings import calculate_weighted_score, draw_score_bar, fetch_rating, draw_score_bar_vertical, _draw_solid_pip, draw_frosted_bar, _score_color, _score_color_alt, _score_color_metal
-from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_trending_rank, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo
+from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_trending_rank, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H
 import tvdb
 
 # ---------------------------------------------------------------------------
@@ -1470,14 +1470,15 @@ def build_poster(
         # looks as substantial as a logo would — short titles like "SELF-HELP"
         # grow to fill the width instead of being pinned tiny by a char-count
         # heuristic.  The logo size ratios therefore tune the fallback text too.
-        max_w          = int(width  * cfg.logo_max_w_ratio)
-        max_h          = int(height * cfg.logo_max_h_ratio)
-        # Sit on the exact same vertical centre line composite_logo uses, so a
-        # text-title poster lines up with a logo poster in the same row.
-        title_cy       = logo_centre_y(height, cfg.logo_bottom_ratio)
+        max_w          = max(1, int(width * cfg.logo_max_w_ratio))
+        max_h          = max(1, min(int(height * cfg.logo_max_h_ratio), LOGO_ABS_MAX_H))
         MIN_FONT_SIZE  = 22
         MAX_LINES      = 2
         FONT_PATH      = os.path.join(_FONTS_DIR, _font_file)
+
+        def _line_width(text: str, current_font) -> int:
+            bbox = draw.textbbox((0, 0), text, font=current_font)
+            return bbox[2] - bbox[0]
 
         def _wrap_lines(text: str, current_font) -> list[str]:
             """Greedy word-wrap: each line packs as many words as fit within max_w."""
@@ -1488,7 +1489,7 @@ def build_poster(
             current: list[str] = []
             for word in words:
                 candidate = " ".join(current + [word])
-                if draw.textlength(candidate, font=current_font) <= max_w or not current:
+                if _line_width(candidate, current_font) <= max_w or not current:
                     current.append(word)
                 else:
                     lines.append(" ".join(current))
@@ -1497,41 +1498,83 @@ def build_poster(
                 lines.append(" ".join(current))
             return lines
 
+        def _measure_block(lines_to_measure: list[str], current_font, line_gap: int) -> tuple[int, int, list[tuple[str, tuple[int, int, int, int]]]]:
+            line_boxes = [
+                (line, draw.textbbox((0, 0), line, font=current_font))
+                for line in lines_to_measure
+            ]
+            if not line_boxes:
+                return 0, 0, []
+            widths = [bbox[2] - bbox[0] for _, bbox in line_boxes]
+            heights = [bbox[3] - bbox[1] for _, bbox in line_boxes]
+            block_w = max(widths)
+            block_h = sum(heights) + line_gap * (len(line_boxes) - 1)
+            return block_w, block_h, line_boxes
+
         # Pick the largest font whose wrapped block fits the logo envelope: scan
-        # high→low and take the first fit.  A 2-line block gets a taller budget
-        # than a single logo, since two stacked lines read fine a bit beyond one
-        # logo's height.  Falls back to the wrapped layout at MIN_FONT_SIZE.
+        # high to low and take the first fit. Text fallbacks use the same hard
+        # width/height envelope as image logos, including the absolute height cap
+        # and bottom-anchor baseline semantics.
         try:
             font_size = MIN_FONT_SIZE
             font      = ImageFont.truetype(FONT_PATH, font_size)
             lines     = _wrap_lines(fallback_title, font)
-            for _fs in range(int(height * 0.26), MIN_FONT_SIZE - 1, -2):
+            shadow_offset = max(2, int(font_size * 0.04))
+            block_w, block_h, line_boxes = _measure_block(
+                lines, font, max(1, int(font_size * 0.12))
+            )
+            for _fs in range(int(height * 0.26), 7, -2):
                 _f  = ImageFont.truetype(FONT_PATH, _fs)
                 _ls = _wrap_lines(fallback_title, _f)
                 if len(_ls) > MAX_LINES:
                     continue
-                _widest  = max((draw.textlength(ln, font=_f) for ln in _ls), default=0)
-                _block_h = int(_fs * 1.15) * len(_ls)
-                _budget  = max_h if len(_ls) == 1 else int(max_h * 1.7)
-                if _widest <= max_w and _block_h <= _budget:
+                _gap = max(1, int(_fs * 0.12))
+                _shadow = max(2, int(_fs * 0.04))
+                _block_w, _block_h, _line_boxes = _measure_block(_ls, _f, _gap)
+                if _block_w + _shadow <= max_w and _block_h + _shadow <= max_h:
                     font, font_size, lines = _f, _fs, _ls
+                    shadow_offset = _shadow
+                    block_w, block_h, line_boxes = _block_w, _block_h, _line_boxes
                     break
         except OSError:
             font      = ImageFont.load_default()
             font_size = MIN_FONT_SIZE
             lines     = [fallback_title]
+            shadow_offset = max(2, int(font_size * 0.04))
+            block_w, block_h, line_boxes = _measure_block(lines, font, max(1, int(font_size * 0.12)))
 
-        # Centre the multi-line block vertically around title_cy.
-        line_height    = int(font_size * 1.15)
-        total_height   = line_height * len(lines)
-        block_top      = title_cy - total_height // 2
-        shadow_offset  = max(2, int(font_size * 0.04))
+        if lines and line_boxes:
+            layer_w = max(1, int(np.ceil(block_w + shadow_offset)))
+            layer_h = max(1, int(np.ceil(block_h + shadow_offset)))
+            text_layer = Image.new("RGBA", (layer_w, layer_h), (0, 0, 0, 0))
+            layer_draw = ImageDraw.Draw(text_layer)
 
-        for i, line in enumerate(lines):
-            line_cy = block_top + i * line_height + line_height // 2
-            tx, ty  = _text_center(draw, line, font, width / 2, line_cy)  # type: ignore
-            draw.text((tx + shadow_offset, ty + shadow_offset), line, font=font, fill=(0, 0, 0, 180))
-            draw.text((tx, ty),                                  line, font=font, fill=(255, 255, 255, 255))
+            cursor_y = 0
+            line_gap = max(1, int(font_size * 0.12))
+            for line, bbox in line_boxes:
+                line_w = bbox[2] - bbox[0]
+                line_h = bbox[3] - bbox[1]
+                tx = (block_w - line_w) / 2 - bbox[0]
+                ty = cursor_y - bbox[1]
+                layer_draw.text((tx + shadow_offset, ty + shadow_offset), line, font=font, fill=(0, 0, 0, 180))
+                layer_draw.text((tx, ty),                                  line, font=font, fill=(255, 255, 255, 255))
+                cursor_y += line_h + line_gap
+
+            scale = min(max_w / text_layer.width, max_h / text_layer.height, 1.0)
+            if scale < 1.0:
+                text_layer = text_layer.resize(
+                    (max(1, int(text_layer.width * scale)), max(1, int(text_layer.height * scale))),
+                    Image.LANCZOS,
+                )
+
+            logo_x = round((width - text_layer.width) / 2)
+            if cfg.logo_bottom_anchor:
+                baseline = height - int(height * cfg.logo_bottom_ratio)
+                logo_y = baseline - text_layer.height
+            else:
+                centre_y = logo_centre_y(height, cfg.logo_bottom_ratio)
+                logo_y = int(centre_y - text_layer.height / 2)
+            image.paste(text_layer, (logo_x, logo_y), text_layer)
 
     # Resolve the info-sash pick once, regardless of whether the diagonal sash
     # itself is rendered independently.
