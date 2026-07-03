@@ -34,7 +34,7 @@ Those not self-hosting can [visit the public instance.](https://postersplus.elfh
 
 - **Ratings overlay** - weighted composite score from Letterboxd, Trakt, Rotten Tomatoes, IMDb, Metacritic, TMDb, MyAnimeList, and more. Four display modes (Score Bar, Clean, Minimalist, Bar) with many sub-modes. Three colour palettes, poster-aware overlays for a frosted look and optional glow on high scores.
 
-- **Award sashes** - Oscar Best Picture, Golden Globe (film and TV, five major categories), Emmy Outstanding Series (Drama, Comedy, Limited), festival winners, notable studios/directors/cast, trending titles, newly streaming (release-date recency plus r/movieleaks tracking), cult classics, true stories, and Metacritic Must-See. Priority order is fully configurable and any sash can be disabled. Can also be rendered as a notch, for those that prefer a more modern look.
+- **Award sashes** - Oscar Best Picture, Golden Globe (film and TV, five major categories), Emmy Outstanding Series (Drama, Comedy, Limited), festival winners, notable studios/directors/cast, trending titles, TV lifecycle signals (new season, returning, season finale), premieres, just-added digital movies, cult classics, true stories, and Metacritic Must-See. Priority order is fully configurable and any sash can be disabled. Can also be rendered as a notch, for those that prefer a more modern look.
 
 - **Quality badges** - six display modes: Quality Notch (vertical tier-coloured accent pill), Quality + Age Rating (age numeral tinted by 4K/Remux/HDR tier), Badge Row (PNG icons for 4K, 1080p, Remux, Web, DV, HDR10+, HDR10), Combined Text Badge, Age Rating Only, or hidden. A minimum quality threshold (`badge_min_score`) can suppress the badge when stream quality falls below a configurable bar. Sourced from an AIOStreams integration, Torrentio or Comet and fetched in the background on first request. Plex and Jellyfin will use your local files' actual quality for completely accurate data.
 
@@ -277,9 +277,14 @@ Sashes display contextual metadata about a title - awards, festival recognition,
 | Notable Director | Curated list of notable directors |
 | Notable Cast | Curated list of notable cast members |
 | Trending | Currently in TMDB's trending top 40 |
+| New Season | TV show with a recent or upcoming S2+ season premiere |
+| Returning | TV show with a recent or upcoming non-premiere episode |
+| Premiere | Show initial release within the last two weeks |
+| Just Added | Movie with a recent TMDB digital/TV release date |
+| Season Finale | Recently completed final TV season |
 | Cult Classic | Curated list of cult classics |
 | Foreign Language | Non-English language title |
-| Newly Streaming | Recently added to streaming |
+| Newly Streaming | Legacy combined recency signal |
 | Metacritic Must-See | High Metacritic score |
 | True Story | Based on a true story |
 | Short / Mini / Binge | Short film, miniseries, or bingeable series |

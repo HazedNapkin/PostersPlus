@@ -231,6 +231,18 @@ def init_db() -> None:
         )
     """)
 
+    # Movie release-info cache - richer sibling of release_status_cache for
+    # TMDB /release_dates data. Stores JSON with status plus theatrical,
+    # digital/TV, and physical dates so multiple sash slots can share one TMDB
+    # lookup. cache_key = "{media_type}_{tmdb_id}".
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS movie_release_info_cache (
+            cache_key TEXT PRIMARY KEY,
+            info_json TEXT NOT NULL,
+            cached_at INTEGER NOT NULL
+        )
+    """)
+
     # Burned-in-text detection results, keyed by source asset + detection params.
     # The PP-OCR scan depends only on the image bytes and confidence, never
     # on the user's URL config — so memoising it here stops the most expensive
@@ -283,6 +295,12 @@ def init_db() -> None:
         ("original_poster_path","TEXT"),
         ("poster_langs_json",   "TEXT"),
         ("imdb_id",             "TEXT"),
+        ("tmdb_release_date",   "TEXT"),
+        ("last_air_date",       "TEXT"),
+        ("next_episode_json",   "TEXT"),
+        ("last_episode_json",   "TEXT"),
+        ("seasons_json",        "TEXT"),
+        ("metadata_version",    "INTEGER"),
     ):
         _add_column_if_missing(conn, "tmdb_metadata_cache", col, definition)
 
@@ -428,7 +446,7 @@ def get_cache_stats() -> dict:
             "rating_cache", "quality_cache", "trending_cache",
             "tmdb_metadata_cache", "final_poster_cache",
             "digital_release_cache", "release_status_cache",
-            "text_detection_cache",
+            "movie_release_info_cache", "text_detection_cache",
         ):
             try:
                 (n,) = db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
@@ -520,6 +538,12 @@ def prune_caches() -> None:
             )
             if r.rowcount:
                 logger.info(f"Pruned {r.rowcount} expired release status cache entries")
+
+            r = db.execute(
+                "DELETE FROM movie_release_info_cache WHERE cached_at < ?", (release_status_cutoff,)
+            )
+            if r.rowcount:
+                logger.info(f"Pruned {r.rowcount} expired movie release info cache entries")
 
             detection_cutoff = now - 180 * 86400
             r = db.execute(
@@ -1015,7 +1039,9 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
                    runtime, number_of_seasons, number_of_episodes,
                    original_language, original_title, backdrop_path, tmdb_status, vote_count,
                    text_backdrop_path, original_poster_path,
-                   poster_langs_json, imdb_id
+                   poster_langs_json, imdb_id,
+                   tmdb_release_date, last_air_date, next_episode_json,
+                   last_episode_json, seasons_json, metadata_version
             FROM tmdb_metadata_cache
             WHERE cache_key = ?
             """,
@@ -1032,6 +1058,8 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
             original_language, original_title, backdrop_path, tmdb_status, vote_count,
             text_backdrop_path, original_poster_path,
             poster_langs_json, imdb_id,
+            tmdb_release_date, last_air_date, next_episode_json,
+            last_episode_json, seasons_json, metadata_version,
         ) = row
 
         age_days = (time.time() - cached_at) / 86400
@@ -1044,11 +1072,12 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
                 get_db().commit()
             return None
 
-        # Rows created before vote_count or original_title was added were migrated
-        # with NULL. Refresh once so detection has complete title aliases.
-        if vote_count is None or original_title is None:
+        # Rows created before newer metadata fields were added were migrated
+        # with NULL. Refresh once so discovery sashes have complete title,
+        # vote, and TV lifecycle fields.
+        if vote_count is None or original_title is None or metadata_version != 2:
             logger.info(
-                f"TMDB metadata cache missing vote_count or original_title for {cache_key}; refreshing"
+                f"TMDB metadata cache missing current schema fields for {cache_key}; refreshing"
             )
             with _db_lock:
                 get_db().execute(
@@ -1078,6 +1107,12 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
             "original_poster_path": original_poster_path,
             "poster_langs":         json.loads(poster_langs_json or "{}"),
             "imdb_id":              imdb_id,
+            "tmdb_release_date":    tmdb_release_date,
+            "last_air_date":        last_air_date,
+            "next_episode":         json.loads(next_episode_json or "null"),
+            "last_episode":         json.loads(last_episode_json or "null"),
+            "seasons":              json.loads(seasons_json or "[]"),
+            "metadata_version":     metadata_version,
         }
     except Exception as exc:
         logger.error(f"TMDB metadata cache read error: {exc}")
@@ -1107,6 +1142,12 @@ def set_cached_tmdb_metadata(
     original_poster_path: str | None = None,
     poster_langs: dict | None = None,
     imdb_id: str | None = None,
+    tmdb_release_date: str | None = None,
+    last_air_date: str | None = None,
+    next_episode: dict | None = None,
+    last_episode: dict | None = None,
+    seasons: list[dict] | None = None,
+    metadata_version: int = 2,
 ) -> None:
     try:
         with _db_lock:
@@ -1119,8 +1160,10 @@ def set_cached_tmdb_metadata(
                      runtime, number_of_seasons, number_of_episodes,
                      original_language, original_title, backdrop_path, tmdb_status, vote_count,
                      text_backdrop_path, original_poster_path,
-                     poster_langs_json, imdb_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     poster_langs_json, imdb_id,
+                     tmdb_release_date, last_air_date, next_episode_json,
+                     last_episode_json, seasons_json, metadata_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     cache_key,
@@ -1145,6 +1188,12 @@ def set_cached_tmdb_metadata(
                     original_poster_path,
                     json.dumps(poster_langs or {}),
                     imdb_id,
+                    tmdb_release_date,
+                    last_air_date,
+                    json.dumps(next_episode) if next_episode else None,
+                    json.dumps(last_episode) if last_episode else None,
+                    json.dumps(seasons or []),
+                    metadata_version,
                 ),
             )
             get_db().commit()
@@ -1253,6 +1302,43 @@ def add_digital_releases(entries: list[tuple[str, int]]) -> int:
 # TTL: 7 days — status changes slowly (Cinema → Streaming → BluRay is one-way).
 
 _RELEASE_STATUS_TTL_DAYS = 7
+
+
+def get_cached_movie_release_info(cache_key: str) -> dict | None:
+    """Return cached movie release info JSON, or None if absent / expired."""
+    try:
+        row = get_db().execute(
+            "SELECT info_json, cached_at FROM movie_release_info_cache WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
+        if not row:
+            return None
+        info_json, cached_at = row
+        age_days = (time.time() - cached_at) / 86400
+        if age_days > _RELEASE_STATUS_TTL_DAYS:
+            logger.info(f"Movie release info cache expired for {cache_key} ({age_days:.1f}d old)")
+            return None
+        return json.loads(info_json or "{}")
+    except Exception as exc:
+        logger.error(f"Movie release info cache read error: {exc}")
+        return None
+
+
+def set_cached_movie_release_info(cache_key: str, info: dict) -> None:
+    """Upsert richer TMDB movie release-date information."""
+    try:
+        with _db_lock:
+            get_db().execute(
+                """
+                INSERT INTO movie_release_info_cache (cache_key, info_json, cached_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(cache_key) DO UPDATE SET info_json=excluded.info_json, cached_at=excluded.cached_at
+                """,
+                (cache_key, json.dumps(info), int(time.time())),
+            )
+            get_db().commit()
+    except Exception as exc:
+        logger.error(f"Movie release info cache write error: {exc}")
 
 
 def get_cached_release_status(cache_key: str) -> str | None:

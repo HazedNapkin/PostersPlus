@@ -46,6 +46,8 @@ from cache import (
     set_cached_tmdb_metadata,
     get_cached_release_status,
     set_cached_release_status,
+    get_cached_movie_release_info,
+    set_cached_movie_release_info,
 )
 
 from config import (
@@ -367,6 +369,11 @@ async def fetch_poster_metadata(
             "original_poster_path":  meta.get("original_poster_path"),
             "poster_langs":          meta.get("poster_langs", {}),
             "imdb_id":               meta.get("imdb_id"),
+            "tmdb_release_date":     meta.get("tmdb_release_date"),
+            "last_air_date":         meta.get("last_air_date"),
+            "next_episode":          meta.get("next_episode"),
+            "last_episode":          meta.get("last_episode"),
+            "seasons":               meta.get("seasons", []),
         }
         return (
             meta["genre_ids"],
@@ -476,6 +483,11 @@ async def fetch_poster_metadata(
     number_of_episodes   = data.get("number_of_episodes")
     tmdb_status          = data.get("status")   # e.g. "Released", "In Production", "Returning Series"
     vote_count           = data.get("vote_count")
+    tmdb_release_date    = raw_date or None
+    last_air_date        = data.get("last_air_date")
+    next_episode         = data.get("next_episode_to_air") or None
+    last_episode         = data.get("last_episode_to_air") or None
+    seasons              = data.get("seasons") or []
 
     # If the content's original language wasn't included in the initial image
     # request (e.g. a Romanian show fetched by an English-language user), TMDB
@@ -554,6 +566,11 @@ async def fetch_poster_metadata(
         original_poster_path=original_poster_path,
         poster_langs=poster_langs,
         imdb_id=imdb_id,
+        tmdb_release_date=tmdb_release_date,
+        last_air_date=last_air_date,
+        next_episode=next_episode,
+        last_episode=last_episode,
+        seasons=seasons,
     )
 
     tmdb_data = {
@@ -570,6 +587,11 @@ async def fetch_poster_metadata(
         "original_poster_path": original_poster_path,
         "poster_langs":         poster_langs,
         "imdb_id":              imdb_id,
+        "tmdb_release_date":    tmdb_release_date,
+        "last_air_date":        last_air_date,
+        "next_episode":         next_episode,
+        "last_episode":         last_episode,
+        "seasons":              seasons,
     }
 
     return genre_ids, is_textless, logos, release_year, title, poster_path, backdrop_path, tmdb_data
@@ -1086,7 +1108,7 @@ async def fetch_trending_rank(
     snapshot = get_cached_trending_snapshot(endpoint)
 
     if snapshot is None:
-        logger.info("External API Call: Refreshing TMDB trending snapshot (pages 1+2 concurrent)")
+        logger.info("External API Call: Refreshing TMDB trending snapshot (pages 1-5 concurrent)")
 
         async def _fetch_page(page: int) -> list[dict]:
             resp = await client.get(
@@ -1097,19 +1119,17 @@ async def fetch_trending_rank(
             return resp.json().get("results", [])
 
         try:
-            page1_results, page2_results = await asyncio.gather(
-                _fetch_page(1),
-                _fetch_page(2),
-            )
+            pages = await asyncio.gather(*(_fetch_page(page) for page in range(1, 6)))
         except Exception as exc:
             logger.error(f"TMDB trending fetch error: {exc}")
             return None
 
         rankings: dict[str, int] = {}
-        for i, item in enumerate(page1_results, start=1):
-            rankings[str(item["id"])] = i
-        for i, item in enumerate(page2_results, start=len(page1_results) + 1):
-            rankings[str(item["id"])] = i
+        rank = 1
+        for results in pages:
+            for item in results:
+                rankings[str(item["id"])] = rank
+                rank += 1
 
         set_cached_trending_snapshot(endpoint, rankings)
         snapshot = rankings
@@ -1459,6 +1479,126 @@ async def fetch_catalog_candidates(
     return candidates
 
 
+def _parse_tmdb_date(value: str | None) -> _date | None:
+    try:
+        return _date.fromisoformat((value or "")[:10])
+    except (TypeError, ValueError):
+        return None
+
+
+async def fetch_movie_release_info(
+    client: httpx.AsyncClient,
+    tmdb_id: str,
+    tmdb_key: str,
+    tmdb_status: str | None,
+) -> dict | None:
+    """Cached TMDB movie release-date facts used by release-status and freshness sashes."""
+    cache_key = f"movie_{tmdb_id}"
+    cached = get_cached_movie_release_info(cache_key)
+    if cached:
+        return cached
+
+    result: str | None = None
+    info: dict[str, str | None] = {
+        "status": None,
+        "theatrical_date": None,
+        "digital_date": None,
+        "physical_date": None,
+    }
+
+    _pre_release = {"In Production", "Post Production", "Planned", "Rumored"}
+    if tmdb_status in _pre_release:
+        info["status"] = "Production"
+        set_cached_movie_release_info(cache_key, info)
+        return info
+    if tmdb_status == "Cancelled":
+        info["status"] = "Cancelled"
+        set_cached_movie_release_info(cache_key, info)
+        return info
+
+    try:
+        logger.info(f"External API Call: TMDB release_dates for movie {tmdb_id}")
+        resp = await client.get(
+            f"https://api.themoviedb.org/3/movie/{tmdb_id}/release_dates",
+            params={"api_key": tmdb_key},
+        )
+        resp.raise_for_status()
+    except Exception as exc:
+        logger.warning(f"fetch_movie_release_info failed for {tmdb_id}: {exc}")
+        return None
+
+    today = _date.today()
+    has_physical = has_digital = has_theatrical = False
+    earliest_theatrical: _date | None = None
+    latest_digital: _date | None = None
+    latest_physical: _date | None = None
+
+    for entry in resp.json().get("results", []):
+        for rd in entry.get("release_dates", []):
+            rtype = rd.get("type")
+            rdate = _parse_tmdb_date(rd.get("release_date"))
+            if rdate is None or rdate > today:
+                continue
+            if rtype == 5:
+                has_physical = True
+                if latest_physical is None or rdate > latest_physical:
+                    latest_physical = rdate
+            elif rtype in (4, 6):   # digital or TV broadcast
+                has_digital = True
+                if latest_digital is None or rdate > latest_digital:
+                    latest_digital = rdate
+            elif rtype == 3:
+                has_theatrical = True
+                if earliest_theatrical is None or rdate < earliest_theatrical:
+                    earliest_theatrical = rdate
+
+    if has_physical:
+        result = "Physical"
+    elif has_digital:
+        result = "Streaming"
+    elif has_theatrical:
+        if (
+            CINEMA_MAX_AGE_YEARS > 0
+            and earliest_theatrical is not None
+            and (today - earliest_theatrical).days > CINEMA_MAX_AGE_YEARS * 365
+        ):
+            result = "Streaming"
+        else:
+            result = "Cinema"
+    elif tmdb_status == "Released":
+        result = "Streaming"
+    else:
+        result = "Production"
+
+    info = {
+        "status": result,
+        "theatrical_date": earliest_theatrical.isoformat() if earliest_theatrical else None,
+        "digital_date": latest_digital.isoformat() if latest_digital else None,
+        "physical_date": latest_physical.isoformat() if latest_physical else None,
+    }
+    set_cached_movie_release_info(cache_key, info)
+    return info
+
+
+async def fetch_recent_movie_digital_release_date(
+    client: httpx.AsyncClient,
+    tmdb_id: str,
+    tmdb_key: str,
+    tmdb_status: str | None,
+    *,
+    max_age_days: int = 14,
+) -> str | None:
+    """Return the most recent TMDB digital/TV release date when it is fresh."""
+    info = await fetch_movie_release_info(client, tmdb_id, tmdb_key, tmdb_status)
+    if not info:
+        return None
+    digital = _parse_tmdb_date(info.get("digital_date"))
+    if digital is None:
+        return None
+    age = (_date.today() - digital).days
+    return digital.isoformat() if 0 <= age <= max_age_days else None
+
+
 async def fetch_release_status(
     client: httpx.AsyncClient,
     tmdb_id: str,
@@ -1504,75 +1644,8 @@ async def fetch_release_status(
         }
         result = _tv_map.get(tmdb_status or "")
     else:
-        # For movies already known to be pre-release, skip the API call.
-        _pre_release = {"In Production", "Post Production", "Planned", "Rumored"}
-        if tmdb_status in _pre_release:
-            result = "Production"
-        elif tmdb_status == "Cancelled":
-            result = "Cancelled"
-        else:
-            # Fetch release dates to distinguish Physical / Streaming / Cinema.
-            # TMDB release date types:
-            #   3 = Theatrical   4 = Digital   5 = Physical   6 = TV (broadcast/cable)
-            # Type 6 covers TV movies and specials that never had a theatrical run;
-            # treat it the same as digital/streaming since those titles are now on
-            # streaming platforms.  If the movie is marked "Released" by TMDB but has
-            # no matching release date entries (common for older/obscure titles with
-            # incomplete TMDB data), default to "Streaming" rather than "Production".
-            try:
-                logger.info(f"External API Call: TMDB release_dates for movie {tmdb_id}")
-                resp = await client.get(
-                    f"https://api.themoviedb.org/3/movie/{tmdb_id}/release_dates",
-                    params={"api_key": tmdb_key},
-                )
-                resp.raise_for_status()
-                today = _date.today()
-                has_physical = has_digital = has_theatrical = False
-                earliest_theatrical: _date | None = None
-                for entry in resp.json().get("results", []):
-                    for rd in entry.get("release_dates", []):
-                        rtype = rd.get("type")
-                        date_str = (rd.get("release_date") or "")[:10]
-                        try:
-                            rdate = _date.fromisoformat(date_str)
-                        except (ValueError, TypeError):
-                            continue
-                        if rdate > today:
-                            continue
-                        if rtype == 5:
-                            has_physical = True
-                        elif rtype in (4, 6):   # digital or TV broadcast
-                            has_digital = True
-                        elif rtype == 3:
-                            has_theatrical = True
-                            if earliest_theatrical is None or rdate < earliest_theatrical:
-                                earliest_theatrical = rdate
-
-                if has_physical:
-                    result = "Physical"
-                elif has_digital:
-                    result = "Streaming"
-                elif has_theatrical:
-                    # If the only known release is theatrical but is older than
-                    # CINEMA_MAX_AGE_YEARS, treat as Streaming — the title is almost
-                    # certainly available digitally and TMDB just never got updated.
-                    if (
-                        CINEMA_MAX_AGE_YEARS > 0
-                        and earliest_theatrical is not None
-                        and (today - earliest_theatrical).days > CINEMA_MAX_AGE_YEARS * 365
-                    ):
-                        result = "Streaming"
-                    else:
-                        result = "Cinema"
-                elif tmdb_status == "Released":
-                    # Released per TMDB but no release date records found —
-                    # incomplete TMDB data rather than genuinely unreleased.
-                    result = "Streaming"
-                else:
-                    result = "Production"
-            except Exception as exc:
-                logger.warning(f"fetch_release_status failed for {tmdb_id}: {exc}")
-                return None
+        info = await fetch_movie_release_info(client, tmdb_id, tmdb_key, tmdb_status)
+        result = (info or {}).get("status")
 
     if result:
         set_cached_release_status(cache_key, result)

@@ -14,11 +14,15 @@ gg_noms      Golden Globe nomination (all top film + TV categories)
 studio       Produced by a notable studio (A24, Pixar, …)
 director     Directed by a notable filmmaker
 cast         Stars a notable actor / actress
-trending     Currently trending on TMDB
+trending     Currently trending on TMDB top 40
+new_season   TV show with a fresh/upcoming S2+ season premiere
+returning    TV show with a fresh/upcoming non-premiere episode
+premiere     Show initial release within the last 14 days
+just_added   Movie with a fresh TMDB digital/TV release date
+season_finale Recently-ended TV final season
 cult         Cult Classic / Cult Film (MDblist keyword)
 foreign      Non-English original language film
-new_release  Newly released — digital/premiere within the last 14 days, or a
-             confirmed r/movieleaks digital-release post
+new_release  Legacy combined newly released signal
 metacritic   Metacritic Must-See badge (curated critical acclaim)
 true_story   Based on a true story (MDblist keyword)
 structural   Short Film | Mini Series | Binge Ready (whichever matches first)
@@ -275,9 +279,15 @@ _SASH_TYPES: dict[str, str] = {
     "director":        "prestige",  # purple — production credit
     "cast":            "cast",      # green — talent credit
     "trending":        "trending",  # blue
+    "trending_broad":  "trending",  # blue — lower-priority ranks 41-100
+    "new_season":      "alert",     # red — timely TV lifecycle signal
+    "returning":        "alert",     # red — timely TV lifecycle signal
+    "premiere":         "alert",     # red — show initial release date recency
+    "just_added":       "alert",     # red — fresh movie digital/TV release
+    "season_finale":    "alert",     # red — final-season/finale signal
     "cult":            "trending",  # blue — popularity signal, closest to trending without a new colour
     "foreign":         "info",      # teal — informational / discovery
-    "new_release":     "alert",     # red — newly streaming (release date or r/movieleaks)
+    "new_release":     "alert",     # red — legacy combined newly released signal
     "digital_release": "alert",     # red — legacy alias for new_release
     "metacritic":      "nom",       # silver — critical award, fits with noms not production
     "true_story":      "info",      # teal
@@ -286,17 +296,65 @@ _SASH_TYPES: dict[str, str] = {
 }
 
 NEW_RELEASE_DAYS = 14
+TV_RETURNING_LOOKAHEAD_DAYS = 14
+TV_RECENT_EPISODE_DAYS = 14
 
 
-def _is_recent(release_date: str | None) -> bool:
-    """Return True if *release_date* (YYYY-MM-DD) is within NEW_RELEASE_DAYS of today."""
-    if not release_date:
-        return False
+def _parse_date(value: str | None) -> date | None:
+    if not value:
+        return None
     try:
-        rd = datetime.strptime(release_date, "%Y-%m-%d").date()
-        return (date.today() - rd).days <= NEW_RELEASE_DAYS
-    except ValueError:
+        return datetime.strptime(value[:10], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
+
+
+def _is_recent(release_date: str | None, *, max_days: int = NEW_RELEASE_DAYS) -> bool:
+    """Return True if *release_date* (YYYY-MM-DD) is within *max_days* of today."""
+    rd = _parse_date(release_date)
+    if rd is None:
         return False
+    age = (date.today() - rd).days
+    return 0 <= age <= max_days
+
+
+def _is_recent_or_upcoming(value: str | None) -> bool:
+    rd = _parse_date(value)
+    if rd is None:
+        return False
+    delta = (rd - date.today()).days
+    return -TV_RECENT_EPISODE_DAYS <= delta <= TV_RETURNING_LOOKAHEAD_DAYS
+
+
+def _episode_date(ep: dict | None) -> str | None:
+    return (ep or {}).get("air_date") or None
+
+
+def _episode_season(ep: dict | None) -> int | None:
+    try:
+        return int((ep or {}).get("season_number"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _episode_number(ep: dict | None) -> int | None:
+    try:
+        return int((ep or {}).get("episode_number"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _season_episode_count(seasons: list[dict], season_number: int | None) -> int | None:
+    if season_number is None:
+        return None
+    for season in seasons or []:
+        try:
+            if int(season.get("season_number")) == season_number:
+                count = season.get("episode_count")
+                return int(count) if count is not None else None
+        except (TypeError, ValueError):
+            continue
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -330,8 +388,13 @@ class DiscoveryMeta:
     # Social proof
     trending_rank: int | None = None
 
-    # New release (MDblist digital-release / premiere date within the last 2 weeks)
-    is_new_release: bool = False
+    # Timely release / TV lifecycle signals
+    is_new_release: bool = False      # legacy combined signal
+    is_premiere: bool = False         # show initial release date within the last 2 weeks
+    is_just_added: bool = False       # movie digital/TV release within the last 2 weeks
+    is_new_season: bool = False       # S2+E1 fresh/upcoming
+    is_returning: bool = False        # S2+ non-premiere fresh/upcoming
+    is_season_finale: bool = False    # conservative final-season/finale heuristic
 
     # Keyword-based discovery signals (from MDblist keywords)
     is_cult:              bool = False   # cult-classic or cult-film
@@ -366,6 +429,7 @@ def extract_discovery_meta(
     is_metacritic_override:   bool | None = None,
     is_digital_release_override: bool | None = None,
     release_status_override: str | None = None,
+    recent_digital_release_date: str | None = None,
     notable_studios:   dict[str, str] | None = None,
     notable_directors: dict[str, str] | None = None,
     notable_cast:      dict[str, str] | None = None,
@@ -425,6 +489,9 @@ def extract_discovery_meta(
     if release_status_override is not None:
         meta.release_status = release_status_override
 
+    if _is_recent(recent_digital_release_date):
+        meta.is_just_added = True
+
     # --- Studios ---
     for company in tmdb_data.get("production_companies", []):
         name = company.get("name", "")
@@ -466,8 +533,43 @@ def extract_discovery_meta(
             eps_per_season = num_episodes / num_seasons
             meta.is_binge_ready = 6 <= eps_per_season <= 20
 
-    # --- New release ---
-    if _is_recent(release_date):
+    # --- Timely release / TV lifecycle signals ---
+    tmdb_release_date = tmdb_data.get("tmdb_release_date") or release_date
+    if is_tv and _is_recent(tmdb_release_date):
+        meta.is_premiere = True
+
+    if is_tv:
+        next_ep = tmdb_data.get("next_episode") or None
+        last_ep = tmdb_data.get("last_episode") or None
+        seasons = tmdb_data.get("seasons") or []
+
+        episode_for_season = next_ep if _is_recent_or_upcoming(_episode_date(next_ep)) else last_ep
+        if not _is_recent_or_upcoming(_episode_date(episode_for_season)):
+            episode_for_season = None
+
+        ep_season = _episode_season(episode_for_season)
+        ep_number = _episode_number(episode_for_season)
+        if ep_season and ep_season > 1:
+            if ep_number == 1:
+                meta.is_new_season = True
+            elif ep_number and episode_for_season:
+                meta.is_returning = True
+
+        last_season = _episode_season(last_ep)
+        last_number = _episode_number(last_ep)
+        latest_season_count = _season_episode_count(seasons, last_season)
+        status = tmdb_data.get("tmdb_status") or ""
+        if (
+            last_season
+            and last_number
+            and latest_season_count
+            and last_number >= latest_season_count
+            and _is_recent(_episode_date(last_ep), max_days=TV_RECENT_EPISODE_DAYS)
+            and status in {"Ended", "Cancelled", "Canceled"}
+        ):
+            meta.is_season_finale = True
+
+    if meta.is_premiere or meta.is_just_added or meta.is_digital_release or _is_recent(release_date):
         meta.is_new_release = True
 
     return meta
@@ -547,7 +649,25 @@ def _evaluate_slot(slot: str, meta: DiscoveryMeta) -> str | None:
         return meta.matched_cast[0] if meta.matched_cast else None
 
     if slot == "trending":
-        return f"#{meta.trending_rank} Today" if meta.trending_rank else None
+        return f"#{meta.trending_rank} Today" if meta.trending_rank and meta.trending_rank <= 40 else None
+
+    if slot == "trending_broad":
+        return f"#{meta.trending_rank} Today" if meta.trending_rank and 40 < meta.trending_rank <= 100 else None
+
+    if slot == "new_season":
+        return "New Season" if meta.is_new_season else None
+
+    if slot == "returning":
+        return "Returning" if meta.is_returning else None
+
+    if slot == "premiere":
+        return "Premiere" if meta.is_premiere else None
+
+    if slot == "just_added":
+        return "Just Added" if meta.is_just_added else None
+
+    if slot == "season_finale":
+        return "Season Finale" if meta.is_season_finale else None
 
     if slot in ("new_release", "digital_release"):
         # Merged: fires on release-date recency OR r/movieleaks confirmation.
@@ -593,12 +713,18 @@ ALL_PRIORITY_SLOTS: list[str] = [
     "director",
     "cast",
     "trending",
+    "new_season",
+    "returning",
+    "premiere",
+    "just_added",
+    "season_finale",
     "cult",
     "foreign",
     "new_release",
     "metacritic",
     "true_story",
     "structural",
+    "trending_broad",
     "emmy_noms",        # legacy alias for pic_noms — still accepted in sash_priority param
     "digital_release",  # legacy alias for new_release
     "noms",             # legacy alias for any nomination

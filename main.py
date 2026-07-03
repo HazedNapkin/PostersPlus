@@ -571,7 +571,7 @@ from quality import (
     render_badges_left,
 )
 from ratings import calculate_weighted_score, draw_score_bar, fetch_rating, draw_score_bar_vertical, _draw_solid_pip, draw_frosted_bar, _score_color, _score_color_alt, _score_color_metal
-from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_trending_rank, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H
+from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_trending_rank, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H
 import tvdb
 
 # ---------------------------------------------------------------------------
@@ -3809,10 +3809,12 @@ async def get_poster(
         logger.info(f"Quality for {imdb_id}: tokens={quality_tokens} year={release_year}")
 
         # ------------------------------------------------------------------
-        # Release status (opt-in via sash_priority — movies make an extra
-        # /release_dates API call; TV is free, mapped from tmdb_status)
+        # Release status / freshness facts. TV status is mapped from already
+        # fetched metadata. Movie digital freshness uses the cached TMDB
+        # /release_dates helper only when the Just Added sash is enabled.
         # ------------------------------------------------------------------
         _release_status: str | None = None
+        _recent_digital_release_date: str | None = None
         if "release_status" in rcfg.sash_priority:
             _release_status = await fetch_release_status(
                 client, tmdb_id, effective_tmdb_key, type,
@@ -3828,6 +3830,12 @@ async def get_poster(
             # skipped (and lower-priority sashes can surface) for released titles.
             if rcfg.release_status_cinema_only and _release_status not in ("Cinema", "Production"):
                 _release_status = None
+
+        if type not in ("tv", "series") and "just_added" in rcfg.sash_priority:
+            _recent_digital_release_date = await fetch_recent_movie_digital_release_date(
+                client, tmdb_id, effective_tmdb_key,
+                tmdb_data.get("tmdb_status"),
+            )
 
         # ------------------------------------------------------------------
         # Build DiscoveryMeta
@@ -3846,6 +3854,7 @@ async def get_poster(
             is_metacritic_override=is_metacritic,
             is_digital_release_override=is_digital_release(imdb_id),
             release_status_override=_release_status,
+            recent_digital_release_date=_recent_digital_release_date,
         )
 
         # ------------------------------------------------------------------
@@ -3874,6 +3883,12 @@ async def get_poster(
                 "is_metacritic":     discovery_meta.is_metacritic_must_see,
                 "is_new_release":    discovery_meta.is_new_release,
                 "is_digital_release":discovery_meta.is_digital_release,
+                "recent_digital_release_date": _recent_digital_release_date,
+                "is_premiere":       discovery_meta.is_premiere,
+                "is_just_added":     discovery_meta.is_just_added,
+                "is_new_season":     discovery_meta.is_new_season,
+                "is_returning":      discovery_meta.is_returning,
+                "is_season_finale":  discovery_meta.is_season_finale,
                 "trending_rank":     discovery_meta.trending_rank,
                 "original_language": discovery_meta.original_language,
                 "matched_studios":   discovery_meta.matched_studios,
