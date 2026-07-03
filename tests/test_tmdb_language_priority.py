@@ -1,6 +1,7 @@
 import unittest
 
-from tmdb import image_language_order
+from i18n import load_languages, translate_genre, translate_sash
+from tmdb import _image_language_keys, _image_matches_language, image_language_order
 
 
 class ImageLanguageOrderTests(unittest.TestCase):
@@ -39,6 +40,32 @@ class ImageLanguageOrderTests(unittest.TestCase):
             image_language_order("en", "en", "native_if_original_english"),
             ["en"],
         )
+
+    def test_region_qualified_french_does_not_fall_back_to_bare_french_art(self):
+        self.assertEqual(
+            image_language_order("fr-fr", "en", "native_original"),
+            ["fr-fr", "en"],
+        )
+        self.assertNotIn(
+            "fr",
+            image_language_order("fr-fr", "en", "native_original"),
+        )
+
+    def test_tmdb_language_region_images_match_locale_requests(self):
+        france = {"iso_639_1": "fr", "iso_3166_1": "FR"}
+        canada = {"iso_639_1": "fr", "iso_3166_1": "CA"}
+        generic = {"iso_639_1": "fr", "iso_3166_1": None}
+
+        self.assertEqual(_image_language_keys(france), ["fr-fr", "fr"])
+        self.assertTrue(_image_matches_language(france, "fr-fr"))
+        self.assertFalse(_image_matches_language(canada, "fr-fr"))
+        self.assertFalse(_image_matches_language(generic, "fr-fr"))
+        self.assertTrue(_image_matches_language(canada, "fr"))
+
+    def test_region_qualified_language_uses_base_translation_table(self):
+        load_languages()
+        self.assertEqual(translate_genre("Drama", "fr-FR"), "Drame")
+        self.assertEqual(translate_sash("Season Finale", "fr-FR"), "Finale saison")
 
 
 if __name__ == "__main__":

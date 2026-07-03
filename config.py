@@ -109,7 +109,7 @@ SCORE_GLOW_ALPHA     = 40   # alpha of the glow applied
 LOGO_MAX_W_RATIO  = 0.75   # target/max width of logo — the span every logo normalises to
 LOGO_MAX_H_RATIO  = 0.25   # max height of logo (paired with LOGO_ABS_MAX_H px cap)
 LOGO_BOTTOM_RATIO = 0.28   # distance of logo from the bottom
-DEFAULT_LOGO_LANGUAGE = os.environ.get("DEFAULT_LOGO_LANGUAGE", "en")
+DEFAULT_LOGO_LANGUAGE = os.environ.get("DEFAULT_LOGO_LANGUAGE", os.environ.get("TMDB_LANGUAGE", "en"))
 
 # Quality Badge Defaults
 

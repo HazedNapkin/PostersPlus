@@ -530,19 +530,17 @@ async def fetch_poster_metadata(
             logger.warning(f"Supplemental image fetch failed for {tmdb_id}: {exc}")
 
     # Original-art mode picks a TEXTUAL poster by language at RENDER time (so it
-    # honours the request's native language, not the fetch-time one).  Store the
-    # best language-tagged poster per language here — keyed iso_639_1 → file_path,
-    # excluding null/"" (textless).  (Computed after the supplemental fetch.)
+    # honours the request's native language, not the fetch-time one). Store the
+    # best language-tagged poster per locale key (e.g. fr-fr) and base language
+    # (e.g. fr), excluding null/"" textless entries.
     poster_langs: dict[str, str] = {}
     _poster_best_vote: dict[str, float] = {}
     for _p in posters:
-        _pl = _p.get("iso_639_1")
-        if not _pl:
-            continue
         _pv = _p.get("vote_average") or 0
-        if _pl not in poster_langs or _pv > _poster_best_vote[_pl]:
-            poster_langs[_pl] = _p["file_path"]
-            _poster_best_vote[_pl] = _pv
+        for _pl in _image_language_keys(_p):
+            if _pl not in poster_langs or _pv > _poster_best_vote[_pl]:
+                poster_langs[_pl] = _p["file_path"]
+                _poster_best_vote[_pl] = _pv
 
     set_cached_tmdb_metadata(
         metadata_cache_key,
@@ -966,6 +964,30 @@ async def _fetch_metahub_logo(
     return logo
 
 
+def _normalise_image_locale(value: str | None) -> str:
+    return (value or "").strip().lower().replace("_", "-")
+
+
+def _image_language_keys(image: dict) -> list[str]:
+    language = _normalise_image_locale(image.get("iso_639_1"))
+    if not language:
+        return []
+    region = _normalise_image_locale(image.get("iso_3166_1"))
+    keys = [f"{language}-{region}"] if region else []
+    keys.append(language)
+    return list(dict.fromkeys(keys))
+
+
+def _image_matches_language(image: dict, requested: str | None) -> bool:
+    requested = _normalise_image_locale(requested)
+    if not requested:
+        return False
+    keys = _image_language_keys(image)
+    if "-" in requested:
+        return requested in keys
+    return requested in keys
+
+
 def image_language_order(
     logo_language: str,
     original_language: str | None,
@@ -1030,13 +1052,13 @@ async def fetch_logo(
     _cand = [lg for lg in logos if lg["file_path"].lower().endswith(_exts)]
 
     language_buckets = {
-        language: [lg for lg in _cand if lg.get("iso_639_1") == language]
+        language: [lg for lg in _cand if _image_matches_language(lg, language)]
         for language in image_language_order(
             logo_language, original_language, logo_priority
         )
     }
     neutral   = [lg for lg in _cand if lg.get("iso_639_1") in (None, "")]
-    english   = [lg for lg in _cand if lg.get("iso_639_1") == "en"]
+    english   = [lg for lg in _cand if _image_matches_language(lg, "en")]
 
     candidates = []
     for language in language_buckets:
