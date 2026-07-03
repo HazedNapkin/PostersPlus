@@ -1049,14 +1049,13 @@ async def fetch_logo(
         "original_native"           → original, then native
         "native_if_original_english" → native when the content is native,
                                         otherwise English, then original
-        "native_text"               → native only (skip the original-language
-                                       bucket so the caller's text-title fallback
-                                       renders the translated title instead)
+        "native_text"               → native only, then English before neutral
+                                       fallback (skip original-language logos)
 
-    After those, the common fallbacks apply regardless of priority:
-      → TMDB language-neutral logo (iso_639_1 null/"")
-      → TMDB English logo
-      → Metahub CDN logo (images.metahub.space) — requires imdb_id
+    After the priority buckets, the common fallbacks apply:
+      → TMDB English logo, Metahub, then neutral logo for native_text
+      → TMDB language-neutral logo, then English logo for other priorities
+      → Metahub CDN logo for other priorities (images.metahub.space)
       → None (caller may render the translated title as text instead).
 
     All results are cached locally so repeat requests never hit external APIs.
@@ -1081,7 +1080,20 @@ async def fetch_logo(
         if language_buckets[language]:
             candidates = language_buckets[language]
             break
-    candidates = candidates or neutral or english
+
+    if logo_priority == "native_text":
+        if not candidates and english:
+            candidates = english
+        if not candidates and use_metahub and imdb_id:
+            metahub_logo = await _fetch_metahub_logo(client, imdb_id)
+            if metahub_logo is not None:
+                return metahub_logo
+        if not candidates and neutral:
+            candidates = neutral
+    else:
+        for bucket in (neutral, english):
+            if not candidates and bucket:
+                candidates = bucket
 
     candidates = sorted(
         candidates,

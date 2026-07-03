@@ -755,7 +755,8 @@ class RequestConfig:
     #   "original_native":           original → native → text
     #   "native_if_original_english": native if content is native, else English
     #                                 → original → text
-    #   "native_text":               native → text (no original-language logo)
+    #   "native_text":               native → English → neutral → text
+    #                                 (no original-language logo)
     logo_priority: str = "native_original"
     # Fallback-poster style for titles with no art: "minimal" (procedural textured
     # backdrop) or "photoreal" (hand-made photographic art that blends with real
@@ -3593,6 +3594,11 @@ async def get_poster(
             async def _metahub():
                 return (await _fetch_metahub_logo(client, effective_imdb_id)
                         if effective_imdb_id else None)
+
+            # This mode has its own explicit order: TMDB native -> TMDB English
+            # -> Metahub -> TMDB neutral -> rendered text.
+            if rcfg.logo_priority == "native_text":
+                return await _tmdb(use_metahub=True)
 
             if _tvdb_logo_pri == 1:
                 return (await _tvdb()) or (await _tmdb(use_metahub=True))
