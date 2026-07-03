@@ -1075,7 +1075,7 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
         # Rows created before newer metadata fields were added were migrated
         # with NULL. Refresh once so discovery sashes have complete title,
         # vote, and TV lifecycle fields.
-        if vote_count is None or original_title is None or metadata_version != 2:
+        if vote_count is None or original_title is None or metadata_version != 3:
             logger.info(
                 f"TMDB metadata cache missing current schema fields for {cache_key}; refreshing"
             )
@@ -1147,7 +1147,7 @@ def set_cached_tmdb_metadata(
     next_episode: dict | None = None,
     last_episode: dict | None = None,
     seasons: list[dict] | None = None,
-    metadata_version: int = 2,
+    metadata_version: int = 3,
 ) -> None:
     try:
         with _db_lock:

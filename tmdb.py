@@ -390,9 +390,13 @@ async def fetch_poster_metadata(
     #   null  — language-neutral entries (TMDB's signal for textless/unspecified)
     #   en    — English (logos + fallback posters)
     #   logo_language — non-English logo candidates when requested
+    # For regional locales (fr-fr), TMDB image rows are still language-tagged
+    # with iso_639_1=fr and iso_3166_1=FR, so the API request must include the
+    # base language too. The later selector remains strict and rejects fr-CA for
+    # a fr-fr request.
     # Note: null-language ≠ guaranteed text-free; TMDB uses it for both truly
     # textless art and posters where the language simply wasn't catalogued.
-    _img_langs = "en,null" if logo_language == "en" else f"{logo_language},en,null"
+    _img_langs = ",".join(_tmdb_include_image_languages(logo_language))
 
     logger.info(f"External API Call: Requested meta from TMDB for {tmdb_id}")
     resp = await client.get(
@@ -986,6 +990,18 @@ def _image_matches_language(image: dict, requested: str | None) -> bool:
     if "-" in requested:
         return requested in keys
     return requested in keys
+
+
+def _tmdb_include_image_languages(logo_language: str | None) -> list[str]:
+    requested = _normalise_image_locale(logo_language) or "en"
+    languages: list[str] = []
+    if requested != "en":
+        languages.append(requested)
+        base = requested.split("-", 1)[0]
+        if base and base != requested:
+            languages.append(base)
+    languages.extend(["en", "null"])
+    return list(dict.fromkeys(languages))
 
 
 def image_language_order(

@@ -1,7 +1,7 @@
 import unittest
 
 from i18n import load_languages, translate_genre, translate_sash
-from tmdb import _image_language_keys, _image_matches_language, image_language_order
+from tmdb import _image_language_keys, _image_matches_language, _tmdb_include_image_languages, image_language_order
 
 
 class ImageLanguageOrderTests(unittest.TestCase):
@@ -61,6 +61,20 @@ class ImageLanguageOrderTests(unittest.TestCase):
         self.assertFalse(_image_matches_language(canada, "fr-fr"))
         self.assertFalse(_image_matches_language(generic, "fr-fr"))
         self.assertTrue(_image_matches_language(canada, "fr"))
+
+    def test_region_qualified_fetch_includes_base_language_for_tmdb(self):
+        self.assertEqual(
+            _tmdb_include_image_languages("fr-fr"),
+            ["fr-fr", "fr", "en", "null"],
+        )
+        self.assertEqual(
+            _tmdb_include_image_languages("fr"),
+            ["fr", "en", "null"],
+        )
+        self.assertEqual(
+            _tmdb_include_image_languages("en"),
+            ["en", "null"],
+        )
 
     def test_region_qualified_language_uses_base_translation_table(self):
         load_languages()
