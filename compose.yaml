@@ -4,18 +4,18 @@ services:
       context: .
       dockerfile: ./dockerfile
       args:
+        # Bake the PP-OCRv5 Mobile detector into the image (default). Set
+        # BAKE_PPOCR_MODEL=false in your .env for a lean image that downloads the
+        # model once at runtime instead.
         BAKE_PPOCR_MODEL: "${BAKE_PPOCR_MODEL:-true}"
     image: postersplus
-    # Maps the local port based on your .env file. Defaults to 8000.
     ports:
-      - "${HOST_PORT:-8000}:8000"  
-    expose:
-      - "8000"
+      - "8000:8000"
     restart: unless-stopped
     volumes:
-      - ./postersplus-cache:/app/cache
+      - ./postersplus-cache:/app/cache  # cache DB, TMDB posters/logos, discovery_overrides.json
     env_file:
-      - .env
+      - .env # see this file for an explanation of what each flag does
     environment: 
       - TMDB_API_KEY=${TMDB_API_KEY:-}
       - MDBLIST_API_KEY=${MDBLIST_API_KEY:-}
@@ -31,8 +31,6 @@ services:
       - COMPOSITE_CACHE_TTL=${COMPOSITE_CACHE_TTL:-604800}
       - COMPOSITE_MAX_ENTRIES=${COMPOSITE_MAX_ENTRIES:-0}
       - DEFAULT_LOGO_LANGUAGE=${DEFAULT_LOGO_LANGUAGE:-en}
-      - TRENDING_FETCH_TIME
-      - TZ
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
@@ -40,12 +38,13 @@ services:
       retries: 3
       start_period: 15s
 
-  cloudflare:
-    image: cloudflare/cloudflared:latest
-    restart: unless-stopped
-    # This assigns the container to the 'tunnel' profile
-    profiles:
-      - tunnel
-    command: tunnel --no-autoupdate run
-    environment:
-      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+  # Uncomment the below block if using cloudlfare tunnel
+  # cloudflared:
+  #   image: cloudflare/cloudflared:latest
+  #   container_name: cloudflared
+  #   restart: unless-stopped
+  #   command: tunnel run
+  #   environment:
+  #     - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+  #   depends_on:
+  #     - postersplus

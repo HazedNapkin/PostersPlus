@@ -156,6 +156,7 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS trending_cache (
             media_type    TEXT PRIMARY KEY,
             rankings_json TEXT,
+            previous_rankings_json TEXT,
             cached_at     INTEGER
         )
     """)
@@ -181,12 +182,14 @@ def init_db() -> None:
     """)
 
     # Final composite poster cache.
-    # Stores the fully composited JPEG so warm requests skip the entire pipeline.
+    # Stores the fully composited poster so warm requests skip the entire pipeline.
     conn.execute("""
         CREATE TABLE IF NOT EXISTS final_poster_cache (
-            cache_key  TEXT PRIMARY KEY,
-            jpeg_bytes BLOB    NOT NULL,
-            cached_at  INTEGER NOT NULL
+            cache_key   TEXT PRIMARY KEY,
+            image_bytes BLOB    NOT NULL,
+            raw_params  TEXT,
+            ttl         INTEGER,
+            cached_at   INTEGER NOT NULL
         )
     """)
     conn.execute(
@@ -248,6 +251,15 @@ def init_db() -> None:
     ):
         _add_column_if_missing(conn, "tmdb_metadata_cache", col, definition)
 
+    _add_column_if_missing(conn, "trending_cache", "previous_rankings_json", "TEXT")
+    _add_column_if_missing(conn, "final_poster_cache", "raw_params", "TEXT")
+    _add_column_if_missing(conn, "final_poster_cache", "ttl", "INTEGER")
+
+    try:
+        conn.execute("ALTER TABLE final_poster_cache RENAME COLUMN jpeg_bytes TO image_bytes")
+    except sqlite3.OperationalError:
+        pass
+
     conn.commit()
 
 
@@ -281,40 +293,49 @@ def _quality_ttl(release_date: str | None) -> int:
 # ---------------------------------------------------------------------------
 
 def get_cached_final_poster(cache_key: str) -> bytes | None:
-    """Return cached JPEG bytes for a fully composited poster, or None on miss/expiry."""
+    from config import IMAGE_FORMAT
+    """Return cached image bytes for a fully composited poster, or None on miss/expiry/format-mismatch."""
     try:
         row = get_db().execute(
-            "SELECT jpeg_bytes, cached_at FROM final_poster_cache WHERE cache_key = ?",
+            "SELECT image_bytes, cached_at, ttl FROM final_poster_cache WHERE cache_key = ?",
             (cache_key,),
         ).fetchone()
         if not row:
             return None
-        jpeg_bytes, cached_at = row
+        image_bytes, cached_at, ttl = row
         age_secs = time.time() - cached_at
-        if age_secs > COMPOSITE_CACHE_TTL:
-            logger.info(f"Final poster cache expired for {cache_key} ({age_secs/86400:.1f}d old)")
+        effective_ttl = ttl if ttl is not None else COMPOSITE_CACHE_TTL
+        
+        img_b = bytes(image_bytes)
+        is_webp = img_b.startswith(b"RIFF") and img_b[8:12] == b"WEBP"
+        is_jpeg = img_b.startswith(b"\xff\xd8\xff")
+        format_match = (IMAGE_FORMAT == "webp" and is_webp) or (IMAGE_FORMAT == "jpeg" and is_jpeg)
+        
+        if age_secs > effective_ttl or not format_match:
+            reason = "expired" if age_secs > effective_ttl else "format mismatch"
+            logger.info(f"Final poster cache miss ({reason}) for {cache_key}")
             with _db_lock:
                 get_db().execute(
                     "DELETE FROM final_poster_cache WHERE cache_key = ?", (cache_key,)
                 )
                 get_db().commit()
             return None
-        return bytes(jpeg_bytes)
+        return img_b
     except Exception as exc:
         logger.error(f"Final poster cache read error: {exc}")
         return None
 
 
-def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes) -> None:
-    """Store a fully composited JPEG poster, evicting oldest entries if over the cap."""
+def set_cached_final_poster(cache_key: str, image_bytes: bytes, raw_params: str | None = None, ttl: int | None = None) -> None:
+    """Store a fully composited poster, evicting oldest entries if over the cap."""
     try:
         with _db_lock:
             get_db().execute(
                 """
-                INSERT OR REPLACE INTO final_poster_cache (cache_key, jpeg_bytes, cached_at)
-                VALUES (?, ?, ?)
+                INSERT OR REPLACE INTO final_poster_cache (cache_key, image_bytes, raw_params, ttl, cached_at)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (cache_key, jpeg_bytes, int(time.time())),
+                (cache_key, image_bytes, raw_params, ttl, int(time.time())),
             )
             if COMPOSITE_MAX_ENTRIES > 0:
                 (count,) = get_db().execute(
@@ -332,6 +353,32 @@ def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes) -> None:
             get_db().commit()
     except Exception as exc:
         logger.error(f"Final poster cache write error: {exc}")
+
+
+def get_cached_posters_by_tmdb_id(tmdb_id: str) -> list[dict]:
+    """Return a list of cache_key and raw_params for all final posters containing the given tmdb_id."""
+    try:
+        rows = get_db().execute(
+            "SELECT cache_key, raw_params FROM final_poster_cache WHERE cache_key LIKE ? AND raw_params IS NOT NULL",
+            (f"%:{tmdb_id}:%",),
+        ).fetchall()
+        return [{"cache_key": r[0], "raw_params": r[1]} for r in rows]
+    except Exception as exc:
+        logger.error(f"Final poster cache by tmdb_id query error: {exc}")
+        return []
+
+
+def refresh_final_poster_ttl(cache_key: str, new_ttl: int) -> None:
+    """Refresh the TTL and cached_at for a given final poster cache key without regenerating it."""
+    try:
+        with _db_lock:
+            get_db().execute(
+                "UPDATE final_poster_cache SET cached_at = ?, ttl = ? WHERE cache_key = ?",
+                (int(time.time()), new_ttl, cache_key),
+            )
+            get_db().commit()
+    except Exception as exc:
+        logger.error(f"Final poster cache TTL refresh error: {exc}")
 
 
 def get_cache_stats() -> dict:
@@ -390,10 +437,10 @@ def prune_caches() -> None:
         with _db_lock:
             db = get_db()
 
-            # Composites — fixed TTL in seconds
+            # Composites — check individual ttl if present, else fallback to COMPOSITE_CACHE_TTL
             r = db.execute(
-                "DELETE FROM final_poster_cache WHERE cached_at < ?",
-                (now - COMPOSITE_CACHE_TTL,),
+                "DELETE FROM final_poster_cache WHERE (? - cached_at) > COALESCE(ttl, ?)",
+                (now, COMPOSITE_CACHE_TTL),
             )
             if r.rowcount:
                 logger.info(f"Pruned {r.rowcount} expired composite cache entries")
@@ -708,11 +755,11 @@ def set_cached_quality(
 # All callers use get_cached_trending_snapshot / set_cached_trending_snapshot.
 # ---------------------------------------------------------------------------
 
-def get_cached_trending_snapshot(media_type: str) -> dict[str, int] | None:
+def get_cached_trending_snapshot(media_type: str) -> tuple[dict[str, int] | None, dict[str, int] | None]:
     try:
         row = get_db().execute(
             """
-            SELECT rankings_json, cached_at
+            SELECT rankings_json, previous_rankings_json, cached_at
             FROM trending_cache
             WHERE media_type = ?
             """,
@@ -720,15 +767,17 @@ def get_cached_trending_snapshot(media_type: str) -> dict[str, int] | None:
         ).fetchone()
 
         if not row:
-            return None
+            return None, None
 
-        rankings_json, cached_at = row
+        rankings_json, previous_rankings_json, cached_at = row
         age_days = (time.time() - cached_at) / 86400
 
         if age_days > TRENDING_CACHE_DURATION:
-            return None
-
-        return json.loads(rankings_json)
+            return None, None
+            
+        current = json.loads(rankings_json) if rankings_json else None
+        previous = json.loads(previous_rankings_json) if previous_rankings_json else None
+        return current, previous
     except Exception as exc:
         logger.error(f"Trending snapshot cache read error: {exc}")
         return None
@@ -737,18 +786,20 @@ def get_cached_trending_snapshot(media_type: str) -> dict[str, int] | None:
 def set_cached_trending_snapshot(
     media_type: str,
     rankings: dict[str, int],
+    previous_rankings: dict[str, int] | None = None
 ) -> None:
     try:
         with _db_lock:
             get_db().execute(
                 """
                 INSERT OR REPLACE INTO trending_cache
-                (media_type, rankings_json, cached_at)
-                VALUES (?, ?, ?)
+                (media_type, rankings_json, previous_rankings_json, cached_at)
+                VALUES (?, ?, ?, ?)
                 """,
                 (
                     media_type,
                     json.dumps(rankings),
+                    json.dumps(previous_rankings) if previous_rankings is not None else None,
                     int(time.time()),
                 ),
             )

@@ -60,6 +60,7 @@ from config import (
     DEBUG_LOGO_SIZING,
     TMDB_POSTER_MIN_VOTES,
     TMDB_POSTER_MAX_SCORE_DROP,
+    TRENDING_ITEMS_COUNT,
 )
 
 
@@ -1005,47 +1006,57 @@ async def fetch_logo(
     return logo
 
 
-async def fetch_trending_rank(
+async def refresh_trending_snapshot(
     client: httpx.AsyncClient,
-    tmdb_id: str,
     tmdb_key: str,
     media_type: str = "movie",
-) -> int | None:
-
+) -> tuple[dict[str, int], dict[str, int]]:
     endpoint = "tv" if media_type in ("tv", "series") else "movie"
-
-    snapshot = get_cached_trending_snapshot(endpoint)
-
-    if snapshot is None:
-        logger.info("External API Call: Refreshing TMDB trending snapshot (pages 1+2 concurrent)")
-
-        async def _fetch_page(page: int) -> list[dict]:
+    logger.info(f"External API Call: Refreshing TMDB trending snapshot for {endpoint}")
+    
+    pages_to_fetch = max(1, (TRENDING_ITEMS_COUNT + 19) // 20)
+    
+    async def _fetch_page(page: int) -> list[dict]:
+        try:
             resp = await client.get(
                 f"https://api.themoviedb.org/3/trending/{endpoint}/day",
                 params={"api_key": tmdb_key, "page": page},
             )
             resp.raise_for_status()
             return resp.json().get("results", [])
-
-        try:
-            page1_results, page2_results = await asyncio.gather(
-                _fetch_page(1),
-                _fetch_page(2),
-            )
         except Exception as exc:
-            logger.error(f"TMDB trending fetch error: {exc}")
-            return None
+            logger.error(f"TMDB trending fetch error on page {page}: {exc}")
+            return []
 
-        rankings: dict[str, int] = {}
-        for i, item in enumerate(page1_results, start=1):
-            rankings[str(item["id"])] = i
-        for i, item in enumerate(page2_results, start=len(page1_results) + 1):
-            rankings[str(item["id"])] = i
+    results = await asyncio.gather(*[_fetch_page(p) for p in range(1, pages_to_fetch + 1)])
+    
+    rankings: dict[str, int] = {}
+    current_rank = 1
+    for page_results in results:
+        for item in page_results:
+            if current_rank > TRENDING_ITEMS_COUNT:
+                break
+            rankings[str(item["id"])] = current_rank
+            current_rank += 1
+            
+    _, previous = get_cached_trending_snapshot(endpoint)
+    set_cached_trending_snapshot(endpoint, rankings, previous_rankings=rankings)
+    return rankings, previous or {}
 
-        set_cached_trending_snapshot(endpoint, rankings)
-        snapshot = rankings
 
-    rank = snapshot.get(str(tmdb_id))
+async def fetch_trending_rank(
+    client: httpx.AsyncClient,
+    tmdb_id: str,
+    tmdb_key: str,
+    media_type: str = "movie",
+) -> int | None:
+    endpoint = "tv" if media_type in ("tv", "series") else "movie"
+    current, _ = get_cached_trending_snapshot(endpoint)
+
+    if current is None:
+        current, _ = await refresh_trending_snapshot(client, tmdb_key, media_type)
+
+    rank = current.get(str(tmdb_id))
 
     if rank:
         logger.info(f"Trending rank for {tmdb_id}: #{rank}")
@@ -1088,7 +1099,7 @@ async def fetch_release_status(
         # nothing about where you can actually watch it.  "Cancelled" is kept
         # distinct so users know the story may be unresolved.
         _tv_map: dict[str, str] = {
-            "Returning Series": "Airing",
+            "Returning Series": "Returning",
             "In Production":    "Production",
             "Planned":          "Production",
             "Pilot":            "Production",
