@@ -37,24 +37,15 @@ SERVER_MDBLIST_KEY_2  = os.environ.get("MDBLIST_API_KEY_2", "").strip()
 # Used by the key-rotation logic in main.py to fall back when a key is exhausted.
 SERVER_MDBLIST_KEYS: list[str] = [k for k in [SERVER_MDBLIST_KEY, SERVER_MDBLIST_KEY_2] if k]
 
-# Trending Background Task Defaults
-TRENDING_FETCH_TIME       = os.environ.get("TRENDING_FETCH_TIME", "").strip()
-TRENDING_FETCH_TIMEZONE   = os.environ.get("TRENDING_FETCH_TIMEZONE", "UTC").strip()
-TRENDING_ITEMS_COUNT      = max(1, int(os.environ.get("TRENDING_ITEMS_COUNT", "20")))
-RELEASE_STATUS_MAX_AGE_YEARS = int(os.environ.get("RELEASE_STATUS_MAX_AGE_YEARS", "5"))
-
 # Workers
 # CDN cache TTL (seconds). When > 0, poster responses include a
 # Cache-Control: public header so Cloudflare (or any CDN) caches them at the
 # edge. Set to 0 to disable (e.g. when running without a CDN).
 CDN_CACHE_TTL         = int(os.environ.get("CDN_CACHE_TTL", "0"))
-# Image format and quality settings
-IMAGE_FORMAT          = os.environ.get("IMAGE_FORMAT", "webp").strip().lower()
-if IMAGE_FORMAT not in ("webp", "jpeg"):
-    IMAGE_FORMAT = "webp"
-WEBP_QUALITY          = max(70, min(100, int(os.environ.get("WEBP_QUALITY", "85"))))
 # JPEG output quality for composited posters (70–95). Higher = better quality, larger files.
-JPEG_QUALITY          = max(70, min(95, int(os.environ.get("JPEG_QUALITY", "85"))))
+JPEG_QUALITY  = max(70, min(95, int(os.environ.get("JPEG_QUALITY",  "85"))))
+WEBP_QUALITY  = max(70, min(95, int(os.environ.get("WEBP_QUALITY",  "82"))))
+OUTPUT_FORMAT = os.environ.get("OUTPUT_FORMAT", "jpeg").lower().strip()
 
 # Feature Defaults 
 
@@ -105,6 +96,9 @@ DAYS_CONSIDERED_NEW          = 14
 NEW_CACHE_DURATION           = 1
 OLD_CACHE_DURATION           = 14
 TRENDING_CACHE_DURATION      = 1
+# Time of day to run the daily trending pre-warm (HH:MM format, 24-hour clock).
+# Leave empty to default to running every 24 hours from startup.
+TRENDING_FETCH_TIME          = os.environ.get("TRENDING_FETCH_TIME", "").strip()
 # Quality (AIOStreams) TTL — separate from rating TTL because stream availability
 # for older titles is very stable.  New content keeps the 1-day window so fresh
 # encodes are picked up quickly; old content is cached for much longer.
@@ -303,10 +297,12 @@ SCORE_NORMALISERS = {
 # Default Sash Priority
 
 SASH_PRIORITY: list[str] = [
-    "wins",
+    "oscar_win",
+    "emmy_win",
     "gg_wins",
     "festival",
-    "pic_noms",
+    "oscar_nom",
+    "emmy_nom",
     "gg_noms",
     "studio",
     "director",
@@ -317,13 +313,8 @@ SASH_PRIORITY: list[str] = [
     "new_release",
     "metacritic",
     "true_story",
-    "short_film",
-    "mini_series",
-    "binge_ready",
-    "status_cinema",
-    "status_streaming",
-    "status_physical",
-    "status_production",
-    "status_returning",
-    "status_cancelled",
+    "short",
+    "miniseries",
+    "binge",
+    "release_status",
 ]
