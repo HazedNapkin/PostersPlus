@@ -1802,6 +1802,14 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <input type="text" id="cfg-mdblist-key" placeholder="If blank uses server key." oninput="build(); queuePreviewReload(); saveApiKeys()">
               <div class="field-hint" id="mdblist-key-hint" style="display:none"></div>
             </div>
+            
+            <div class="field" id="trending-schedule-field" style="display:none; margin-top: 12px; padding: 10px; background: rgba(255,255,255,0.03); border-radius: 6px; border: 1px solid rgba(255,255,255,0.08);">
+              <label class="field-label" style="display:flex; align-items:center; gap:6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                Trending Refresh Schedule
+              </label>
+              <div class="field-hint" id="trending-schedule-hint" style="margin-top:4px;"></div>
+            </div>
             <div class="field">
               <label class="field-label">Primary Client</label>
               <select id="cfg-primary-client" onchange="onPrimaryClientChange()">
@@ -2985,6 +2993,20 @@ async function fetchServerCaps() {
       const trSash = SASH_SLOTS.find(s => s.id === 'trending');
       if (trSash) trSash.label = `TMDB Trending Top ${serverCaps.trending_fetch_count}`;
       buildSashList();
+    }
+    
+    const trField = document.getElementById('trending-schedule-field');
+    const trHint = document.getElementById('trending-schedule-hint');
+    if (trField && trHint) {
+      if (serverCaps.trending_fetch_time) {
+        trField.style.display = '';
+        const t = serverCaps.trending_fetch_time;
+        const tz = serverCaps.trending_fetch_timezone || 'UTC';
+        const hr = serverCaps.trending_next_refresh_hours;
+        trHint.innerHTML = `Refreshes occur at <strong>${t}</strong> (${tz}).<br>Next refresh is in <strong>${hr} hours</strong>.`;
+      } else {
+        trField.style.display = 'none';
+      }
     }
   } catch(e) {}
 }

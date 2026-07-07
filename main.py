@@ -2604,6 +2604,24 @@ async def remove_server_header(request: Request, call_next):
 async def server_caps(access_key: str = ""):
     if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
         raise HTTPException(status_code=403, detail="Unauthorized")
+    next_refresh_hours = None
+    if _cfg.TRENDING_FETCH_TIME:
+        import zoneinfo
+        from datetime import datetime, timedelta
+        try:
+            tz = zoneinfo.ZoneInfo(_cfg.TRENDING_FETCH_TIMEZONE)
+        except Exception:
+            tz = zoneinfo.ZoneInfo("UTC")
+        try:
+            h, m = map(int, _cfg.TRENDING_FETCH_TIME.split(':'))
+            now_dt = datetime.now(tz)
+            target_dt = now_dt.replace(hour=h, minute=m, second=0, microsecond=0)
+            if target_dt <= now_dt:
+                target_dt += timedelta(days=1)
+            next_refresh_hours = round((target_dt - now_dt).total_seconds() / 3600, 1)
+        except Exception:
+            pass
+
     return {
         "tmdb_key_set":          bool(_cfg.SERVER_TMDB_KEY),
         "mdblist_key_set":       bool(_cfg.SERVER_MDBLIST_KEYS),
@@ -2614,6 +2632,9 @@ async def server_caps(access_key: str = ""):
             or (_cfg.QUALITY_SOURCE == "scraper" and bool(_cfg.SCRAPER_URL))
         ),
         "trending_fetch_count":  _cfg.TRENDING_FETCH_COUNT,
+        "trending_fetch_time":   _cfg.TRENDING_FETCH_TIME,
+        "trending_fetch_timezone": _cfg.TRENDING_FETCH_TIMEZONE,
+        "trending_next_refresh_hours": next_refresh_hours,
     }
 
 
