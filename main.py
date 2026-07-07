@@ -845,13 +845,34 @@ def _parse_sash_priority(raw: str | None) -> list[str]:
     # Tokens prefixed with "-" are explicit exclusions
     excluded  = {t[1:] for t in tokens if t.startswith("-") and t[1:] in ALL_PRIORITY_SLOTS}
     active    = [t      for t in tokens if not t.startswith("-") and t in ALL_PRIORITY_SLOTS]
+    
+    if "structural" in active:
+        idx = active.index("structural")
+        expanded = [s for s in ["short_film", "mini_series", "binge_ready"] if s not in excluded and s not in active]
+        active = active[:idx] + expanded + active[idx+1:]
+        
+    if "release_status" in active:
+        idx = active.index("release_status")
+        expanded = [s for s in ["cinema", "streaming", "physical", "production", "ended", "cancelled", "airing"] if s not in excluded and s not in active]
+        active = active[:idx] + expanded + active[idx+1:]
+        
     if not active and not excluded:
         return list(_cfg.SASH_PRIORITY)
     # Append any default slots that weren't explicitly listed or excluded
     active_set = set(active)
     for slot in _cfg.SASH_PRIORITY:
         if slot not in active_set and slot not in excluded:
-            active.append(slot)
+            if slot == "structural":
+                expanded = [s for s in ["short_film", "mini_series", "binge_ready"] if s not in excluded and s not in active_set]
+                active.extend(expanded)
+                active_set.update(expanded)
+            elif slot == "release_status":
+                expanded = [s for s in ["cinema", "streaming", "physical", "production", "ended", "cancelled", "airing"] if s not in excluded and s not in active_set]
+                active.extend(expanded)
+                active_set.update(expanded)
+            else:
+                active.append(slot)
+                active_set.add(slot)
     return active
 
 
@@ -3986,7 +4007,7 @@ async def get_poster(
         # ------------------------------------------------------------------
         _release_status: str | None = None
         _recent_digital_release_date: str | None = None
-        _rs_slots = {"release_status", "cinema", "streaming", "physical", "production", "ended", "cancelled"}
+        _rs_slots = {"release_status", "cinema", "streaming", "physical", "production", "ended", "cancelled", "airing"}
         if any(s in rcfg.sash_priority for s in _rs_slots):
             _fetch_rs = True
             

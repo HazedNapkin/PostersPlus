@@ -712,7 +712,7 @@ def _evaluate_slot(slot: str, meta: DiscoveryMeta) -> str | None:
     if slot == "release_status":
         return meta.release_status  # already a display string or None
 
-    if slot in ("cinema", "streaming", "physical", "production", "ended", "cancelled"):
+    if slot in ("cinema", "streaming", "physical", "production", "ended", "cancelled", "airing"):
         if meta.release_status and meta.release_status.lower() == slot:
             return meta.release_status
         return None
@@ -759,6 +759,7 @@ ALL_PRIORITY_SLOTS: list[str] = [
     "production",
     "ended",
     "cancelled",
+    "airing",
 ]
 
 
