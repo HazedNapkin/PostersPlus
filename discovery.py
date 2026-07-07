@@ -553,16 +553,33 @@ def extract_discovery_meta(
         last_ep = tmdb_data.get("last_episode") or None
         seasons = tmdb_data.get("seasons") or []
 
-        episode_for_season = next_ep if _is_recent_or_upcoming(_episode_date(next_ep)) else last_ep
-        if not _is_recent_or_upcoming(_episode_date(episode_for_season)):
-            episode_for_season = None
+        last_is_active = _is_recent_or_upcoming(_episode_date(last_ep))
+        next_is_active = _is_recent_or_upcoming(_episode_date(next_ep))
 
-        ep_season = _episode_season(episode_for_season)
-        ep_number = _episode_number(episode_for_season)
-        if ep_season and ep_season > 1:
-            if ep_number == 1:
+        last_season = _episode_season(last_ep)
+        next_season = _episode_season(next_ep)
+
+        active_season = None
+        if next_is_active and next_season and next_season > 1:
+            active_season = next_season
+        elif last_is_active and last_season and last_season > 1:
+            active_season = last_season
+
+        if active_season:
+            is_new_season = False
+            for s in seasons:
+                try:
+                    s_num = int(s.get("season_number", 0))
+                except (TypeError, ValueError):
+                    continue
+                if s_num == active_season:
+                    if _is_recent_or_upcoming(s.get("air_date")):
+                        is_new_season = True
+                    break
+            
+            if is_new_season:
                 meta.is_new_season = True
-            elif ep_number and episode_for_season:
+            else:
                 meta.is_returning = True
 
         last_season = _episode_season(last_ep)
