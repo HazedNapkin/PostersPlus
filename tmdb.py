@@ -76,7 +76,7 @@ def normalise_poster(image: Image.Image) -> Image.Image:
     scale = max(target_w / src_w, target_h / src_h)
     new_w = round(src_w * scale)
     new_h = round(src_h * scale)
-    image = image.resize((new_w, new_h), Image.LANCZOS)
+    image = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
     left = round((new_w - target_w) / 2)
     top  = round((new_h - target_h) / 2)
     return image.crop((left, top, left + target_w, top + target_h))
@@ -730,7 +730,7 @@ def _saliency_crop_left(image: Image.Image, crop_w: int,
     sh      = max(1, int(h * scale))
     scrop_w = max(1, int(crop_w * scale))
 
-    small = image.resize((sw, sh), Image.LANCZOS).convert("RGB")
+    small = image.resize((sw, sh), Image.Resampling.LANCZOS).convert("RGB")
     rgb   = np.array(small, dtype=np.float32) / 255.0   # H × W × 3, [0,1]
     r, g, b = rgb[:,:,0], rgb[:,:,1], rgb[:,:,2]
 
@@ -1688,7 +1688,7 @@ async def fetch_release_status(
             "In Production":    "Production",
             "Planned":          "Production",
             "Pilot":            "Production",
-            "Ended":            "Streaming",  # completed run → assume available on streaming
+            "Ended":            "Ended",
             "Cancelled":        "Cancelled",
             "Canceled":         "Cancelled",
         }
@@ -1791,7 +1791,7 @@ def composite_logo(
             f"max_h={max_h} eff_max_h={eff_max_h:.0f} → final={int(new_w)}x{int(new_h)}"
         )
 
-    logo = logo.resize((max(1, int(new_w)), max(1, int(new_h))), Image.LANCZOS)
+    logo = logo.resize((max(1, int(new_w)), max(1, int(new_h))), Image.Resampling.LANCZOS)
 
     # ── Position ─────────────────────────────────────────────────────────────
     # Two anchor modes:

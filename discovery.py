@@ -71,6 +71,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 
 from config import SASH_PRIORITY as DEFAULT_SASH_PRIORITY  # single source of truth
+import config as _cfg
 
 logger = logging.getLogger(__name__)
 
@@ -293,6 +294,15 @@ _SASH_TYPES: dict[str, str] = {
     "true_story":      "info",      # teal
     "structural":      "info",      # teal
     "release_status":  "alert",     # red — Physical / Streaming / Cinema / Production
+    "short_film":      "info",
+    "mini_series":     "info",
+    "binge_ready":     "info",
+    "cinema":          "alert",
+    "streaming":       "alert",
+    "physical":        "alert",
+    "production":      "alert",
+    "ended":           "alert",
+    "cancelled":       "alert",
 }
 
 NEW_RELEASE_DAYS = 14
@@ -649,10 +659,10 @@ def _evaluate_slot(slot: str, meta: DiscoveryMeta) -> str | None:
         return meta.matched_cast[0] if meta.matched_cast else None
 
     if slot == "trending":
-        return f"#{meta.trending_rank} Today" if meta.trending_rank and meta.trending_rank <= 40 else None
+        return f"#{meta.trending_rank} Today" if meta.trending_rank and meta.trending_rank <= _cfg.TRENDING_FETCH_COUNT else None
 
     if slot == "trending_broad":
-        return f"#{meta.trending_rank} Today" if meta.trending_rank and 40 < meta.trending_rank <= 100 else None
+        return f"#{meta.trending_rank} Today" if meta.trending_rank and _cfg.TRENDING_FETCH_COUNT < meta.trending_rank <= _cfg.TRENDING_BROAD_FETCH_COUNT else None
 
     if slot == "new_season":
         return "New Season" if meta.is_new_season else None
@@ -693,8 +703,19 @@ def _evaluate_slot(slot: str, meta: DiscoveryMeta) -> str | None:
             if key == "binge_ready" and meta.is_binge_ready:  return _STRUCTURAL_LABELS[key]
         return None
 
+    if slot in ("short_film", "mini_series", "binge_ready"):
+        if slot == "short_film" and meta.is_short_film: return _STRUCTURAL_LABELS[slot]
+        if slot == "mini_series" and meta.is_mini_series: return _STRUCTURAL_LABELS[slot]
+        if slot == "binge_ready" and meta.is_binge_ready: return _STRUCTURAL_LABELS[slot]
+        return None
+
     if slot == "release_status":
         return meta.release_status  # already a display string or None
+
+    if slot in ("cinema", "streaming", "physical", "production", "ended", "cancelled"):
+        if meta.release_status and meta.release_status.lower() == slot:
+            return meta.release_status
+        return None
 
     return None
 
@@ -729,6 +750,15 @@ ALL_PRIORITY_SLOTS: list[str] = [
     "digital_release",  # legacy alias for new_release
     "noms",             # legacy alias for any nomination
     "release_status",   # opt-in: Blu-ray / Streaming / Cinema / Production — requires extra API call for movies
+    "short_film",
+    "mini_series",
+    "binge_ready",
+    "cinema",
+    "streaming",
+    "physical",
+    "production",
+    "ended",
+    "cancelled",
 ]
 
 

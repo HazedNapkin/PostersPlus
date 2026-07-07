@@ -405,7 +405,7 @@ def sample_frosted_bar_rgb(
     cy = max(0, bar_y); ch = min(bar_h, height - cy)
     reg = image.crop((0, cy, width, cy + ch))
     blr = reg.filter(ImageFilter.GaussianBlur(radius=max(6, int(bar_h * 0.45))))
-    th  = blr.resize((8, 8), Image.LANCZOS).convert("RGB")
+    th  = blr.resize((8, 8), Image.Resampling.LANCZOS).convert("RGB")
     ar  = np.array(th, dtype=np.float32)
     return float(ar[:, :, 0].mean()), float(ar[:, :, 1].mean()), float(ar[:, :, 2].mean())
 
@@ -481,13 +481,13 @@ def draw_frosted_bar(
         if tint_rgb is not None:
             dr, dg, db = tint_rgb
         else:
-            th  = blr.resize((8, 8), Image.LANCZOS).convert("RGB")
+            th  = blr.resize((8, 8), Image.Resampling.LANCZOS).convert("RGB")
             ar  = np.array(th, dtype=np.float32)
             dr, dg, db = ar[:,:,0].mean(), ar[:,:,1].mean(), ar[:,:,2].mean()
         _h2, _s2, _v2 = _cs.rgb_to_hsv(dr/255, dg/255, db/255)
         tr, tg, tb = _cs.hsv_to_rgb(_h2, min(1.0, _s2*1.2), _v2*0.4+0.60)
         r, g, b = int(tr*255*0.6+255*0.4), int(tg*255*0.6+255*0.4), int(tb*255*0.6+255*0.4)
-        base  = blr.resize((width, bar_h), Image.LANCZOS).convert("RGBA")
+        base  = blr.resize((width, bar_h), Image.Resampling.LANCZOS).convert("RGBA")
         frost = Image.new("RGBA", (width, bar_h), (r, g, b, int(frost_opacity*255)))
         return Image.alpha_composite(base, frost), _h2, _s2, _v2
 

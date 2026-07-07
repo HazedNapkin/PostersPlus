@@ -201,9 +201,14 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS final_poster_cache (
             cache_key  TEXT PRIMARY KEY,
             jpeg_bytes BLOB    NOT NULL,
-            cached_at  INTEGER NOT NULL
+            cached_at  INTEGER NOT NULL,
+            request_params TEXT
         )
     """)
+    try:
+        conn.execute("ALTER TABLE final_poster_cache ADD COLUMN request_params TEXT")
+    except Exception:
+        pass
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_final_poster_cached_at "
         "ON final_poster_cache(cached_at)"
@@ -395,7 +400,7 @@ def get_cached_final_poster(cache_key: str) -> bytes | None:
         return None
 
 
-def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes) -> None:
+def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes, request_params: str = None, ttl_override: int = None) -> None:
     """Store a fully composited JPEG poster into L1 (RAM) and L2 (SQLite)."""
     # L1: always store the freshly-rendered composite so the next hit skips SQLite
     if COMPOSITE_MEM_ENTRIES > 0:
@@ -408,12 +413,17 @@ def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes) -> None:
     # L2: persist to SQLite for warm restarts
     try:
         with _db_lock:
+            now = int(time.time())
+            cached_at = now
+            if ttl_override is not None and COMPOSITE_CACHE_TTL > ttl_override:
+                cached_at = now - (COMPOSITE_CACHE_TTL - ttl_override)
+                
             get_db().execute(
                 """
-                INSERT OR REPLACE INTO final_poster_cache (cache_key, jpeg_bytes, cached_at)
-                VALUES (?, ?, ?)
+                INSERT OR REPLACE INTO final_poster_cache (cache_key, jpeg_bytes, cached_at, request_params)
+                VALUES (?, ?, ?, ?)
                 """,
-                (cache_key, jpeg_bytes, int(time.time())),
+                (cache_key, jpeg_bytes, cached_at, request_params),
             )
             if COMPOSITE_MAX_ENTRIES > 0:
                 (count,) = get_db().execute(
@@ -431,6 +441,18 @@ def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes) -> None:
             get_db().commit()
     except Exception as exc:
         logger.error(f"Final poster cache write error: {exc}")
+
+def delete_cached_final_poster(cache_key: str) -> None:
+    """Remove a composited poster from both L1 (RAM) and L2 (SQLite) caches."""
+    if COMPOSITE_MEM_ENTRIES > 0:
+        with _composite_l1_lock:
+            _composite_l1.pop(cache_key, None)
+    try:
+        with _db_lock:
+            get_db().execute("DELETE FROM final_poster_cache WHERE cache_key = ?", (cache_key,))
+            get_db().commit()
+    except Exception as exc:
+        logger.error(f"Final poster cache delete error: {exc}")
 
 
 def get_cache_stats() -> dict:
@@ -1063,6 +1085,23 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
         ) = row
 
         age_days = (time.time() - cached_at) / 86400
+
+        if tmdb_release_date:
+            try:
+                from datetime import timezone
+                rel_dt = datetime.strptime(tmdb_release_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                rel_ts = rel_dt.timestamp()
+                now_ts = time.time()
+                
+                # If cached before the release date, and it is now strictly on or after the release date
+                if cached_at < rel_ts and now_ts >= rel_ts:
+                    age_days = 9999  # Force expiration
+                # If it's unreleased or released within the last 14 days, use a 1-day TTL
+                elif (now_ts < rel_ts or (now_ts - rel_ts) < 14 * 86400) and age_days > 1.0:
+                    age_days = 9999
+            except Exception:
+                pass
+
         if age_days > TMDB_METADATA_CACHE_DURATION:
             logger.info(f"TMDB metadata cache expired for {cache_key} ({age_days:.1f}d old)")
             with _db_lock:

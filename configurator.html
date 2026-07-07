@@ -1874,25 +1874,69 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </select>
               <div class="field-hint"><a href="#" onclick="openFallbackGallery(); return false;">Displayed if no poster can be found.</a>.</div>
             </div>
-            <div class="field cfg-sep">
+            <div class="toggle-row cfg-sep" style="margin-bottom:6px;">
+              <div>
+                <div class="toggle-label">Vignette Only On Sash</div>
+                <div class="field-hint" style="margin-top:2px;">Only draw the top vignette when a sash is visible.</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="tog-top-vignette-sash-only" onchange="build(); queuePreviewReload()">
+                <div class="toggle-track"><div class="toggle-thumb"></div></div>
+              </label>
+            </div>
+            <div class="field">
               <label class="field-label">Top Vignette</label>
-              <select id="cfg-top-gradient" onchange="build(); queuePreviewReload()">
+              <select id="cfg-top-gradient" onchange="updateGradientFields(); build(); queuePreviewReload()">
                 <option value="off">Off</option>
                 <option value="low">Low</option>
                 <option value="medium" selected>Medium</option>
                 <option value="high">High</option>
+                <option value="custom">Custom</option>
               </select>
               <div class="field-hint">The power of the darkening applied to the top.</div>
             </div>
+            <div id="top-gradient-custom-fields" style="display:none; margin-left: 10px; margin-bottom:10px;">
+              <div class="field" style="margin-bottom:4px;">
+                <label class="field-label" style="font-size:0.85em;">Opacity</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-tg-op" min="0" max="1" step="0.05" value="1.0" oninput="updateWeightRange(this,'rv-tg-op'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rv-tg-op">100%</span>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label" style="font-size:0.85em;">Height</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-tg-ht" min="0" max="1" step="0.05" value="0.25" oninput="updateWeightRange(this,'rv-tg-ht'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rv-tg-ht">25%</span>
+                </div>
+              </div>
+            </div>
             <div class="field">
               <label class="field-label">Bottom Vignette</label>
-              <select id="cfg-bottom-gradient" onchange="build(); queuePreviewReload()">
+              <select id="cfg-bottom-gradient" onchange="updateGradientFields(); build(); queuePreviewReload()">
                 <option value="off">Off</option>
                 <option value="low">Low</option>
                 <option value="medium">Medium</option>
                 <option value="high" selected>High</option>
+                <option value="custom">Custom</option>
               </select>
               <div class="field-hint">Lowering may hurt rating and logo legibility.</div>
+            </div>
+            <div id="bottom-gradient-custom-fields" style="display:none; margin-left: 10px; margin-bottom:10px;">
+              <div class="field" style="margin-bottom:4px;">
+                <label class="field-label" style="font-size:0.85em;">Opacity</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-bg-op" min="0" max="1" step="0.05" value="1.0" oninput="updateWeightRange(this,'rv-bg-op'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rv-bg-op">100%</span>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label" style="font-size:0.85em;">Height</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-bg-ht" min="0" max="1" step="0.05" value="0.25" oninput="updateWeightRange(this,'rv-bg-ht'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rv-bg-ht">25%</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1905,6 +1949,16 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             <span class="section-chevron">▼</span>
           </div>
           <div class="section-body">
+            <div class="toggle-row cfg-sep" style="margin-bottom:6px;">
+              <div>
+                <div class="toggle-label">Hide Genre</div>
+                <div class="field-hint" style="margin-top:2px;">Removes the genre text and associated spacers.</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="tog-hide-genre" onchange="build(); queuePreviewReload()">
+                <div class="toggle-track"><div class="toggle-thumb"></div></div>
+              </label>
+            </div>
             <div class="field">
               <label class="field-label">Display Mode</label>
               <select id="cfg-rating-mode" onchange="updateRatingFields(); build(); queuePreviewReload()">
@@ -2288,16 +2342,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <div class="toggle-track"><div class="toggle-thumb"></div></div>
               </label>
             </div>
-            <div class="toggle-row" id="sash-release-cinema-only-row">
-              <div>
-                <div class="toggle-label">Release Status: Unavailable Only</div>
-                <div class="field-hint">Only show the release status sash when a title is in cinemas or in production.</div>
-              </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="tog-release-cinema-only" checked onchange="build(); queuePreviewReload()">
-                <div class="toggle-track"><div class="toggle-thumb"></div></div>
-              </label>
-            </div>
+
             <div class="toggle-row">
               <div>
                 <div class="toggle-label">Winner Star</div>
@@ -2705,7 +2750,7 @@ const SASH_SLOTS = [
   { id:'studio',     label:'Notable Studio Name',               color:'#9060cc' },
   { id:'director',   label:'Notable Director Name',             color:'#9060cc' },
   { id:'cast',       label:'Notable Cast Name',                 color:'#4ab87a' },
-  { id:'trending',   label:'TMDB Trending Top 40',              color:'#5aaaff' },
+  { id:'trending',   label:'TMDB Trending Top {{TRENDING_FETCH_COUNT}}',              color:'#5aaaff' },
   { id:'new_season', label:'New Season',                         color:'#e05555' },
   { id:'returning',  label:'Returning',                           color:'#e05555' },
   { id:'premiere',   label:'Premiere',                            color:'#e05555' },
@@ -2716,9 +2761,16 @@ const SASH_SLOTS = [
   { id:'new_release', label:'Newly Streaming (New)',              color:'#e05555' },
   { id:'metacritic', label:'Metacritic Must-See',                 color:'#9a9a9a' },
   { id:'true_story', label:'True Story',                          color:'#3ab0a8' },
-  { id:'structural',     label:'Short / Mini / Binge',            color:'#3ab0a8' },
-  { id:'trending_broad', label:'TMDB Trending 41-100',            color:'#5aaaff' },
-  { id:'release_status', label:'Release Status',                  color:'#e05555' },
+  { id:'short_film',     label:'Short Film',            color:'#3ab0a8' },
+  { id:'mini_series',     label:'Miniseries',            color:'#3ab0a8' },
+  { id:'binge_ready',     label:'Binge Ready',            color:'#3ab0a8' },
+  { id:'trending_broad', label:'TMDB Trending {{TRENDING_FETCH_COUNT_PLUS_ONE}}-{{TRENDING_BROAD_FETCH_COUNT}}',            color:'#5aaaff' },
+  { id:'cinema', label:'Cinema',                  color:'#e05555' },
+  { id:'streaming', label:'Streaming',                  color:'#e05555' },
+  { id:'physical', label:'Physical',                  color:'#e05555' },
+  { id:'production', label:'Production',                  color:'#e05555' },
+  { id:'ended', label:'Ended',                  color:'#e05555' },
+  { id:'cancelled', label:'Cancelled',                  color:'#e05555' },
 ];
 
 // All sash slots are enabled by default.  "release_status" sits last in the
@@ -2928,6 +2980,12 @@ async function fetchServerCaps() {
     serverCaps = await resp.json();
     serverCapsLoaded = true;
     updateKeyBadges();
+    
+    if (serverCaps.trending_fetch_count) {
+      const trSash = SASH_SLOTS.find(s => s.id === 'trending');
+      if (trSash) trSash.label = `TMDB Trending Top ${serverCaps.trending_fetch_count}`;
+      buildSashList();
+    }
   } catch(e) {}
 }
 
@@ -3565,7 +3623,17 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   if (userTmdbKey)    params.set('tmdb_key',     usePlaceholders ? '{tmdb_key}'    : userTmdbKey);
   if (userMdblistKey) params.set('mdblist_key',  usePlaceholders ? '{mdblist_key}' : userMdblistKey);
   params.set('top_gradient',    vEl('cfg-top-gradient')    || 'high');
+  if (vEl('cfg-top-gradient') === 'custom') {
+    params.set('top_gradient_opacity', document.getElementById('cfg-tg-op').value);
+    params.set('top_gradient_height', document.getElementById('cfg-tg-ht').value);
+  }
   params.set('bottom_gradient', vEl('cfg-bottom-gradient') || 'high');
+  if (vEl('cfg-bottom-gradient') === 'custom') {
+    params.set('bottom_gradient_opacity', document.getElementById('cfg-bg-op').value);
+    params.set('bottom_gradient_height', document.getElementById('cfg-bg-ht').value);
+  }
+  if (c('tog-top-vignette-sash-only')) params.set('top_vignette_sash_only', 'true');
+  if (c('tog-hide-genre')) params.set('hide_genre', 'true');
   params.set('fallback_to_imdb', c('tog-fallback-imdb') ? 'true' : 'false');
 
   // ── Rating / Genre Label ───────────────────────────────────────────────────
@@ -3632,7 +3700,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   params.set('sash_mode', sashMode);
   params.set('cinema_greyscale', c('tog-cinema-greyscale') ? 'true' : 'false');
   params.set('cinema_greyscale_skip_if_available', c('tog-cinema-greyscale-skip') ? 'true' : 'false');
-  params.set('release_status_cinema_only', c('tog-release-cinema-only') ? 'true' : 'false');
+
   if (showSash) {
     if (c('tog-sash-winner-star')) params.set('sash_winner_star', 'true');
     const _stc = document.getElementById('cfg-sash-text-color').value.trim();
@@ -3825,7 +3893,7 @@ function updateSashBadgeFields() {
   const isBand  = mode === 'sash';   // category/poster + muted apply to diagonal sash
   const shown   = mode !== 'hidden';
   // Release-status-only filter does nothing when no sash is drawn.
-  document.getElementById('sash-release-cinema-only-row').style.display = shown ? '' : 'none';
+
   document.getElementById('sash-style-field').style.display      = isNotch ? '' : 'none';
   document.getElementById('sash-text-color-field').style.display = shown ? '' : 'none';
   document.getElementById('sash-muted-row').style.display        = isBand ? '' : 'none';
@@ -3880,6 +3948,11 @@ function _updateBarRatingRows() {
   // Match Notch Colour only applies to frosted-bodied styles.
   document.getElementById('bar-match-notch-row').style.display =
     (s === 'frosted' || s === 'rating_frosted') ? '' : 'none';
+}
+
+function updateGradientFields() {
+  document.getElementById('top-gradient-custom-fields').style.display = document.getElementById('cfg-top-gradient').value === 'custom' ? 'block' : 'none';
+  document.getElementById('bottom-gradient-custom-fields').style.display = document.getElementById('cfg-bottom-gradient').value === 'custom' ? 'block' : 'none';
 }
 
 function updateRatingFields() {
@@ -4180,12 +4253,23 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     let _tg = (p.get('top_gradient') || '').toLowerCase();
     if (_tg === 'true'  || _tg === '1' || _tg === 'yes') _tg = 'high';
     if (_tg === 'false' || _tg === '0' || _tg === 'no')  _tg = 'off';
-    if (['off','low','medium','high'].includes(_tg)) _setEl('cfg-top-gradient', _tg);
+    if (['off','low','medium','high','custom'].includes(_tg)) _setEl('cfg-top-gradient', _tg);
+    if (_tg === 'custom') {
+      if (p.has('top_gradient_opacity')) { const el = document.getElementById('cfg-tg-op'); el.value = p.get('top_gradient_opacity'); updateWeightRange(el, 'rv-tg-op'); }
+      if (p.has('top_gradient_height')) { const el = document.getElementById('cfg-tg-ht'); el.value = p.get('top_gradient_height'); updateWeightRange(el, 'rv-tg-ht'); }
+    }
   }
   if (p.has('bottom_gradient')) {
     const _bg = (p.get('bottom_gradient') || '').toLowerCase();
-    if (['off','low','medium','high'].includes(_bg)) _setEl('cfg-bottom-gradient', _bg);
+    if (['off','low','medium','high','custom'].includes(_bg)) _setEl('cfg-bottom-gradient', _bg);
+    if (_bg === 'custom') {
+      if (p.has('bottom_gradient_opacity')) { const el = document.getElementById('cfg-bg-op'); el.value = p.get('bottom_gradient_opacity'); updateWeightRange(el, 'rv-bg-op'); }
+      if (p.has('bottom_gradient_height')) { const el = document.getElementById('cfg-bg-ht'); el.value = p.get('bottom_gradient_height'); updateWeightRange(el, 'rv-bg-ht'); }
+    }
   }
+  if (p.has('top_vignette_sash_only')) _setEl('tog-top-vignette-sash-only', p.get('top_vignette_sash_only'));
+  if (p.has('hide_genre')) _setEl('tog-hide-genre', p.get('hide_genre'));
+  updateGradientFields();
   if (p.has('fallback_to_imdb')) _setEl('tog-fallback-imdb', p.get('fallback_to_imdb'));
 
   // ── Sash ────────────────────────────────────────────────────────────────
@@ -4199,7 +4283,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('sash_winner_star')) _setEl('tog-sash-winner-star',  p.get('sash_winner_star'));
   if (p.has('cinema_greyscale')) _setEl('tog-cinema-greyscale', p.get('cinema_greyscale'));
   if (p.has('cinema_greyscale_skip_if_available')) _setEl('tog-cinema-greyscale-skip', p.get('cinema_greyscale_skip_if_available'));
-  if (p.has('release_status_cinema_only')) _setEl('tog-release-cinema-only', p.get('release_status_cinema_only'));
+
   if (p.has('muted'))           _setEl('tog-muted',         p.get('muted'));
   // sash_mode supersedes the legacy show_award_sash + sash_badge bools.
   if (p.has('sash_mode'))                _setEl('cfg-sash-mode', p.get('sash_mode'));
@@ -4374,8 +4458,11 @@ buildWeightSection('movie-weights', MOVIE_SOURCES, DEFAULT_MOVIE_W);
 buildWeightSection('tv-weights',    TV_SOURCES,    DEFAULT_TV_W);
 
 document.querySelectorAll('input[type="range"]').forEach(el => {
-  const m = el.getAttribute('oninput')?.match(/updateRange\(this,'([^']+)'\)/);
-  if (m && document.getElementById(m[1])) updateRange(el, m[1]);
+  const m = el.getAttribute('oninput')?.match(/update(?:Weight)?Range\(this,'([^']+)'\)/);
+  if (m && document.getElementById(m[1])) {
+    if (m[0].includes('Weight')) updateWeightRange(el, m[1]);
+    else updateRange(el, m[1]);
+  }
   else {
     const pct = ((parseFloat(el.value) - parseFloat(el.min)) / (parseFloat(el.max) - parseFloat(el.min)) * 100).toFixed(1) + '%';
     el.style.setProperty('--pct', pct);
