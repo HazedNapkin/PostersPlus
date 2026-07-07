@@ -10,7 +10,7 @@ services:
         BAKE_PPOCR_MODEL: "${BAKE_PPOCR_MODEL:-true}"
     image: postersplus
     ports:
-      - "8081:8000"
+      - "8000:8000"
     restart: unless-stopped
     volumes:
       - ./postersplus-cache:/app/cache  # cache DB, TMDB posters/logos, discovery_overrides.json

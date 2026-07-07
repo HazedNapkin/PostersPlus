@@ -454,6 +454,32 @@ def delete_cached_final_poster(cache_key: str) -> None:
     except Exception as exc:
         logger.error(f"Final poster cache delete error: {exc}")
 
+def invalidate_final_posters(tmdb_id: str, media_type: str | None = None) -> None:
+    """Invalidate all composited posters for a specific TMDB ID.
+    Used when underlying dynamic data (like trending rank or release status)
+    changes so the next request renders a fresh poster with updated badges.
+    """
+    pattern = f"%:{tmdb_id}:{media_type}:%" if media_type else f"%:{tmdb_id}:%"
+    
+    if COMPOSITE_MEM_ENTRIES > 0:
+        with _composite_l1_lock:
+            keys_to_delete = []
+            for k in _composite_l1:
+                parts = k.split(":")
+                if len(parts) >= 3 and parts[1] == tmdb_id:
+                    if media_type is None or parts[2] == media_type:
+                        keys_to_delete.append(k)
+            for k in keys_to_delete:
+                _composite_l1.pop(k, None)
+                
+    try:
+        with _db_lock:
+            get_db().execute("DELETE FROM final_poster_cache WHERE cache_key LIKE ?", (pattern,))
+            get_db().commit()
+        logger.info(f"Invalidated final poster cache for tmdb_id={tmdb_id}")
+    except Exception as exc:
+        logger.error(f"Final poster cache invalidate error: {exc}")
+
 
 def get_cache_stats() -> dict:
     """
@@ -880,6 +906,7 @@ def set_cached_trending_snapshot(
     media_type: str,
     rankings: dict[str, int],
 ) -> None:
+    old_rankings = get_cached_trending_snapshot(media_type) or {}
     try:
         with _db_lock:
             get_db().execute(
@@ -895,6 +922,19 @@ def set_cached_trending_snapshot(
                 ),
             )
             get_db().commit()
+            
+        # Invalidate final posters for items that changed trending rank or dropped out.
+        changed_ids = set()
+        for t_id, r in rankings.items():
+            if old_rankings.get(t_id) != r:
+                changed_ids.add(t_id)
+        for t_id in old_rankings:
+            if t_id not in rankings:
+                changed_ids.add(t_id)
+                
+        for t_id in changed_ids:
+            invalidate_final_posters(t_id, media_type)
+            
     except Exception as exc:
         logger.error(f"Trending snapshot cache write error: {exc}")
 
@@ -1109,6 +1149,13 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
                     "DELETE FROM tmdb_metadata_cache WHERE cache_key = ?", (cache_key,)
                 )
                 get_db().commit()
+                
+            if age_days == 9999:
+                parts = cache_key.split("_")
+                if len(parts) >= 2:
+                    m_type, t_id = parts[0], parts[1]
+                    invalidate_final_posters(t_id, m_type)
+                    
             return None
 
         # Rows created before newer metadata fields were added were migrated
