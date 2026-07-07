@@ -1546,7 +1546,11 @@
       border: 1px solid var(--border);
       box-shadow: 0 16px 48px rgba(0,0,0,0.6);
       overflow: hidden;
-      transition: width 0.25s ease, height 0.25s ease;
+      transition: width 0.25s ease, height 0.25s ease, top 0.25s ease, bottom 0.25s ease;
+    }
+    .preview-panel.preview-at-top {
+      bottom: auto;
+      top: 12px;
     }
     .preview-panel .panel-header,
     .preview-panel .preview-meta,
@@ -1791,6 +1795,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             <div class="field">
               <div class="field-label-row">
                 <label class="field-label"><a href="https://www.themoviedb.org/settings/api" target="_blank" style="color:inherit;text-decoration:none;border-bottom:1px solid var(--text-muted);">TMDB API Key</a></label>
+                <span id="tmdb-key-badge" style="display:none;"></span>
               </div>
               <input type="text" id="cfg-tmdb-key" placeholder="If blank uses server key." oninput="build(); queuePreviewReload(); saveApiKeys()">
               <div class="field-hint" id="tmdb-key-hint" style="display:none"></div>
@@ -1798,6 +1803,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             <div class="field">
               <div class="field-label-row">
                 <label class="field-label"><a href="https://mdblist.com/preferences/" target="_blank" style="color:inherit;text-decoration:none;border-bottom:1px solid var(--text-muted);">MDBList API Key</a></label>
+                <span id="mdblist-key-badge" style="display:none;"></span>
               </div>
               <input type="text" id="cfg-mdblist-key" placeholder="If blank uses server key." oninput="build(); queuePreviewReload(); saveApiKeys()">
               <div class="field-hint" id="mdblist-key-hint" style="display:none"></div>
@@ -2867,6 +2873,17 @@ previewPanel.addEventListener('click', () => {
 document.getElementById('preview-frame').addEventListener('click', () => {
   if (previewPanel.classList.contains('expanded')) collapsePreview();
 });
+
+window.addEventListener('scroll', () => {
+  if (!_isMobileViewport()) return;
+  // When scrolled to the bottom (with a 50px buffer), move preview to top right
+  const scrolledToBottom = window.innerHeight + window.scrollY >= document.body.offsetHeight - 50;
+  if (scrolledToBottom && !previewPanel.classList.contains('expanded')) {
+    previewPanel.classList.add('preview-at-top');
+  } else {
+    previewPanel.classList.remove('preview-at-top');
+  }
+}, { passive: true });
 
 function showTab(tab) {
   document.querySelectorAll('.section').forEach(s => {
