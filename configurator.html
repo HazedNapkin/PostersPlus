@@ -485,6 +485,7 @@
 
   input[type="text"],
   input[type="number"],
+  textarea,
   select {
     width: 100%;
     background: var(--black2);
@@ -502,13 +503,21 @@
 
   input[type="text"]:focus,
   input[type="number"]:focus,
+  textarea:focus,
   select:focus {
     border-color: var(--gold-dim);
     background-color: var(--black3);
     box-shadow: inset 0 0 0 1px rgba(201,168,76,0.08);
   }
 
-  input[type="text"]::placeholder { color: var(--text-muted); }
+  input[type="text"]::placeholder,
+  textarea::placeholder { color: var(--text-muted); }
+
+  textarea {
+    min-height: 94px;
+    line-height: 1.45;
+    resize: vertical;
+  }
 
   select {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238a6e2e'/%3E%3C/svg%3E");
@@ -1918,12 +1927,19 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             <div id="rating-alt-colors-toggle" style="margin-bottom:14px;">
               <div class="field">
                 <label class="field-label">Colour Palette</label>
-                <select id="cfg-score-color-mode" onchange="build(); queuePreviewReload()">
+                <select id="cfg-score-color-mode" onchange="updateCustomPaletteFields(); build(); queuePreviewReload()">
                   <option value="2" selected>Prestige</option>
                   <option value="0">Light</option>
                   <option value="1">Dark/light</option>
+                  <option value="3">Custom</option>
                 </select>
               </div>
+            </div>
+            <div class="field" id="score-custom-palette-field" style="display:none; margin-top:-2px; margin-bottom:14px;">
+              <label class="field-label">Custom Palette</label>
+              <textarea id="cfg-score-custom-palette" placeholder="0:#FF5050&#10;50:#FFD25A&#10;70:#78FFA0&#10;85:#BE8CFF" spellcheck="false"
+                        oninput="build(); queuePreviewReload()"></textarea>
+              <div class="field-hint">Use score:hex entries. The highest score threshold below the rating is used.</div>
             </div>
             <div id="rating-mode1-fields">
               <div class="field">
@@ -2064,13 +2080,14 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </div>
               <div class="field" id="bar-accent-field" style="display:none; margin-top:8px; margin-bottom:0;">
                 <label class="field-label">Rating Bar Colour</label>
-                <select id="cfg-bar-accent" onchange="build(); queuePreviewReload()">
+                <select id="cfg-bar-accent" onchange="updateCustomPaletteFields(); build(); queuePreviewReload()">
                   <option value="silver" selected>Pure Silver</option>
                   <option value="sample">Colour Sample</option>
                   <option value="gold">Pure Gold</option>
                   <option value="palette_2">Prestige</option>
                   <option value="palette_0">Light</option>
                   <option value="palette_1">Dark/Light</option>
+                  <option value="palette_custom">Custom</option>
                 </select>
               </div>
               <div class="field" style="margin-top:10px; margin-bottom:0;">
@@ -3526,6 +3543,19 @@ function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+function normaliseCustomPalette(raw = vEl('cfg-score-custom-palette')) {
+  return raw
+    .split(/[\n,;]+/)
+    .map(part => {
+      const m = part.trim().match(/^([0-9]{1,3}(?:\.[0-9]+)?)\s*:\s*#?([0-9a-fA-F]{6})$/);
+      if (!m) return '';
+      const score = Math.max(0, Math.min(100, Math.round(parseFloat(m[1]))));
+      return `${score}:${m[2].toUpperCase()}`;
+    })
+    .filter(Boolean)
+    .join(',');
+}
+
 function build() {
   const url = buildPreviewUrl();
   if (_SHOW_URL_BOX) {
@@ -3606,6 +3636,13 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
       params.set('bar_frost_opacity',   n('cfg-bar-frost').toFixed(2));
       params.set('bar_bottom_inset',    n('cfg-bar-inset').toFixed(3));
     }
+    const _usesCustomPalette =
+      ((ratingMode === 1 || ratingMode === 3) && ni('cfg-score-color-mode') === 3) ||
+      (ratingMode === 4 &&
+       (vEl('cfg-bar-style') === 'rating_black' || vEl('cfg-bar-style') === 'rating_frosted') &&
+       vEl('cfg-bar-accent') === 'palette_custom');
+    const _customPalette = normaliseCustomPalette();
+    if (_usesCustomPalette && _customPalette) params.set('score_custom_palette', _customPalette);
     const _rtcEl = document.getElementById('cfg-rtc-m' + ratingMode);
     const _rtc = _rtcEl ? _rtcEl.value.trim() : '';
     if (/^[0-9a-fA-F]{6}$/i.test(_rtc)) params.set('rating_text_color', _rtc);
@@ -3729,7 +3766,7 @@ function resetDefaults() {
   // pre-existing bug for textless / muted / sash-badge / award-sash.
   document.querySelectorAll('[id^="cfg-"],[id^="tog-"]').forEach(el => {
     if (preserve.has(el.id)) return;
-    if (el.type === 'range' || el.type === 'number' || el.type === 'text') {
+    if (el.type === 'range' || el.type === 'number' || el.type === 'text' || el.tagName === 'TEXTAREA') {
       el.value = el.defaultValue;
       if (el.type === 'range') el.dispatchEvent(new Event('input', { bubbles: true }));
     }
@@ -3877,9 +3914,20 @@ function _updateBarRatingRows() {
   const cur = vEl('cfg-bar-accent') || '';
   const visible = [...document.querySelectorAll('#cfg-bar-accent option')].filter(o => o.style.display !== 'none');
   if (visible.length && !visible.find(o => o.value === cur)) _setEl('cfg-bar-accent', visible[0].value);
+  updateCustomPaletteFields();
   // Match Notch Colour only applies to frosted-bodied styles.
   document.getElementById('bar-match-notch-row').style.display =
     (s === 'frosted' || s === 'rating_frosted') ? '' : 'none';
+}
+
+function updateCustomPaletteFields() {
+  const mode = parseInt(document.getElementById('cfg-rating-mode').value);
+  const scoreCustom = (mode === 1 || mode === 3) && ni('cfg-score-color-mode') === 3;
+  const barCustom = mode === 4
+    && (vEl('cfg-bar-style') === 'rating_black' || vEl('cfg-bar-style') === 'rating_frosted')
+    && vEl('cfg-bar-accent') === 'palette_custom';
+  const field = document.getElementById('score-custom-palette-field');
+  if (field) field.style.display = (scoreCustom || barCustom) ? '' : 'none';
 }
 
 function updateRatingFields() {
@@ -3891,6 +3939,7 @@ function updateRatingFields() {
   document.getElementById('rating-glow-fields').style.display       = mode === 1 ? '' : 'none';
   document.getElementById('rating-alt-colors-toggle').style.display = (mode === 1 || mode === 3) ? '' : 'none';
   if (mode === 4) _updateBarRatingRows();
+  updateCustomPaletteFields();
 }
 
 function _setAllRtc(val) {
@@ -4256,6 +4305,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('score_glow_blur'))                _setEl('cfg-glow-blur',    p.get('score_glow_blur'));
   if (p.has('score_glow_alpha'))               _setEl('cfg-glow-alpha',   p.get('score_glow_alpha'));
   if (p.has('score_color_mode'))               _setEl('cfg-score-color-mode', p.get('score_color_mode'));
+  if (p.has('score_custom_palette'))           _setEl('cfg-score-custom-palette', p.get('score_custom_palette'));
   if (p.has('rating_text_color')) {
     _setAllRtc(p.get('rating_text_color').replace('#', '').toUpperCase());
   }
@@ -4362,6 +4412,8 @@ function _resetFormToDefaults() {
       // mid-init.  The range-display setup loop below picks up the new value.
     } else if (el.type === 'checkbox') {
       el.checked = el.defaultChecked;
+    } else if (el.tagName === 'TEXTAREA') {
+      el.value = el.defaultValue;
     } else if (el.tagName === 'SELECT') {
       for (const opt of el.options) opt.selected = opt.defaultSelected;
     }

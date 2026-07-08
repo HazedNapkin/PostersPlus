@@ -140,6 +140,58 @@ async def fetch_rating(
 # Score colour
 # ---------------------------------------------------------------------------
 
+CustomScorePalette = list[tuple[int, tuple[int, int, int]]]
+
+
+def parse_custom_score_palette(raw: str | None) -> CustomScorePalette | None:
+    if not raw:
+        return None
+    out: dict[int, tuple[int, int, int]] = {}
+    for part in raw.replace("\n", ",").replace(";", ",").split(","):
+        part = part.strip()
+        if not part or ":" not in part:
+            continue
+        raw_score, raw_hex = part.split(":", 1)
+        try:
+            score = max(0, min(100, int(round(float(raw_score.strip())))))
+        except (TypeError, ValueError):
+            continue
+        hex_value = raw_hex.strip().lstrip("#")
+        if len(hex_value) != 6:
+            continue
+        try:
+            rgb = (
+                int(hex_value[0:2], 16),
+                int(hex_value[2:4], 16),
+                int(hex_value[4:6], 16),
+            )
+        except ValueError:
+            continue
+        out[score] = rgb
+    if not out:
+        return None
+    return sorted(out.items())
+
+
+def _darken(rgb: tuple[int, int, int], amount: float = 0.72) -> tuple[int, int, int]:
+    return tuple(max(0, min(255, int(c * amount))) for c in rgb)
+
+
+def _score_color_custom(
+    score: int,
+    custom_palette: CustomScorePalette | None,
+) -> tuple[tuple[int, int, int], tuple[int, int, int]] | None:
+    if not custom_palette:
+        return None
+    score = max(0, min(int(score), 100))
+    selected = custom_palette[0][1]
+    for threshold, rgb in custom_palette:
+        if score < threshold:
+            break
+        selected = rgb
+    return selected, _darken(selected)
+
+
 def _score_color(score: int) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
     if score < 50:
         return (255, 80, 80), (160, 40, 40)
@@ -177,6 +229,18 @@ def _score_color_metal(score: int) -> tuple[tuple[int, int, int], tuple[int, int
         return (218, 224, 240), (155, 165, 195)
     else:             # gold
         return (255, 210,  60), (200, 150,  25)
+
+
+def score_color_for_mode(
+    score: int,
+    color_mode: int = 0,
+    custom_palette: CustomScorePalette | None = None,
+) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+    if color_mode == 3:
+        custom = _score_color_custom(score, custom_palette)
+        if custom is not None:
+            return custom
+    return {1: _score_color_alt, 2: _score_color_metal}.get(color_mode, _score_color)(score)
 
 
 def _cairo_pill_mask(w: int, h: int, radius: int) -> Image.Image:
@@ -237,6 +301,7 @@ def draw_score_bar(
     glow_blur: int = SCORE_GLOW_BLUR,
     glow_alpha: int = SCORE_GLOW_ALPHA,
     color_mode: int = 0,
+    custom_palette: CustomScorePalette | None = None,
 ) -> None:
     if score is None:
         return
@@ -269,8 +334,7 @@ def draw_score_bar(
     if fill_w <= 0:
         return
 
-    _color_fn = {1: _score_color_alt, 2: _score_color_metal}.get(color_mode, _score_color)
-    left_color, right_color = _color_fn(score)
+    left_color, right_color = score_color_for_mode(score, color_mode, custom_palette)
     left_color  = _soften(left_color,  0.90)
     right_color = _soften(right_color, 0.90)
 
@@ -370,6 +434,7 @@ def draw_score_bar_vertical(
     height: int = 36,
     width: int = 4,
     color_mode: int = 0,
+    custom_palette: CustomScorePalette | None = None,
 ) -> None:
     if score is None:
         return
@@ -380,8 +445,7 @@ def draw_score_bar_vertical(
             return
 
     score = max(0, min(int(score), 100))
-    _color_fn = {1: _score_color_alt, 2: _score_color_metal}.get(color_mode, _score_color)
-    left_color, _right_color = _color_fn(score)
+    left_color, _right_color = score_color_for_mode(score, color_mode, custom_palette)
     _draw_solid_pip(image, x=x, y_center=y_center, width=width, height=height, color=left_color)
 
 

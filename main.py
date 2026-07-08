@@ -570,7 +570,20 @@ from quality import (
     parse_quality,
     render_badges_left,
 )
-from ratings import calculate_weighted_score, draw_score_bar, fetch_rating, draw_score_bar_vertical, _draw_solid_pip, draw_frosted_bar, _score_color, _score_color_alt, _score_color_metal
+from ratings import (
+    CustomScorePalette,
+    calculate_weighted_score,
+    draw_frosted_bar,
+    draw_score_bar,
+    draw_score_bar_vertical,
+    fetch_rating,
+    parse_custom_score_palette,
+    score_color_for_mode,
+    _draw_solid_pip,
+    _score_color,
+    _score_color_alt,
+    _score_color_metal,
+)
 from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_trending_rank, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H
 import tvdb
 
@@ -725,7 +738,7 @@ class RequestConfig:
     bar_frost_opacity:       float = 0.85
     bar_bottom_inset:        float = 0.0
     bar_style:               str   = "frosted"  # "frosted"|"silver"|"gold"|"rating_black"|"rating_frosted"
-    bar_accent:              str   = "silver"   # "silver"|"gold"|"palette_0"|"palette_1"|"palette_2"
+    bar_accent:              str   = "silver"   # "silver"|"gold"|"palette_0"|"palette_1"|"palette_2"|"palette_custom"
     bar_score_out_of_10:     bool  = False
     bar_match_notch:         bool  = False  # share one frosted tint with the sash notch
     bar_append:              str   = "rating_year"  # "rating_year"|"rating"|"year"|"sash"
@@ -774,6 +787,7 @@ class RequestConfig:
     muted: bool = False
     textless: bool = False
     score_color_mode: int = 2
+    score_custom_palette: CustomScorePalette | None = None
     top_gradient:    str = "high"   # off | low | medium | high — strength of the top vignette
     bottom_gradient: str = "high"   # off | low | medium | high — strength of the bottom vignette
     sash_badge: bool = False              # legacy; superseded by sash_mode (kept for back-compat parsing)
@@ -929,7 +943,8 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.sash_height_ratio       = _f("sash_height_ratio",      cfg.sash_height_ratio,      0.06, 0.20)
     cfg.wait_for_quality        = _b("wait_for_quality",        cfg.wait_for_quality)
     cfg.greyscale_no_quality    = _b("greyscale_no_quality",    cfg.greyscale_no_quality)
-    cfg.score_color_mode        = _i("score_color_mode",       cfg.score_color_mode,       0,   2)
+    cfg.score_color_mode        = _i("score_color_mode",       cfg.score_color_mode,       0,   3)
+    cfg.score_custom_palette    = parse_custom_score_palette(params.get("score_custom_palette"))
     cfg.badge_display_mode      = _i("badge_display_mode",     cfg.badge_display_mode,     0,   5)
     cfg.rating_display_mode     = _i("rating_display_mode",    cfg.rating_display_mode,    0,   4)
 
@@ -965,7 +980,7 @@ def build_request_config(params: dict) -> RequestConfig:
     if _bst in ("frosted", "pure_black", "silver", "gold", "rating_black", "rating_frosted"):
         cfg.bar_style = _bst
     _bac = (params.get("bar_accent") or "").strip().lower()
-    if _bac in ("silver", "gold", "sample", "palette_0", "palette_1", "palette_2"):
+    if _bac in ("silver", "gold", "sample", "palette_0", "palette_1", "palette_2", "palette_custom"):
         cfg.bar_accent = _bac
     cfg.bar_score_out_of_10     = _b("bar_score_out_of_10",     cfg.bar_score_out_of_10)
     cfg.bar_match_notch         = _b("bar_match_notch",         cfg.bar_match_notch)
@@ -1676,6 +1691,7 @@ def build_poster(
                 glow_blur=cfg.score_glow_blur,
                 glow_alpha=cfg.score_glow_alpha,
                 color_mode=cfg.score_color_mode,
+                custom_palette=cfg.score_custom_palette,
             )
 
         elif cfg.rating_display_mode == 2:
@@ -1769,7 +1785,8 @@ def build_poster(
                 elif kind == "rpip":
                     draw_score_bar_vertical(image, score, x=ox, y_center=pip_cy,
                                             height=pip_h, width=pip_w,
-                                            color_mode=cfg.score_color_mode)
+                                            color_mode=cfg.score_color_mode,
+                                            custom_palette=cfg.score_custom_palette)
                 else:  # "pip"
                     _draw_solid_pip(image, x=ox, y_center=pip_cy,
                                     width=pip_w, height=pip_h, color=(192, 192, 200))
@@ -1813,8 +1830,11 @@ def build_poster(
                     if cfg.bar_accent == "sample" else
                     {"silver": (210, 210, 218), "gold": (212, 175, 55)}.get(cfg.bar_accent)
                     or (
-                        {0: _score_color, 1: _score_color_alt, 2: _score_color_metal}
-                        .get(int(cfg.bar_accent[-1]), _score_color)(int(score))[0]
+                        score_color_for_mode(
+                            int(score),
+                            3 if cfg.bar_accent == "palette_custom" else int(cfg.bar_accent[-1]),
+                            cfg.score_custom_palette,
+                        )[0]
                         if score not in ("N/A", None) else (210, 210, 218)
                     )
                 ) if cfg.bar_style in ("rating_black", "rating_frosted") else None,
