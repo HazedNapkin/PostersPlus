@@ -71,6 +71,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 
 from config import SASH_PRIORITY as DEFAULT_SASH_PRIORITY  # single source of truth
+import config as _cfg
 
 logger = logging.getLogger(__name__)
 
@@ -293,6 +294,15 @@ _SASH_TYPES: dict[str, str] = {
     "true_story":      "info",      # teal
     "structural":      "info",      # teal
     "release_status":  "alert",     # red — Physical / Streaming / Cinema / Production
+    "short_film":      "info",
+    "mini_series":     "info",
+    "binge_ready":     "info",
+    "cinema":          "alert",
+    "streaming":       "alert",
+    "physical":        "alert",
+    "production":      "alert",
+    "ended":           "alert",
+    "cancelled":       "alert",
 }
 
 NEW_RELEASE_DAYS = 14
@@ -543,16 +553,33 @@ def extract_discovery_meta(
         last_ep = tmdb_data.get("last_episode") or None
         seasons = tmdb_data.get("seasons") or []
 
-        episode_for_season = next_ep if _is_recent_or_upcoming(_episode_date(next_ep)) else last_ep
-        if not _is_recent_or_upcoming(_episode_date(episode_for_season)):
-            episode_for_season = None
+        last_is_active = _is_recent_or_upcoming(_episode_date(last_ep))
+        next_is_active = _is_recent_or_upcoming(_episode_date(next_ep))
 
-        ep_season = _episode_season(episode_for_season)
-        ep_number = _episode_number(episode_for_season)
-        if ep_season and ep_season > 1:
-            if ep_number == 1:
+        last_season = _episode_season(last_ep)
+        next_season = _episode_season(next_ep)
+
+        active_season = None
+        if next_is_active and next_season and next_season > 1:
+            active_season = next_season
+        elif last_is_active and last_season and last_season > 1:
+            active_season = last_season
+
+        if active_season:
+            is_new_season = False
+            for s in seasons:
+                try:
+                    s_num = int(s.get("season_number", 0))
+                except (TypeError, ValueError):
+                    continue
+                if s_num == active_season:
+                    if _is_recent_or_upcoming(s.get("air_date")):
+                        is_new_season = True
+                    break
+            
+            if is_new_season:
                 meta.is_new_season = True
-            elif ep_number and episode_for_season:
+            else:
                 meta.is_returning = True
 
         last_season = _episode_season(last_ep)
@@ -649,10 +676,10 @@ def _evaluate_slot(slot: str, meta: DiscoveryMeta) -> str | None:
         return meta.matched_cast[0] if meta.matched_cast else None
 
     if slot == "trending":
-        return f"#{meta.trending_rank} Today" if meta.trending_rank and meta.trending_rank <= 40 else None
+        return f"#{meta.trending_rank} Today" if meta.trending_rank and meta.trending_rank <= _cfg.TRENDING_FETCH_COUNT else None
 
     if slot == "trending_broad":
-        return f"#{meta.trending_rank} Today" if meta.trending_rank and 40 < meta.trending_rank <= 100 else None
+        return f"#{meta.trending_rank} Today" if meta.trending_rank and _cfg.TRENDING_FETCH_COUNT < meta.trending_rank <= _cfg.TRENDING_BROAD_FETCH_COUNT else None
 
     if slot == "new_season":
         return "New Season" if meta.is_new_season else None
@@ -693,8 +720,19 @@ def _evaluate_slot(slot: str, meta: DiscoveryMeta) -> str | None:
             if key == "binge_ready" and meta.is_binge_ready:  return _STRUCTURAL_LABELS[key]
         return None
 
+    if slot in ("short_film", "mini_series", "binge_ready"):
+        if slot == "short_film" and meta.is_short_film: return _STRUCTURAL_LABELS[slot]
+        if slot == "mini_series" and meta.is_mini_series: return _STRUCTURAL_LABELS[slot]
+        if slot == "binge_ready" and meta.is_binge_ready: return _STRUCTURAL_LABELS[slot]
+        return None
+
     if slot == "release_status":
         return meta.release_status  # already a display string or None
+
+    if slot in ("cinema", "streaming", "physical", "production", "ended", "cancelled", "airing"):
+        if meta.release_status and meta.release_status.lower() == slot:
+            return meta.release_status
+        return None
 
     return None
 
@@ -729,6 +767,16 @@ ALL_PRIORITY_SLOTS: list[str] = [
     "digital_release",  # legacy alias for new_release
     "noms",             # legacy alias for any nomination
     "release_status",   # opt-in: Blu-ray / Streaming / Cinema / Production — requires extra API call for movies
+    "short_film",
+    "mini_series",
+    "binge_ready",
+    "cinema",
+    "streaming",
+    "physical",
+    "production",
+    "ended",
+    "cancelled",
+    "airing",
 ]
 
 

@@ -76,7 +76,7 @@ def normalise_poster(image: Image.Image) -> Image.Image:
     scale = max(target_w / src_w, target_h / src_h)
     new_w = round(src_w * scale)
     new_h = round(src_h * scale)
-    image = image.resize((new_w, new_h), Image.LANCZOS)
+    image = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
     left = round((new_w - target_w) / 2)
     top  = round((new_h - target_h) / 2)
     return image.crop((left, top, left + target_w, top + target_h))
@@ -730,7 +730,7 @@ def _saliency_crop_left(image: Image.Image, crop_w: int,
     sh      = max(1, int(h * scale))
     scrop_w = max(1, int(crop_w * scale))
 
-    small = image.resize((sw, sh), Image.LANCZOS).convert("RGB")
+    small = image.resize((sw, sh), Image.Resampling.LANCZOS).convert("RGB")
     rgb   = np.array(small, dtype=np.float32) / 255.0   # H × W × 3, [0,1]
     r, g, b = rgb[:,:,0], rgb[:,:,1], rgb[:,:,2]
 
@@ -1146,6 +1146,8 @@ async def fetch_logo(
     return logo
 
 
+_trending_inflight: dict[str, asyncio.Event] = {}
+
 async def fetch_trending_rank(
     client: httpx.AsyncClient,
     tmdb_id: str,
@@ -1158,31 +1160,44 @@ async def fetch_trending_rank(
     snapshot = get_cached_trending_snapshot(endpoint)
 
     if snapshot is None:
-        logger.info("External API Call: Refreshing TMDB trending snapshot (pages 1-5 concurrent)")
+        inflight_event = _trending_inflight.get(endpoint)
+        if inflight_event is not None:
+            await inflight_event.wait()
+            snapshot = get_cached_trending_snapshot(endpoint)
+        
+        if snapshot is None:
+            event_to_set = asyncio.Event()
+            _trending_inflight[endpoint] = event_to_set
+            
+            try:
+                logger.info("External API Call: Refreshing TMDB trending snapshot (pages 1-5 concurrent)")
 
-        async def _fetch_page(page: int) -> list[dict]:
-            resp = await client.get(
-                f"https://api.themoviedb.org/3/trending/{endpoint}/day",
-                params={"api_key": tmdb_key, "page": page},
-            )
-            resp.raise_for_status()
-            return resp.json().get("results", [])
+                async def _fetch_page(page: int) -> list[dict]:
+                    resp = await client.get(
+                        f"https://api.themoviedb.org/3/trending/{endpoint}/day",
+                        params={"api_key": tmdb_key, "page": page},
+                    )
+                    resp.raise_for_status()
+                    return resp.json().get("results", [])
 
-        try:
-            pages = await asyncio.gather(*(_fetch_page(page) for page in range(1, 6)))
-        except Exception as exc:
-            logger.error(f"TMDB trending fetch error: {exc}")
-            return None
+                try:
+                    pages = await asyncio.gather(*(_fetch_page(page) for page in range(1, 6)))
+                except Exception as exc:
+                    logger.error(f"TMDB trending fetch error: {exc}")
+                    return None
 
-        rankings: dict[str, int] = {}
-        rank = 1
-        for results in pages:
-            for item in results:
-                rankings[str(item["id"])] = rank
-                rank += 1
+                rankings: dict[str, int] = {}
+                rank = 1
+                for results in pages:
+                    for item in results:
+                        rankings[str(item["id"])] = rank
+                        rank += 1
 
-        set_cached_trending_snapshot(endpoint, rankings)
-        snapshot = rankings
+                set_cached_trending_snapshot(endpoint, rankings)
+                snapshot = rankings
+            finally:
+                event_to_set.set()
+                _trending_inflight.pop(endpoint, None)
 
     rank = snapshot.get(str(tmdb_id))
 
@@ -1536,6 +1551,36 @@ def _parse_tmdb_date(value: str | None) -> _date | None:
         return None
 
 
+def _compute_movie_status_from_dates(
+    theatrical_date: _date | None,
+    digital_date: _date | None,
+    physical_date: _date | None,
+    tmdb_status: str | None,
+) -> str:
+    today = _date.today()
+    has_physical = physical_date is not None and physical_date <= today
+    has_digital = digital_date is not None and digital_date <= today
+    has_theatrical = theatrical_date is not None and theatrical_date <= today
+
+    if has_physical:
+        return "Physical"
+    elif has_digital:
+        return "Streaming"
+    elif has_theatrical:
+        if (
+            CINEMA_MAX_AGE_YEARS > 0
+            and theatrical_date is not None
+            and (today - theatrical_date).days > CINEMA_MAX_AGE_YEARS * 365
+        ):
+            return "Streaming"
+        else:
+            return "Cinema"
+    elif tmdb_status == "Released":
+        return "Streaming"
+    else:
+        return "Production"
+
+
 async def fetch_movie_release_info(
     client: httpx.AsyncClient,
     tmdb_id: str,
@@ -1546,6 +1591,12 @@ async def fetch_movie_release_info(
     cache_key = f"movie_{tmdb_id}"
     cached = get_cached_movie_release_info(cache_key)
     if cached:
+        cached["status"] = _compute_movie_status_from_dates(
+            _parse_tmdb_date(cached.get("theatrical_date")),
+            _parse_tmdb_date(cached.get("digital_date")),
+            _parse_tmdb_date(cached.get("physical_date")),
+            tmdb_status,
+        )
         return cached
 
     result: str | None = None
@@ -1587,38 +1638,24 @@ async def fetch_movie_release_info(
         for rd in entry.get("release_dates", []):
             rtype = rd.get("type")
             rdate = _parse_tmdb_date(rd.get("release_date"))
-            if rdate is None or rdate > today:
+            if rdate is None:
                 continue
             if rtype == 5:
-                has_physical = True
                 if latest_physical is None or rdate > latest_physical:
                     latest_physical = rdate
             elif rtype in (4, 6):   # digital or TV broadcast
-                has_digital = True
                 if latest_digital is None or rdate > latest_digital:
                     latest_digital = rdate
             elif rtype == 3:
-                has_theatrical = True
                 if earliest_theatrical is None or rdate < earliest_theatrical:
                     earliest_theatrical = rdate
 
-    if has_physical:
-        result = "Physical"
-    elif has_digital:
-        result = "Streaming"
-    elif has_theatrical:
-        if (
-            CINEMA_MAX_AGE_YEARS > 0
-            and earliest_theatrical is not None
-            and (today - earliest_theatrical).days > CINEMA_MAX_AGE_YEARS * 365
-        ):
-            result = "Streaming"
-        else:
-            result = "Cinema"
-    elif tmdb_status == "Released":
-        result = "Streaming"
-    else:
-        result = "Production"
+    result = _compute_movie_status_from_dates(
+        earliest_theatrical,
+        latest_digital,
+        latest_physical,
+        tmdb_status,
+    )
 
     info = {
         "status": result,
@@ -1688,7 +1725,7 @@ async def fetch_release_status(
             "In Production":    "Production",
             "Planned":          "Production",
             "Pilot":            "Production",
-            "Ended":            "Streaming",  # completed run → assume available on streaming
+            "Ended":            "Ended",
             "Cancelled":        "Cancelled",
             "Canceled":         "Cancelled",
         }
@@ -1791,7 +1828,7 @@ def composite_logo(
             f"max_h={max_h} eff_max_h={eff_max_h:.0f} → final={int(new_w)}x{int(new_h)}"
         )
 
-    logo = logo.resize((max(1, int(new_w)), max(1, int(new_h))), Image.LANCZOS)
+    logo = logo.resize((max(1, int(new_w)), max(1, int(new_h))), Image.Resampling.LANCZOS)
 
     # ── Position ─────────────────────────────────────────────────────────────
     # Two anchor modes:

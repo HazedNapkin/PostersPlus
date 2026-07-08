@@ -76,8 +76,18 @@ SERVER_MDBLIST_KEYS: list[str] = [k for k in [SERVER_MDBLIST_KEY, SERVER_MDBLIST
 # Cache-Control: public header so Cloudflare (or any CDN) caches them at the
 # edge. Set to 0 to disable (e.g. when running without a CDN).
 CDN_CACHE_TTL         = int(os.environ.get("CDN_CACHE_TTL", "0"))
-# JPEG output quality for composited posters (70–95). Higher = better quality, larger files.
+# Image format for composited posters (webp or jpeg). webp is recommended.
+IMAGE_FORMAT          = os.environ.get("IMAGE_FORMAT", "webp").lower()
+if IMAGE_FORMAT not in ("webp", "jpeg", "jpg"):
+    IMAGE_FORMAT = "webp"
+# JPEG output quality for composited posters (70-95). Higher = better quality, larger files.
 JPEG_QUALITY          = max(70, min(95, int(os.environ.get("JPEG_QUALITY", "85"))))
+# WebP output quality for composited posters (70-95).
+WEBP_QUALITY          = max(70, min(95, int(os.environ.get("WEBP_QUALITY", "85"))))
+
+# Maximum age in years for a title to fetch its release status (like Cinema, Streaming).
+# Prevents showing stale "Cinema" badges on very old titles.
+RELEASE_STATUS_MAX_AGE_YEARS = int(os.environ.get("RELEASE_STATUS_MAX_AGE_YEARS", "5"))
 
 # Feature Defaults 
 
@@ -141,6 +151,10 @@ DAYS_CONSIDERED_NEW          = 14
 NEW_CACHE_DURATION           = 1
 OLD_CACHE_DURATION           = 14
 TRENDING_CACHE_DURATION      = 1
+TRENDING_FETCH_TIME          = os.environ.get("TRENDING_FETCH_TIME", "").strip()
+TRENDING_FETCH_TIMEZONE      = os.environ.get("TRENDING_FETCH_TIMEZONE", "UTC").strip()
+TRENDING_FETCH_COUNT         = int(os.environ.get("TRENDING_FETCH_COUNT", "40"))
+TRENDING_BROAD_FETCH_COUNT   = int(os.environ.get("TRENDING_BROAD_FETCH_COUNT", "100"))
 # Quality (AIOStreams) TTL — separate from rating TTL because stream availability
 # for older titles is very stable.  New content keeps the 1-day window so fresh
 # encodes are picked up quickly; old content is cached for much longer.
