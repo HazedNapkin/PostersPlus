@@ -560,23 +560,35 @@ def extract_discovery_meta(
         next_season = _episode_season(next_ep)
 
         active_season = None
+        active_ep = None
         if next_is_active and next_season and next_season > 1:
             active_season = next_season
+            active_ep = next_ep
         elif last_is_active and last_season and last_season > 1:
             active_season = last_season
+            active_ep = last_ep
 
         if active_season:
-            is_new_season = False
+            # Prefer the season's own air_date when TMDB supplies it — this flags
+            # a premiere correctly even for multi-episode drops, where the "next"
+            # episode is no longer episode 1. When no season air_date is
+            # available, fall back to the episode-number heuristic: episode 1 of a
+            # season > 1 is a premiere; a later episode means it's returning.
+            is_new_season = None
             for s in seasons:
                 try:
                     s_num = int(s.get("season_number", 0))
                 except (TypeError, ValueError):
                     continue
                 if s_num == active_season:
-                    if _is_recent_or_upcoming(s.get("air_date")):
-                        is_new_season = True
+                    air_date = s.get("air_date")
+                    if air_date:
+                        is_new_season = _is_recent_or_upcoming(air_date)
                     break
-            
+
+            if is_new_season is None:
+                is_new_season = _episode_number(active_ep) == 1
+
             if is_new_season:
                 meta.is_new_season = True
             else:

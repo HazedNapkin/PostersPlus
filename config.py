@@ -78,7 +78,12 @@ SERVER_MDBLIST_KEYS: list[str] = [k for k in [SERVER_MDBLIST_KEY, SERVER_MDBLIST
 CDN_CACHE_TTL         = int(os.environ.get("CDN_CACHE_TTL", "0"))
 # Image format for composited posters (webp or jpeg). webp is recommended.
 IMAGE_FORMAT          = os.environ.get("IMAGE_FORMAT", "webp").lower()
-if IMAGE_FORMAT not in ("webp", "jpeg", "jpg"):
+# Normalise the common "jpg" alias to the canonical "jpeg" that PIL's save()
+# registry and the image/* media type both expect — "JPG" is not a valid PIL
+# format string and would crash every render.
+if IMAGE_FORMAT == "jpg":
+    IMAGE_FORMAT = "jpeg"
+if IMAGE_FORMAT not in ("webp", "jpeg"):
     IMAGE_FORMAT = "webp"
 # JPEG output quality for composited posters (70-95). Higher = better quality, larger files.
 JPEG_QUALITY          = max(70, min(95, int(os.environ.get("JPEG_QUALITY", "85"))))

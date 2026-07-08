@@ -14,6 +14,7 @@ import zoneinfo
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
+from urllib.parse import parse_qsl, urlencode
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -2325,6 +2326,22 @@ def _seconds_until_next_hour(target_hour: float, now: float | None = None) -> fl
         target += 86400
     return target - now
 
+# Third-party credentials must never be persisted to the poster cache. They are
+# stripped before storage; the background regeneration cycle re-supplies the
+# server-side keys. access_key is intentionally kept — the /poster replay needs
+# it to pass the instance access gate, and it is the instance's own key.
+_UNCACHEABLE_PARAMS = {"tmdb_key", "mdblist_key"}
+
+
+def _sanitize_request_params(query: str) -> str:
+    """Drop user API keys from a stored query string, preserving order."""
+    if not query:
+        return query
+    kept = [(k, v) for k, v in parse_qsl(query, keep_blank_values=True)
+            if k not in _UNCACHEABLE_PARAMS]
+    return urlencode(kept)
+
+
 async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
     logger.info("Starting scheduled trending fetch cycle")
     if not _cfg.SERVER_TMDB_KEY:
@@ -2727,7 +2744,10 @@ def _server_render_signature() -> str:
     return "|".join((
         f"render={_RENDER_CACHE_VERSION}",
         f"format={_cfg.IMAGE_FORMAT}",
-        f"quality={_cfg.WEBP_QUALITY if _cfg.IMAGE_FORMAT == 'webp' else _cfg.JPEG_QUALITY}",
+        # Include both quality knobs so a change to either busts the render
+        # cache regardless of which format is currently active.
+        f"jpeg={_cfg.JPEG_QUALITY}",
+        f"webp={_cfg.WEBP_QUALITY}",
         f"contrast={int(_cfg.LOGO_CONTRAST_RESCUE)}",
         f"stretch={int(_cfg.LOGO_STRETCH_DISABLED)}:{_cfg.LOGO_STRETCH_FACTOR:g}",
         f"assets={_render_assets_signature}",
@@ -4224,9 +4244,9 @@ async def get_poster(
                     _ttl_override = 86400
                     
             set_cached_final_poster(
-                final_cache_key, 
-                img_bytes, 
-                request_params=request.url.query, 
+                final_cache_key,
+                img_bytes,
+                request_params=_sanitize_request_params(request.url.query),
                 ttl_override=_ttl_override
             )
             logger.info(f"Final poster cached for {final_cache_key}")

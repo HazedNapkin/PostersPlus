@@ -462,27 +462,6 @@
 
   .field-label-row .field-label { margin-bottom: 0; flex: 1; }
 
-  /* Server key badge */
-  .server-key-badge {
-    font-family: var(--mono);
-    font-size: 7px;
-    font-weight: 500;
-    letter-spacing: 0.15em;
-    padding: 2px 7px;
-    border: 1px solid var(--gold-dim);
-    color: var(--gold);
-    background: var(--gold-faint);
-    white-space: nowrap;
-    flex-shrink: 0;
-    text-transform: uppercase;
-  }
-
-  .server-key-badge.missing {
-    border-color: var(--silver-dim);
-    color: var(--silver);
-    background: var(--silver-faint);
-  }
-
   input[type="text"],
   input[type="number"],
   textarea,
@@ -1804,7 +1783,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             <div class="field">
               <div class="field-label-row">
                 <label class="field-label"><a href="https://www.themoviedb.org/settings/api" target="_blank" style="color:inherit;text-decoration:none;border-bottom:1px solid var(--text-muted);">TMDB API Key</a></label>
-                <span id="tmdb-key-badge" style="display:none;"></span>
               </div>
               <input type="text" id="cfg-tmdb-key" placeholder="If blank uses server key." oninput="build(); queuePreviewReload(); saveApiKeys()">
               <div class="field-hint" id="tmdb-key-hint" style="display:none"></div>
@@ -1812,7 +1790,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             <div class="field">
               <div class="field-label-row">
                 <label class="field-label"><a href="https://mdblist.com/preferences/" target="_blank" style="color:inherit;text-decoration:none;border-bottom:1px solid var(--text-muted);">MDBList API Key</a></label>
-                <span id="mdblist-key-badge" style="display:none;"></span>
               </div>
               <input type="text" id="cfg-mdblist-key" placeholder="If blank uses server key." oninput="build(); queuePreviewReload(); saveApiKeys()">
               <div class="field-hint" id="mdblist-key-hint" style="display:none"></div>
@@ -1897,17 +1874,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </select>
               <div class="field-hint"><a href="#" onclick="openFallbackGallery(); return false;">Displayed if no poster can be found.</a>.</div>
             </div>
-            <div class="toggle-row cfg-sep" style="margin-bottom:6px;">
-              <div>
-                <div class="toggle-label">Vignette Only On Sash</div>
-                <div class="field-hint" style="margin-top:2px;">Only draw the top vignette when a sash is visible.</div>
-              </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="tog-top-vignette-sash-only" onchange="build(); queuePreviewReload()">
-                <div class="toggle-track"><div class="toggle-thumb"></div></div>
-              </label>
-            </div>
-            <div class="field">
+            <div class="field cfg-sep">
               <label class="field-label">Top Vignette</label>
               <select id="cfg-top-gradient" onchange="updateGradientFields(); build(); queuePreviewReload()">
                 <option value="off">Off</option>
@@ -1918,16 +1885,16 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </select>
               <div class="field-hint">The power of the darkening applied to the top.</div>
             </div>
-            <div id="top-gradient-custom-fields" style="display:none; margin-left: 10px; margin-bottom:10px;">
-              <div class="field" style="margin-bottom:4px;">
-                <label class="field-label" style="font-size:0.85em;">Opacity</label>
+            <div id="top-gradient-custom-fields" style="display:none;">
+              <div class="field">
+                <label class="field-label">Opacity</label>
                 <div class="range-row">
                   <input type="range" id="cfg-tg-op" min="0" max="1" step="0.05" value="1.0" oninput="updateWeightRange(this,'rv-tg-op'); build(); queuePreviewReload()">
                   <span class="range-val" id="rv-tg-op">100%</span>
                 </div>
               </div>
               <div class="field">
-                <label class="field-label" style="font-size:0.85em;">Height</label>
+                <label class="field-label">Height</label>
                 <div class="range-row">
                   <input type="range" id="cfg-tg-ht" min="0" max="1" step="0.05" value="0.25" oninput="updateWeightRange(this,'rv-tg-ht'); build(); queuePreviewReload()">
                   <span class="range-val" id="rv-tg-ht">25%</span>
@@ -1945,21 +1912,31 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </select>
               <div class="field-hint">Lowering may hurt rating and logo legibility.</div>
             </div>
-            <div id="bottom-gradient-custom-fields" style="display:none; margin-left: 10px; margin-bottom:10px;">
-              <div class="field" style="margin-bottom:4px;">
-                <label class="field-label" style="font-size:0.85em;">Opacity</label>
+            <div id="bottom-gradient-custom-fields" style="display:none;">
+              <div class="field">
+                <label class="field-label">Opacity</label>
                 <div class="range-row">
                   <input type="range" id="cfg-bg-op" min="0" max="1" step="0.05" value="1.0" oninput="updateWeightRange(this,'rv-bg-op'); build(); queuePreviewReload()">
                   <span class="range-val" id="rv-bg-op">100%</span>
                 </div>
               </div>
               <div class="field">
-                <label class="field-label" style="font-size:0.85em;">Height</label>
+                <label class="field-label">Height</label>
                 <div class="range-row">
                   <input type="range" id="cfg-bg-ht" min="0" max="1" step="0.05" value="0.25" oninput="updateWeightRange(this,'rv-bg-ht'); build(); queuePreviewReload()">
                   <span class="range-val" id="rv-bg-ht">25%</span>
                 </div>
               </div>
+            </div>
+            <div class="toggle-row">
+              <div>
+                <div class="toggle-label">Vignette Only On Sash</div>
+                <div class="field-hint" style="margin-top:2px;">Only draw the top vignette when a sash is visible.</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="tog-top-vignette-sash-only" onchange="build(); queuePreviewReload()">
+                <div class="toggle-track"><div class="toggle-thumb"></div></div>
+              </label>
             </div>
           </div>
         </div>
@@ -1972,16 +1949,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             <span class="section-chevron">▼</span>
           </div>
           <div class="section-body">
-            <div class="toggle-row cfg-sep" style="margin-bottom:6px;">
-              <div>
-                <div class="toggle-label">Hide Genre</div>
-                <div class="field-hint" style="margin-top:2px;">Removes the genre text and associated spacers.</div>
-              </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="tog-hide-genre" onchange="build(); queuePreviewReload()">
-                <div class="toggle-track"><div class="toggle-thumb"></div></div>
-              </label>
-            </div>
             <div class="field">
               <label class="field-label">Display Mode</label>
               <select id="cfg-rating-mode" onchange="updateRatingFields(); build(); queuePreviewReload()">
@@ -2249,6 +2216,16 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <span class="range-val" id="rng-ga">40</span>
                 </div>
               </div>
+            </div>
+            <div class="toggle-row cfg-sep">
+              <div>
+                <div class="toggle-label">Hide Genre</div>
+                <div class="field-hint" style="margin-top:2px;">Removes the genre text and associated spacers.</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="tog-hide-genre" onchange="build(); queuePreviewReload()">
+                <div class="toggle-track"><div class="toggle-thumb"></div></div>
+              </label>
             </div>
           </div>
         </div>
@@ -3047,19 +3024,15 @@ async function fetchServerCaps() {
 }
 
 function updateKeyBadges() {
-  const tmdbBadge = document.getElementById('tmdb-key-badge');
-  const mdbBadge  = document.getElementById('mdblist-key-badge');
   const tmdbHint  = document.getElementById('tmdb-key-hint');
   const mdbHint   = document.getElementById('mdblist-key-hint');
   const tmdbInput = document.getElementById('cfg-tmdb-key');
   const mdbInput  = document.getElementById('cfg-mdblist-key');
 
   if (serverCaps.tmdb_key_set) {
-    tmdbBadge.style.display = ''; tmdbBadge.textContent = 'Server Key Set'; tmdbBadge.className = 'server-key-badge';
     tmdbHint.style.display = ''; tmdbHint.textContent = 'Server-side TMDB key configured. Your key (if entered) takes priority.';
     tmdbInput.placeholder = 'Optional — server key used if blank';
   } else {
-    tmdbBadge.style.display = ''; tmdbBadge.textContent = 'No Server Key'; tmdbBadge.className = 'server-key-badge missing';
     tmdbHint.style.display = 'none';
     tmdbInput.placeholder = 'Required — no server key configured';
   }
