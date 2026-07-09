@@ -478,6 +478,22 @@ def _next_mdblist_server_key(current_key: str, now: float | None = None) -> str 
     return None
 
 
+def _mdblist_server_key_number(key: str | None) -> int | None:
+    if not key:
+        return None
+    for idx, candidate in enumerate(_cfg.SERVER_MDBLIST_KEYS):
+        if candidate == key:
+            return idx + 1
+    return None
+
+
+def _mdblist_server_key_label(key: str | None) -> str:
+    number = _mdblist_server_key_number(key)
+    if number is None:
+        return "request-supplied key"
+    return f"configured key #{number}"
+
+
 def _mark_mdblist_rate_limit(
     imdb_id: str, key: str, result
 ) -> tuple[float, str | None]:
@@ -860,7 +876,9 @@ def _parse_sash_priority(raw: str | None) -> list[str]:
     # Tokens prefixed with "-" are explicit exclusions
     excluded  = {t[1:] for t in tokens if t.startswith("-") and t[1:] in ALL_PRIORITY_SLOTS}
     active    = [t      for t in tokens if not t.startswith("-") and t in ALL_PRIORITY_SLOTS]
-    
+
+    # Back-compat: the legacy combined "structural" / "release_status" tokens
+    # expand in place to their granular slots so older saved URLs keep working.
     if "structural" in active:
         idx = active.index("structural")
         expanded = [s for s in ["short_film", "mini_series", "binge_ready"] if s not in excluded and s not in active]
@@ -871,23 +889,13 @@ def _parse_sash_priority(raw: str | None) -> list[str]:
         expanded = [s for s in ["cinema", "streaming", "physical", "production", "ended", "cancelled", "airing"] if s not in excluded and s not in active]
         active = active[:idx] + expanded + active[idx+1:]
         
+    # An empty, exclusion-free selection means no real sash config was supplied,
+    # so fall back to the full default set. Otherwise the explicit selection is
+    # authoritative: slots the user did not list are omitted rather than
+    # force-appended, so sashes added in a newer version stay off until the user
+    # opts in (re-import the old URL, then enable the new sashes).
     if not active and not excluded:
         return list(_cfg.SASH_PRIORITY)
-    # Append any default slots that weren't explicitly listed or excluded
-    active_set = set(active)
-    for slot in _cfg.SASH_PRIORITY:
-        if slot not in active_set and slot not in excluded:
-            if slot == "structural":
-                expanded = [s for s in ["short_film", "mini_series", "binge_ready"] if s not in excluded and s not in active_set]
-                active.extend(expanded)
-                active_set.update(expanded)
-            elif slot == "release_status":
-                expanded = [s for s in ["cinema", "streaming", "physical", "production", "ended", "cancelled", "airing"] if s not in excluded and s not in active_set]
-                active.extend(expanded)
-                active_set.update(expanded)
-            else:
-                active.append(slot)
-                active_set.add(slot)
     return active
 
 
@@ -2237,8 +2245,8 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
 
         async def _fetch_rating_warm(_key: str):
             async with _mdblist_semaphore:
-                return await _with_retry(
-                    fetch_rating, client, imdb_id, _key, genre_ids, media_type,
+                return await fetch_rating(
+                    client, imdb_id, _key, genre_ids, media_type,
                 )
 
         result = await _fetch_rating_warm(effective_mdblist_key)
@@ -3383,17 +3391,16 @@ async def get_poster(
                 release_date_for_quality_ttl = cached_release_date
                 logger.info(f"Rating coalesce succeeded for {imdb_id} — using cached result")
             else:
-                # The other fetch also failed; re-check back-off it may have set.
-                _loop_now2    = asyncio.get_running_loop().time()
-                _retry_key2 = _rating_retry_key(imdb_id, effective_mdblist_key)
-                _backoff_now2 = _rating_backoff.get(_retry_key2)
-                if _backoff_now2 is not None and _loop_now2 < _backoff_now2:
-                    logger.debug(
-                        f"Rating fetch for {imdb_id} suppressed after coalescence (back-off active)"
-                    )
-                    effective_mdblist_key = None
-                    _rating_backoff_active = True
-                    _mdblist_unavailable_reason = "selected key is in back-off for this title"
+                # The owner already made the MDBList attempt for this title.
+                # If it did not produce a cache row, do not launch a second
+                # same-content request from a waiter in the same burst.
+                logger.debug(
+                    f"Rating fetch for {imdb_id} suppressed after coalescence "
+                    "(owner did not cache rating)"
+                )
+                effective_mdblist_key = None
+                _rating_backoff_active = True
+                _mdblist_unavailable_reason = "coalesced fetch did not cache rating"
         else:
             # First request for this imdb_id — claim the fetch slot.
             _rating_event_to_set              = asyncio.Event()
@@ -3531,9 +3538,10 @@ async def get_poster(
                         f"(priority={rcfg.logo_priority})")
 
         if rating_already_cached or not effective_mdblist_key:
-            rating_coro = _resolved(
-                (cached_ratings_dict, cached_genre, cached_release_date, [], cached_age_rating)
-            )
+            rating_coro = _resolved((
+                None,
+                (cached_ratings_dict, cached_genre, cached_release_date, [], cached_age_rating),
+            ))
         else:
             global _mdblist_semaphore
             if _mdblist_semaphore is None:
@@ -3544,10 +3552,36 @@ async def get_poster(
                 _gids=genre_ids, _type=type,
                 _mw=effective_movie_weights, _tw=effective_tv_weights,
             ):
+                nonlocal _rating_backoff_active, _mdblist_unavailable_reason
                 async with _mdblist_semaphore:
-                    return await _with_retry(
-                        fetch_rating,
-                        _client, _imdb_id, _key, _gids, _type,
+                    _fetch_key = _key
+                    _fetch_now = asyncio.get_running_loop().time()
+                    if (
+                        _fetch_key in _cfg.SERVER_MDBLIST_KEYS
+                        and _fetch_now < _mdblist_key_cooldown.get(_fetch_key, 0.0)
+                    ):
+                        _replacement_key = _next_mdblist_server_key(_fetch_key, _fetch_now)
+                        if _replacement_key is None:
+                            _remaining = _mdblist_key_cooldown.get(_fetch_key, 0.0) - _fetch_now
+                            logger.debug(
+                                f"Rating fetch for {_imdb_id} skipped "
+                                f"({_mdblist_server_key_label(_fetch_key)} cooling down; "
+                                f"{_remaining:.0f}s remaining)"
+                            )
+                            _rating_backoff_active = True
+                            _mdblist_unavailable_reason = "selected key is cooling down"
+                            return None, (
+                                cached_ratings_dict, cached_genre,
+                                cached_release_date, [], cached_age_rating,
+                            )
+                        logger.info(
+                            f"MDBList key rotated from {_mdblist_server_key_label(_fetch_key)} "
+                            f"to {_mdblist_server_key_label(_replacement_key)} for {_imdb_id} "
+                            "before outbound fetch"
+                        )
+                        _fetch_key = _replacement_key
+                    return _fetch_key, await fetch_rating(
+                        _client, _imdb_id, _fetch_key, _gids, _type,
                         movie_weights=_mw, tv_weights=_tw,
                     )
 
@@ -3836,7 +3870,7 @@ async def get_poster(
         (
             image,
             logo,
-            rating_result,
+            rating_fetch_result,
             trending_rank,
         ) = await asyncio.gather(
             _image_coro,
@@ -3844,6 +3878,12 @@ async def get_poster(
             rating_coro,
             fetch_trending_rank(client, tmdb_id, effective_tmdb_key, type),
         )
+
+        rating_key_used, rating_result = rating_fetch_result
+        if rating_key_used is not None:
+            effective_mdblist_key = rating_key_used
+        elif _rating_backoff_active:
+            effective_mdblist_key = None
 
         # A rate-limited server key gets one same-request rescue attempt on the
         # next healthy configured key. Query-supplied keys remain isolated.
@@ -3853,16 +3893,20 @@ async def get_poster(
                 imdb_id, _failed_key, rating_result
             )
             logger.warning(
-                f"MDBList key rate-limited for {imdb_id}; cooling down for "
-                f"{_backoff_secs:.0f}s"
+                f"MDBList {_mdblist_server_key_label(_failed_key)} rate-limited "
+                f"for {imdb_id}; cooling down for {_backoff_secs:.0f}s"
             )
             if _rescue_key is not None:
                 effective_mdblist_key = _rescue_key
                 logger.warning(
-                    f"Retrying MDBList for {imdb_id} with configured key "
-                    f"#{_mdblist_active_key_idx + 1}"
+                    f"Retrying MDBList for {imdb_id} with "
+                    f"{_mdblist_server_key_label(_rescue_key)}"
                 )
-                rating_result = await _fetch_rating_gated(_rescue_key)
+                _rescue_used_key, rating_result = await _fetch_rating_gated(_rescue_key)
+                if _rescue_used_key is not None:
+                    effective_mdblist_key = _rescue_used_key
+                elif _rating_backoff_active:
+                    effective_mdblist_key = None
 
         # Inline quality wait — runs after gather so rating coalescing is never
         # blocked.  Used for poster-warm workflows where latency doesn't matter.
