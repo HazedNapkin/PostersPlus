@@ -4371,8 +4371,23 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   updateSashBadgeFields();
 
   if (p.has('sash_priority')) {
-    const tokens = p.get('sash_priority').split(',').map(s => s.trim()).filter(Boolean);
+    const rawTokens = p.get('sash_priority').split(',').map(s => s.trim()).filter(Boolean);
     const known  = new Set(SASH_SLOTS.map(s => s.id));
+    // Back-compat: the legacy combined "structural" token expands, in place, to
+    // its granular slots in the same priority order it used internally
+    // (short_film > mini_series > binge_ready) so importing an old URL keeps the
+    // same behaviour instead of silently dropping the sash.
+    const LEGACY_EXPANSIONS = { structural: ['short_film', 'mini_series', 'binge_ready'] };
+    const tokens = [];
+    for (const t of rawTokens) {
+      const neg  = t.startsWith('-');
+      const bare = neg ? t.slice(1) : t;
+      if (LEGACY_EXPANSIONS[bare]) {
+        LEGACY_EXPANSIONS[bare].forEach(g => tokens.push((neg ? '-' : '') + g));
+      } else {
+        tokens.push(t);
+      }
+    }
     // Only the slots explicitly listed (leading '-' tokens are exclusions) are
     // enabled. Anything absent from the imported config — including sashes added
     // in a newer version — is treated as disabled rather than force-enabled, so
