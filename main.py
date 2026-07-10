@@ -2364,8 +2364,23 @@ async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
         logger.error(f"Trending fetch: failed to fetch candidates: {exc}")
         return
 
-    trending_items = {str(item.get("tmdb_id")) for item in trending}
-    if not trending_items:
+    # Build the set of trending (tmdb_id, type) pairs. TV titles are cached under
+    # both "tv" and "series" (Stremio uses "series"), so include both variants.
+    # Keeping the media type prevents a movie and a TV show that share a numeric
+    # TMDB id from cross-triggering each other's regeneration.
+    trending_pairs: set[tuple[str, str]] = set()
+    for item in trending:
+        tid = item.get("tmdb_id")
+        if tid is None:
+            continue
+        tid = str(tid)
+        mt = item.get("media_type")
+        if mt in ("tv", "series"):
+            trending_pairs.add((tid, "tv"))
+            trending_pairs.add((tid, "series"))
+        elif mt:
+            trending_pairs.add((tid, mt))
+    if not trending_pairs:
         return
 
     db = get_db()
@@ -2382,16 +2397,24 @@ async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as local_client:
         for cache_key, req_params_str in rows:
             parts = cache_key.split(":")
-            if len(parts) >= 4:
-                tmdb_id = parts[1]
-                if tmdb_id in trending_items:
-                    logger.info(f"Trending fetch: regenerating poster for {cache_key}")
-                    try:
-                        delete_cached_final_poster(cache_key)
-                        await local_client.get(f"/poster?{req_params_str}")
-                        regenerated_count += 1
-                    except Exception as exc:
-                        logger.error(f"Trending fetch: failed to regenerate poster {cache_key}: {exc}")
+            if len(parts) < 4:
+                continue
+            if (parts[1], parts[2]) not in trending_pairs:
+                continue
+            if not req_params_str:
+                continue
+            logger.info(f"Trending fetch: regenerating poster for {cache_key}")
+            try:
+                # Delete first so the replay misses the cache and re-renders with
+                # the fresh trending rank instead of serving the stale composite.
+                delete_cached_final_poster(cache_key)
+                resp = await local_client.get(f"/poster?{req_params_str}")
+                if resp.status_code >= 400:
+                    logger.warning(f"Trending fetch: regenerate for {cache_key} returned HTTP {resp.status_code}")
+                else:
+                    regenerated_count += 1
+            except Exception as exc:
+                logger.error(f"Trending fetch: failed to regenerate poster {cache_key}: {exc}")
                     
     logger.info(f"Trending fetch cycle completed. Regenerated {regenerated_count} posters.")
 

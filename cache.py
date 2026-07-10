@@ -459,22 +459,40 @@ def invalidate_final_posters(tmdb_id: str, media_type: str | None = None) -> Non
     Used when underlying dynamic data (like trending rank or release status)
     changes so the next request renders a fresh poster with updated badges.
     """
-    pattern = f"%:{tmdb_id}:{media_type}:%" if media_type else f"%:{tmdb_id}:%"
-    
+    # TV posters are cached under either "tv" or "series" (Stremio requests use
+    # "series"), so treat the two as equivalent when filtering by media type —
+    # otherwise a trending/status change leaves half the cache stale.
+    if media_type in ("tv", "series"):
+        type_variants: tuple[str, ...] | None = ("tv", "series")
+    elif media_type:
+        type_variants = (media_type,)
+    else:
+        type_variants = None
+
     if COMPOSITE_MEM_ENTRIES > 0:
         with _composite_l1_lock:
             keys_to_delete = []
             for k in _composite_l1:
                 parts = k.split(":")
                 if len(parts) >= 3 and parts[1] == tmdb_id:
-                    if media_type is None or parts[2] == media_type:
+                    if type_variants is None or parts[2] in type_variants:
                         keys_to_delete.append(k)
             for k in keys_to_delete:
                 _composite_l1.pop(k, None)
-                
+
     try:
         with _db_lock:
-            get_db().execute("DELETE FROM final_poster_cache WHERE cache_key LIKE ?", (pattern,))
+            if type_variants is None:
+                get_db().execute(
+                    "DELETE FROM final_poster_cache WHERE cache_key LIKE ?",
+                    (f"%:{tmdb_id}:%",),
+                )
+            else:
+                for _tv in type_variants:
+                    get_db().execute(
+                        "DELETE FROM final_poster_cache WHERE cache_key LIKE ?",
+                        (f"%:{tmdb_id}:{_tv}:%",),
+                    )
             get_db().commit()
         logger.info(f"Invalidated final poster cache for tmdb_id={tmdb_id}")
     except Exception as exc:
