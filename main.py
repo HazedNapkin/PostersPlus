@@ -550,8 +550,7 @@ async def _background_quality_fetch(
 
 # Local imports
 from age_badge import draw_quality_age_badge, draw_tier_bar, _score_points
-from awards import sample_frosted_notch_rgb, sample_frosted_sash_rgb
-from ratings import sample_frosted_bar_rgb
+from awards import dominant_frost_rgb
 from awards import FETCH_FAILED, _RateLimited, draw_award_badge, draw_award_sash, parse_mdblist_awards
 from i18n import load_languages, translate_genre, translate_sash
 from cache import (
@@ -757,11 +756,11 @@ class RequestConfig:
     bar_height_ratio:        float = 0.080
     bar_font_size_ratio:     float = 0.55
     bar_frost_opacity:       float = 0.85
+    bar_frost_saturation:    float = 1.2   # frosted colour-cast strength (0 = grey)
     bar_bottom_inset:        float = 0.0
     bar_style:               str   = "frosted"  # "frosted"|"silver"|"gold"|"rating_black"|"rating_frosted"
     bar_accent:              str   = "silver"   # "silver"|"gold"|"palette_0"|"palette_1"|"palette_2"|"palette_custom"
     bar_score_out_of_10:     bool  = False
-    bar_match_notch:         bool  = False  # share one frosted tint with the sash notch
     bar_append:              str   = "rating_year"  # "rating_year"|"rating"|"year"|"sash"
 
     logo_max_w_ratio:   float = field(default_factory=lambda: _cfg.LOGO_MAX_W_RATIO)
@@ -825,6 +824,10 @@ class RequestConfig:
     sash_badge_inset: float = 0.0          # top-edge offset as fraction of poster height (± small)
     sash_badge_font_ratio:   float = 0.43  # font size as fraction of badge height
     sash_badge_frost_opacity: float = 0.75 # frosted overlay opacity (0.0–1.0)
+    sash_badge_frost_saturation: float = 1.2 # frosted colour-cast strength (0 = grey)
+    # Reference colour mode: match the frosted tint to the poster's true colour
+    # (bolder, un-pastel) instead of the saturation-scaled frosted tint. Global.
+    frost_reference:         bool  = False
     sash_length_ratio: float = 1.15  # diagonal sash length as fraction of poster width
     sash_height_ratio: float = 0.12  # diagonal sash height (thickness) as fraction of poster width
     wait_for_quality: bool = False  # block response until quality is fetched (for poster-warm workflows)
@@ -998,6 +1001,7 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.sash_badge_inset         = _f("sash_badge_inset",         cfg.sash_badge_inset,         -0.02, 0.02)
     cfg.sash_badge_font_ratio    = _f("sash_badge_font_ratio",    cfg.sash_badge_font_ratio,    0.10, 1.0)
     cfg.sash_badge_frost_opacity = _f("sash_badge_frost_opacity", cfg.sash_badge_frost_opacity, 0.0, 1.0)
+    cfg.sash_badge_frost_saturation = _f("sash_badge_frost_saturation", cfg.sash_badge_frost_saturation, 0.0, 2.0)
     cfg.sash_badge_size_w       = _f("sash_badge_size_w",       cfg.sash_badge_size_w,       0.5, 2.0)
     cfg.sash_badge_size_h       = _f("sash_badge_size_h",       cfg.sash_badge_size_h,       0.5, 2.0)
     _style_raw = params.get("sash_badge_style", cfg.sash_badge_style)
@@ -1039,6 +1043,8 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.bar_height_ratio        = _f("bar_height_ratio",        cfg.bar_height_ratio,        0.04, 0.20)
     cfg.bar_font_size_ratio     = _f("bar_font_size_ratio",     cfg.bar_font_size_ratio,     0.15, 0.70)
     cfg.bar_frost_opacity       = _f("bar_frost_opacity",       cfg.bar_frost_opacity,       0.0,  1.0)
+    cfg.bar_frost_saturation    = _f("bar_frost_saturation",    cfg.bar_frost_saturation,    0.0,  2.0)
+    cfg.frost_reference         = _b("frost_reference",         cfg.frost_reference)
     cfg.bar_bottom_inset        = _f("bar_bottom_inset",        cfg.bar_bottom_inset,        0.0,  0.10)
     _bst = (params.get("bar_style") or "").strip().lower()
     if _bst in ("frosted", "pure_black", "silver", "gold", "rating_black", "rating_frosted"):
@@ -1047,7 +1053,6 @@ def build_request_config(params: dict) -> RequestConfig:
     if _bac in ("silver", "gold", "sample", "palette_0", "palette_1", "palette_2", "palette_custom"):
         cfg.bar_accent = _bac
     cfg.bar_score_out_of_10     = _b("bar_score_out_of_10",     cfg.bar_score_out_of_10)
-    cfg.bar_match_notch         = _b("bar_match_notch",         cfg.bar_match_notch)
     _bap = (params.get("bar_append") or "").strip().lower()
     if _bap in ("rating_year", "rating", "year", "sash"):
         cfg.bar_append = _bap
@@ -1410,6 +1415,12 @@ def build_poster(
         else None
     )
 
+    # Snapshot the artwork *before* the vignette gradients darken it. The frosted
+    # bar/notch/sash sample their tint colour from this, not the graded image —
+    # otherwise the near-black top/bottom the gradients paint on drags the sampled
+    # colour to grey (e.g. a blue sky reads as white behind the notch).
+    _frost_color_src = image.copy()
+
     # --- TOP GRADIENT (vectorised) ---
     # Darkens the top of the poster so the age-rating numeral and quality
     # badges stay legible over bright art.  Strength is one of four presets
@@ -1688,35 +1699,24 @@ def build_poster(
             image.paste(text_layer, (logo_x, logo_y), text_layer)
 
 
-    # --- Shared frosted tint (Match Notch Colour) ---------------------------
-    # When the frosted rating bar (mode 4) and a poster-coloured sash element are
-    # both on (a frosted notch badge OR a poster-coloured diagonal sash) and
-    # bar_match_notch is set, sample each region now (before either is drawn) and
-    # force both to the more saturated of the two colours so they match.
-    _shared_tint: tuple[float, float, float] | None = None
+    # --- Frosted tint colour -------------------------------------------------
+    # Every frosted element (rating bar, notch badge, poster-coloured sash) tints
+    # from ONE whole-poster colour sample, taken from the un-graded artwork. Since
+    # they all draw from the same sample they always match automatically — so the
+    # bar simply adopts the notch's colour (and, below, its saturation) whenever a
+    # frosted notch is shown, with no separate "match" toggle needed.
     _sash_shown    = cfg.sash_mode != "hidden" and sash_result is not None
     _notch_frosted = _sash_shown and cfg.sash_mode == "notch" and cfg.sash_badge_style == "frosted"
     _sash_poster   = _sash_shown and cfg.sash_mode == "sash" and cfg.sash_poster_color
-    if (
-        cfg.bar_match_notch
-        and cfg.rating_display_mode == 4
-        and cfg.bar_style in ("frosted", "rating_frosted")
-        and (_notch_frosted or _sash_poster)
-    ):
-        _bar_rgb = sample_frosted_bar_rgb(image, cfg.bar_height_ratio, cfg.bar_bottom_inset)
-        if _notch_frosted:
-            _sash_rgb = sample_frosted_notch_rgb(
-                image, translate_sash(sash_result[0], cfg.logo_language), sash_type=sash_result[1],
-                size_ratio_w=cfg.sash_badge_size_w, size_ratio_h=cfg.sash_badge_size_h,
-                font_size_ratio=cfg.sash_badge_font_ratio, notch_inset=cfg.sash_badge_inset,
-                star=(cfg.sash_winner_star and sash_result[1] == "win"),
-            )
-        else:
-            _sash_rgb = sample_frosted_sash_rgb(image)
-        def _sat(rgb: tuple[float, float, float]) -> float:
-            import colorsys
-            return colorsys.rgb_to_hsv(rgb[0] / 255, rgb[1] / 255, rgb[2] / 255)[1]
-        _shared_tint = _bar_rgb if _sat(_bar_rgb) >= _sat(_sash_rgb) else _sash_rgb
+    _bar_frosted   = cfg.rating_display_mode == 4 and cfg.bar_style in ("frosted", "rating_frosted")
+    _frost_tint: tuple[float, float, float] | None = (
+        dominant_frost_rgb(_frost_color_src)
+        if (_bar_frosted or _notch_frosted or _sash_poster) else None
+    )
+    # One saturation for every frosted element: a frosted notch owns it (its slider
+    # lives in the sash panel); otherwise the rating bar's slider drives it. Sharing
+    # it keeps the bar and any sash/notch identical.
+    _frost_sat = cfg.sash_badge_frost_saturation if _notch_frosted else cfg.bar_frost_saturation
 
     # --- Rating / genre label ---
     if cfg.rating_display_mode != 0:
@@ -1900,6 +1900,8 @@ def build_poster(
                 bar_height_ratio = cfg.bar_height_ratio,
                 font_size_ratio  = cfg.bar_font_size_ratio,
                 frost_opacity    = cfg.bar_frost_opacity,
+                frost_saturation = _frost_sat,
+                frost_reference  = cfg.frost_reference,
                 bottom_inset     = cfg.bar_bottom_inset,
                 style            = cfg.bar_style,
                 score            = score if score not in ("N/A", None) else None,
@@ -1916,7 +1918,7 @@ def build_poster(
                         if score not in ("N/A", None) else (210, 210, 218)
                     )
                 ) if cfg.bar_style in ("rating_black", "rating_frosted") else None,
-                tint_rgb         = _shared_tint,
+                tint_rgb         = _frost_tint,
                 text_color       = cfg.rating_text_color,
             )
 
@@ -1933,17 +1935,19 @@ def build_poster(
                                      notch_inset=cfg.sash_badge_inset,
                                      font_size_ratio=cfg.sash_badge_font_ratio,
                                      frost_opacity=cfg.sash_badge_frost_opacity,
-                                     tint_rgb=_shared_tint,
+                                     frost_saturation=cfg.sash_badge_frost_saturation,
+                                     frost_reference=cfg.frost_reference,
+                                     tint_rgb=_frost_tint,
                                      star=_is_star,
                                      text_color=cfg.sash_text_color)
         else:  # "sash" — diagonal
-            _poster_color = None
-            if cfg.sash_poster_color:
-                _poster_color = _shared_tint or sample_frosted_sash_rgb(image)
+            _poster_color = _frost_tint if cfg.sash_poster_color else None
             image = draw_award_sash(image, _label_tr, sash_type=sash_type, muted=cfg.muted,
                                     length_ratio=cfg.sash_length_ratio,
                                     height_ratio=cfg.sash_height_ratio,
                                     poster_color=_poster_color,
+                                    frost_saturation=_frost_sat,
+                                    frost_reference=cfg.frost_reference,
                                     star=_is_star,
                                     text_color=cfg.sash_text_color)
 
@@ -3871,6 +3875,8 @@ async def get_poster(
             async def _tvdb():
                 return await tvdb.tvdb_logo(
                     client, media_type=type, logo_language=rcfg.logo_language,
+                    original_language=tmdb_data.get("original_language"),
+                    logo_priority=rcfg.logo_priority,
                     imdb_id=effective_imdb_id, tmdb_id=tmdb_id,
                 )
 

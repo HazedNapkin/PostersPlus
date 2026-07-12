@@ -1305,53 +1305,150 @@ def _sash_body_cairo(
 _STAR_WIN_AWARDS: set[str] = set()
 
 
-def sample_frosted_notch_rgb(
-    image: Image.Image,
-    label: str,
-    sash_type: str = "win",
-    size_ratio_w: float = 1.0,
-    size_ratio_h: float = 1.0,
-    font_size_ratio: float = 0.43,
-    notch_inset: float = 0.004,
-    star: bool | None = None,
-) -> tuple[float, float, float]:
-    """Dominant RGB the frosted notch would sample from its crop region.
+# Below this Value the source carries no reliable hue (see _frosted_tint); below
+# this Saturation it is essentially white/grey. When the local region is either,
+# a broader fallback region (typically the whole poster) is borrowed so the frost
+# matches a real poster colour instead of going dark/neutral or washing out white.
+_FROST_CONFIDENT_V = 0.22
+# At/above this Saturation a cluster counts as a genuine colour (vs white/grey).
+_FROST_CHROMATIC_S = 0.20
+# A coloured cluster must cover at least this fraction of the region to be chosen
+# over a white/grey majority. Small enough to catch modest colour accents (so the
+# frost leans colour, not white), but above thin title text (e.g. the red "RUN" on
+# an otherwise black-and-white poster) so that doesn't override an honest white.
+_FROST_CHROMATIC_W = 0.08
 
-    Replicates draw_award_badge's geometry + sampling so the colour-matching
-    logic upstream can compare it against the frosted bar.  Keep the constants
-    here in sync with draw_award_badge.  `star` overrides the ★ decision when
-    the caller already resolved it on the canonical (pre-translation) label.
-    """
-    width, height = image.size
-    SS = 3
-    if star if star is not None else (sash_type == "win" and label in _STAR_WIN_AWARDS):
-        label = f"★  {label}"
 
-    badge_h = int(height * 0.075 * size_ratio_h)
-    _fonts_dir   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
-    font_size_ss = int(badge_h * font_size_ratio) * SS
+def _is_skin_tone(r: float, g: float, b: float) -> bool:
+    """Rough skin-tone test for faces (tan/beige/brown): warm with R>G>B and a
+    moderate saturation. Deliberately excludes vivid reds and oranges so genuine
+    poster colours aren't mistaken for skin. Skin is de-prioritised — but not
+    banned — as a frost colour, since a face shouldn't drive the tint when the
+    poster offers a real colour elsewhere."""
+    import colorsys
+    if not (r > g > b):
+        return False
+    h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+    return 0.015 <= h <= 0.11 and 0.20 <= s <= 0.68 and v >= 0.35
+
+
+def _dominant_cluster(
+    region: Image.Image,
+) -> tuple[tuple[float, float, float] | None, float, float, bool]:
+    """Most prominent *actual* colour of a region → ((r,g,b), value, saturation,
+    is_skin).
+
+    Quantises the region into a handful of real colour clusters, rather than
+    taking a flat mean of every pixel — a mean of several distinct colours lands
+    on a muddy grey/brown that appears nowhere in the art (the "invented colour"
+    problem). Near-black clusters are skipped so the tint is never derived from
+    shadows or letterboxing.
+
+    Preference order among clusters that clear _FROST_CHROMATIC_S / _W:
+      1. a genuine non-skin colour   (e.g. a teal background)
+      2. a skin tone                 (only if no other colour qualifies)
+    then, if nothing is chromatic, the best white/grey, then the brightest
+    cluster. So white is only chosen when the region truly has no colour, and a
+    face's skin only when the poster offers nothing else. Returns ``(None, 0, 0,
+    False)`` only for an empty region; the trailing fields let the caller judge
+    reliability and whether the pick was skin."""
+    import colorsys
+    if region.width == 0 or region.height == 0:
+        return None, 0.0, 0.0, False
+    # A modest downsample preserves the real colours; the old heavy-blur + 8x8
+    # mean is exactly what smeared them into an invented average.
+    small = region.convert("RGB")
+    if max(small.size) > 64:
+        small = small.resize((48, 48), Image.Resampling.LANCZOS)
     try:
-        font = ImageFont.truetype(os.path.join(_fonts_dir, "Inter-Bold.ttf"), font_size_ss)
-    except IOError:
-        font = ImageFont.load_default()
+        q = small.quantize(colors=12, method=Image.Quantize.FASTOCTREE)
+    except Exception:
+        q = small.quantize(colors=12)
+    palette = q.getpalette() or []
+    counts  = q.getcolors() or []
+    if not counts or not palette:
+        arr = np.array(small, dtype=np.float32)
+        rgb = (float(arr[:, :, 0].mean()), float(arr[:, :, 1].mean()), float(arr[:, :, 2].mean()))
+        _hh, ss, vv = colorsys.rgb_to_hsv(rgb[0] / 255, rgb[1] / 255, rgb[2] / 255)
+        return rgb, vv, ss, _is_skin_tone(*rgb)
 
-    _tmp_d    = ImageDraw.Draw(Image.new("L", (1, 1)))
-    _tbbox    = _tmp_d.textbbox((0, 0), label, font=font)
-    text_w_ss = _tbbox[2] - _tbbox[0]
+    total = float(sum(c for c, _ in counts)) or 1.0
+    # best_colour: best non-skin chromatic cluster (preferred).
+    # best_skin:   best skin-tone chromatic cluster (used only if no other colour).
+    # best_any:    best cluster overall incl. white/grey (used if nothing chromatic).
+    best_colour, best_colour_score, best_colour_hsv = None, -1.0, (0.0, 0.0)
+    best_skin, best_skin_score, best_skin_hsv = None, -1.0, (0.0, 0.0)
+    best_any, best_any_score, best_any_hsv = None, -1.0, (0.0, 0.0)
+    brightest, brightest_hsv = None, (-1.0, 0.0)
+    for count, idx in counts:
+        r, g, b = palette[idx * 3:idx * 3 + 3]
+        _h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+        if v > brightest_hsv[0]:
+            brightest_hsv, brightest = (v, s), (float(r), float(g), float(b))
+        if v < 0.16:                       # near-black — never a tint source
+            continue
+        weight = count / total
+        # Population-led, biased toward *chroma* (saturation × value), not raw
+        # saturation — otherwise a small, dark-but-saturated shadow (e.g. a deep
+        # purple corner) outscores the poster's larger, brighter real palette.
+        score = weight * (0.3 + s * v)
+        rgb = (float(r), float(g), float(b))
+        if score > best_any_score:
+            best_any_score, best_any, best_any_hsv = score, rgb, (v, s)
+        if s >= _FROST_CHROMATIC_S and weight >= _FROST_CHROMATIC_W:
+            if _is_skin_tone(r, g, b):
+                if score > best_skin_score:
+                    best_skin_score, best_skin, best_skin_hsv = score, rgb, (v, s)
+            elif score > best_colour_score:
+                best_colour_score, best_colour, best_colour_hsv = score, rgb, (v, s)
 
-    _h_pad      = int(badge_h * 0.70)
-    min_badge_w = int(width * 0.28 * size_ratio_w)
-    max_badge_w = int(width * 0.70)
-    badge_w     = max(min_badge_w, min(max_badge_w, text_w_ss // SS + _h_pad))
+    if best_colour is not None:
+        return best_colour, best_colour_hsv[0], best_colour_hsv[1], False
+    if best_skin is not None:
+        return best_skin, best_skin_hsv[0], best_skin_hsv[1], True
+    if best_any is not None:
+        return best_any, best_any_hsv[0], best_any_hsv[1], False
+    return (brightest or (128.0, 128.0, 128.0)), max(brightest_hsv[0], 0.0), brightest_hsv[1], False
 
-    bx = (width - badge_w) // 2
-    by_composite = max(-badge_h, int(height * notch_inset))
-    crop_y = max(0, by_composite)
-    region = image.crop((bx, crop_y, bx + badge_w, crop_y + badge_h))
-    blurred = region.filter(ImageFilter.GaussianBlur(radius=max(4, int(badge_h * 0.35))))
-    thumb = blurred.resize((8, 8), Image.Resampling.LANCZOS).convert("RGB")
-    arr = np.array(thumb, dtype=np.float32)
-    return float(arr[:, :, 0].mean()), float(arr[:, :, 1].mean()), float(arr[:, :, 2].mean())
+
+def _frost_rank(v: float, s: float, is_skin: bool) -> int:
+    """Desirability of a candidate frost colour, high = better:
+      3 = a genuine non-skin colour   2 = a skin tone
+      1 = white / grey (bright but colourless)   0 = too dark to trust.
+    Used to decide whether the whole-poster fallback beats the local region. A
+    colour is only "too dark to trust" when it is dark AND lacks chroma (near-black
+    noise); a dark but vivid hue (deep navy/teal) stays a usable colour."""
+    if v < _FROST_CONFIDENT_V and v * s < 0.05:
+        return 0
+    if s < _FROST_CHROMATIC_S:
+        return 1
+    return 2 if is_skin else 3
+
+
+def dominant_frost_rgb(
+    region: Image.Image, fallback: Image.Image | None = None
+) -> tuple[float, float, float]:
+    """Representative *actual* colour of a poster region for frosted tinting.
+
+    Returns the region's most prominent real colour (see _dominant_cluster). When
+    that colour is not the best kind available — it's too dark to carry a hue,
+    washed out to white/grey, or merely a skin tone — and a broader ``fallback``
+    region (typically the whole poster) offers a strictly better one (by
+    _frost_rank: real colour > skin > white/grey > dark), that is borrowed
+    instead. This keeps the frost matching a real poster colour, avoiding white
+    and faces whenever the art offers something better, and only ever returns a
+    colour genuinely present in the poster.
+    """
+    rgb, v, s, skin = _dominant_cluster(region)
+    if rgb is None:
+        rgb, v, s, skin = (128.0, 128.0, 128.0), 0.5, 0.0, False
+    if fallback is not None:
+        local_rank = _frost_rank(v, s, skin)
+        if local_rank < 3:
+            fb_rgb, fb_v, fb_s, fb_skin = _dominant_cluster(fallback)
+            if fb_rgb is not None and _frost_rank(fb_v, fb_s, fb_skin) > local_rank:
+                return fb_rgb
+    return rgb
 
 
 def draw_award_badge(
@@ -1364,7 +1461,9 @@ def draw_award_badge(
     notch_inset: float = 0.004,        # top-edge offset as fraction of poster height (± small)
     font_size_ratio: float = 0.43,    # font size as fraction of badge height
     frost_opacity: float = 0.75,      # frosted overlay opacity (0.0–1.0)
-    tint_rgb: tuple[float, float, float] | None = None,  # override sampled colour (frosted)
+    frost_saturation: float = 1.2,    # frosted colour-cast strength (0 = grey)
+    frost_reference: bool = False,    # match the poster colour instead of the pastel tint
+    tint_rgb: tuple[float, float, float] | None = None,  # whole-poster colour (from un-graded art)
     star: bool | None = None,         # override ★ decision (resolved on canonical label)
     text_color: tuple[int, int, int] | None = None,  # override default white text
 ) -> Image.Image:
@@ -1462,28 +1561,21 @@ def draw_award_badge(
         blurred = region.filter(ImageFilter.GaussianBlur(radius=blur_r))
         blurred_ss = blurred.resize((bw, bh), Image.Resampling.LANCZOS).convert("RGBA")
 
-        # Sample dominant colour from the (lightly blurred) region — use a small
-        # thumbnail so the mean is fast and noise-free.  tint_rgb (when supplied)
-        # overrides the colour so the notch can match the frosted rating bar.
+        # Dominant colour of the actual poster region (a real cluster, not a
+        # muddy mean — see dominant_frost_rgb).  tint_rgb (when supplied) overrides
+        # it so the notch can match the frosted rating bar.
+        # Colour comes from tint_rgb (a whole-poster sample the caller takes from
+        # the un-graded art); the blurred texture still comes from the image.
         if tint_rgb is not None:
             dr, dg, db = tint_rgb
         else:
-            thumb = blurred.resize((8, 8), Image.Resampling.LANCZOS).convert("RGB")
-            arr_thumb = np.array(thumb, dtype=np.float32)
-            dr, dg, db = arr_thumb[:, :, 0].mean(), arr_thumb[:, :, 1].mean(), arr_thumb[:, :, 2].mean()
+            dr, dg, db = dominant_frost_rgb(image)
 
         # Boost toward a bright, saturated version of that colour so the tint
-        # reads clearly: push V toward 1.0 while keeping H+S, then mix 60 % of
-        # that tint with 40 % white so very dark posters still look "frosted".
-        import colorsys as _cs
-        _h, _s, _v = _cs.rgb_to_hsv(dr / 255, dg / 255, db / 255)
-        _v_boost = _v * 0.4 + 0.60          # floor V at 60% so dark regions lift
-        _s_boost = min(1.0, _s * 1.2)       # slightly push saturation
-        tr, tg, tb = _cs.hsv_to_rgb(_h, _s_boost, _v_boost)
-        # Mix tinted colour with white (60/40) for the frosted feel
-        fr_r = int(tr * 255 * 0.6 + 255 * 0.4)
-        fr_g = int(tg * 255 * 0.6 + 255 * 0.4)
-        fr_b = int(tb * 255 * 0.6 + 255 * 0.4)
+        # reads clearly: floor V so dark regions lift, scale S by frost_saturation,
+        # then mix 60 % of that tint with 40 % white for the frosted feel (or, in
+        # reference mode, hew to the poster's true colour).
+        fr_r, fr_g, fr_b = _frosted_tint(dr, dg, db, frost_saturation, frost_reference)
 
         # Notch shape mask (square top, rounded bottom)
         rr_mask_ss = Image.new("L", (bw, bh), 0)
@@ -1652,23 +1744,49 @@ def draw_award_badge(
     return result
 
 
-def _frosted_tint(dr: float, dg: float, db: float) -> tuple[int, int, int]:
-    """Poster dominant RGB → the same boosted/whitened tint the frosted notch
-    uses, so the sash / notch / bar all derive a consistent colour."""
+def _frosted_tint(
+    dr: float, dg: float, db: float, saturation: float = 1.2, reference: bool = False
+) -> tuple[int, int, int]:
+    """Poster dominant RGB → the frosted tint shared by the bar, notch and sash so
+    they stay consistent.
+
+    Two modes:
+
+    • Saturation (default) — a light "frosted glass" pastel. ``saturation`` scales
+      the source S (1.2 = historical default; 0 = neutral grey). The colour is
+      lifted to ~60 %+ Value and mixed 60/40 with white.
+
+    • Reference (``reference=True``) — hew to the poster's *true* hue and
+      saturation, dropping the pastel whitening so the frost closely matches the
+      art. White is then added only as far as needed to lift the colour to a
+      legibility floor, so the dark frosted text stays readable (an inherently
+      dark hue like deep blue still gets enough white; an already-light gold keeps
+      its full colour). ``saturation`` is ignored in this mode.
+
+    Both key the colour's reliability on *chroma* (value × saturation), not Value,
+    so a near-black noise pixel like (14, 4, 3) fades to neutral (no invented
+    salmon) while a dark-but-vivid navy like (9, 35, 72) keeps its hue."""
     import colorsys
     h, s, v = colorsys.rgb_to_hsv(dr / 255, dg / 255, db / 255)
-    tr, tg, tb = colorsys.hsv_to_rgb(h, min(1.0, s * 1.2), v * 0.4 + 0.60)
+    # Confidence the source hue is real, from its chroma (v*s): ~0 below 0.05
+    # (near-black/grey noise), full by 0.18 (a clear hue, however dark).
+    conf = max(0.0, min(1.0, (v * s - 0.05) / 0.13))
+
+    if reference:
+        # True poster hue + saturation at a bright value, then just enough white
+        # to reach a luminance floor for the dark text — vivid, not pastel.
+        s_eff = min(1.0, s) * conf
+        br, bg, bb = (c * 255 for c in colorsys.hsv_to_rgb(h, s_eff, max(v, 0.85)))
+        lum = (0.299 * br + 0.587 * bg + 0.114 * bb) / 255
+        _FLOOR = 0.60
+        w = (_FLOOR - lum) / (1.0 - lum) if lum < _FLOOR else 0.0
+        return (int(br * (1 - w) + 255 * w),
+                int(bg * (1 - w) + 255 * w),
+                int(bb * (1 - w) + 255 * w))
+
+    s_eff = min(1.0, s * max(0.0, saturation)) * conf
+    tr, tg, tb = colorsys.hsv_to_rgb(h, s_eff, v * 0.4 + 0.60)
     return (int(tr*255*0.6 + 255*0.4), int(tg*255*0.6 + 255*0.4), int(tb*255*0.6 + 255*0.4))
-
-
-def sample_frosted_sash_rgb(image: Image.Image) -> tuple[float, float, float]:
-    """Dominant RGB of the top-right corner region the diagonal sash overlays."""
-    width, height = image.size
-    reg = image.crop((int(width * 0.55), 0, width, int(height * 0.22)))
-    blr = reg.filter(ImageFilter.GaussianBlur(radius=max(6, int(height * 0.02))))
-    th  = blr.resize((8, 8), Image.Resampling.LANCZOS).convert("RGB")
-    ar  = np.array(th, dtype=np.float32)
-    return float(ar[:, :, 0].mean()), float(ar[:, :, 1].mean()), float(ar[:, :, 2].mean())
 
 
 def draw_award_sash(
@@ -1679,6 +1797,8 @@ def draw_award_sash(
     length_ratio: float = 1.15,
     height_ratio: float = 0.12,
     poster_color: tuple[float, float, float] | None = None,
+    frost_saturation: float = 1.2,
+    frost_reference: bool = False,
     star: bool = False,
     text_color: tuple[int, int, int] | None = None,
 ) -> Image.Image:
@@ -1699,7 +1819,7 @@ def draw_award_sash(
     if poster_color is not None:
         # Poster-derived colour: tint the band edges / border from the art (same
         # logic the frosted notch uses).  The dark centre + light text are kept.
-        _t = _frosted_tint(*poster_color)
+        _t = _frosted_tint(*poster_color, saturation=frost_saturation, reference=frost_reference)
         hi            = (*_t, 255)
         lo            = tuple(max(0, int(c * 0.6)) for c in _t) + (255,)
         border_colour = (*_t, 255)

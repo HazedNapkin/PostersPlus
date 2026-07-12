@@ -778,6 +778,9 @@
     margin-top: 12px;
     padding-top: 14px;
   }
+  /* Breathing room after a toggle-row's separator before a following field
+     (e.g. the Reference Colour toggle above the Colour Saturation slider). */
+  .toggle-row + .field { margin-top: 14px; }
   /* Explicit separator for spots the adjacency rule can't reach (same-type
      dropdowns, or rows nested in a wrapper div).  !important so it wins over the
      same-type "no divider" rule which has higher specificity. */
@@ -2166,16 +2169,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
-              <div class="toggle-row" id="bar-match-notch-row" style="display:none;">
-                <div>
-                  <div class="toggle-label">Match Notch Colour</div>
-                  <div class="field-hint" style="margin-top:2px;">Valid if sash is set to notch mode.</div>
-                </div>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="tog-bar-match-notch" checked onchange="build(); queuePreviewReload()">
-                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
-                </label>
-              </div>
               <div class="field" style="margin-top:10px;">
                 <label class="field-label">Bar Height</label>
                 <div class="range-row">
@@ -2195,6 +2188,23 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <div class="range-row">
                   <input type="range" id="cfg-bar-frost" min="0.0" max="1.0" step="0.05" value="0.85" oninput="updateRange(this,'rng-bo5'); build(); queuePreviewReload()">
                   <span class="range-val" id="rng-bo5">0.85</span>
+                </div>
+              </div>
+              <div class="toggle-row" id="bar-reference-row">
+                <div>
+                  <div class="toggle-label">Reference Colour</div>
+                  <div class="field-hint" style="margin-top:2px;">Match the poster's true colour instead of the saturation tint.</div>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-bar-frost-reference" onchange="onFrostReferenceChange(this)">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
+              <div class="field" id="bar-saturation-field">
+                <label class="field-label">Colour Saturation</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-bar-frost-sat" min="0.0" max="2.0" step="0.05" value="1.20" oninput="updateRange(this,'rng-bsat'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-bsat">1.20</span>
                 </div>
               </div>
               <div class="field">
@@ -2426,6 +2436,23 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <div class="range-row">
                   <input type="range" id="cfg-sash-badge-frost-opacity" min="0.00" max="1.00" step="0.01" value="0.75" oninput="updateRange(this,'rng-sbfo'); build(); queuePreviewReload()">
                   <span class="range-val" id="rng-sbfo">0.75</span>
+                </div>
+              </div>
+              <div class="toggle-row" id="sash-reference-row" style="display:none;">
+                <div>
+                  <div class="toggle-label">Reference Colour</div>
+                  <div class="field-hint" style="margin-top:2px;">Match the poster's true colour instead of the saturation tint.</div>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-sash-frost-reference" onchange="onFrostReferenceChange(this)">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
+              <div class="field" id="sash-badge-saturation-field" style="display:none;">
+                <label class="field-label">Colour Saturation</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-sash-badge-frost-sat" min="0.00" max="2.00" step="0.05" value="1.20" oninput="updateRange(this,'rng-sbsat'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-sbsat">1.20</span>
                 </div>
               </div>
             </div>
@@ -3690,6 +3717,8 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
 
   // ── Rating / Genre Label ───────────────────────────────────────────────────
   params.set('rating_display_mode', ratingMode);
+  // Global frosted colour mode (bar, notch and sash share it).
+  if (c('tog-bar-frost-reference')) params.set('frost_reference', 'true');
   if (ratingMode !== 0) {
     // Colour palette: exposed for the modes whose pip/score colour visibly uses it
     if (ratingMode === 1 || ratingMode === 3) {
@@ -3719,11 +3748,10 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
         params.set('bar_accent', vEl('cfg-bar-accent') || 'silver');
       params.set('bar_append',          vEl('cfg-bar4-append') || 'rating_year');
       params.set('bar_score_out_of_10', c('tog-bar-score-10') ? 'true' : 'false');
-      if (_bs === 'frosted' || _bs === 'rating_frosted')
-        params.set('bar_match_notch', c('tog-bar-match-notch') ? 'true' : 'false');
       params.set('bar_height_ratio',    n('cfg-bar-height').toFixed(3));
       params.set('bar_font_size_ratio', n('cfg-bar-font').toFixed(2));
       params.set('bar_frost_opacity',   n('cfg-bar-frost').toFixed(2));
+      params.set('bar_frost_saturation', n('cfg-bar-frost-sat').toFixed(2));
       params.set('bar_bottom_inset',    n('cfg-bar-inset').toFixed(3));
     }
     const _usesCustomPalette =
@@ -3770,8 +3798,10 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
       params.set('sash_badge_size_h',        n('cfg-sash-badge-size-h').toFixed(2));
       params.set('sash_badge_inset',         n('cfg-sash-badge-inset').toFixed(3));
       params.set('sash_badge_font_ratio',    n('cfg-sash-badge-font-ratio').toFixed(2));
-      if (vEl('cfg-sash-badge-style') === 'frosted')
+      if (vEl('cfg-sash-badge-style') === 'frosted') {
         params.set('sash_badge_frost_opacity', n('cfg-sash-badge-frost-opacity').toFixed(2));
+        params.set('sash_badge_frost_saturation', n('cfg-sash-badge-frost-sat').toFixed(2));
+      }
     } else {  // diagonal sash
       params.set('muted',              c('tog-muted') ? 'true' : 'false');
       params.set('sash_poster_color',  c('tog-sash-poster-color') ? 'true' : 'false');
@@ -3977,7 +4007,25 @@ function onSashModeChange() {
 
 function updateBadgeStyleFields() {
   const isFrosted = vEl('cfg-sash-badge-style') === 'frosted';
+  const ref = c('tog-sash-frost-reference');
   document.getElementById('sash-badge-opacity-field').style.display = isFrosted ? '' : 'none';
+  document.getElementById('sash-reference-row').style.display = isFrosted ? '' : 'none';
+  document.getElementById('sash-badge-saturation-field').style.display = (isFrosted && !ref) ? '' : 'none';
+  // A frosted notch takes over the colour controls, so refresh the Rating
+  // section's own toggle/slider (they hide while a frosted notch is shown).
+  _updateBarRatingRows();
+}
+
+// Reference Colour is one global setting shown in whichever panel owns the
+// saturation control (Rating, or Sash for a frosted notch). Keep both toggles in
+// sync and refresh which saturation slider is visible.
+function onFrostReferenceChange(el) {
+  const on = el.checked;
+  _setEl('tog-bar-frost-reference',  on ? 'true' : 'false');
+  _setEl('tog-sash-frost-reference', on ? 'true' : 'false');
+  updateBadgeStyleFields();
+  build();
+  queuePreviewReload();
 }
 
 function updateOriginalArt() {
@@ -4005,9 +4053,13 @@ function _updateBarRatingRows() {
   const visible = [...document.querySelectorAll('#cfg-bar-accent option')].filter(o => o.style.display !== 'none');
   if (visible.length && !visible.find(o => o.value === cur)) _setEl('cfg-bar-accent', visible[0].value);
   updateCustomPaletteFields();
-  // Match Notch Colour only applies to frosted-bodied styles.
-  document.getElementById('bar-match-notch-row').style.display =
-    (s === 'frosted' || s === 'rating_frosted') ? '' : 'none';
+  // A frosted notch owns the frosted colour controls (its own toggle + slider),
+  // so they live in the Sash panel then and hide here. Otherwise they live in
+  // Rating. The saturation slider also hides when Reference Colour is on.
+  const frostedNotch = vEl('cfg-sash-mode') === 'notch' && vEl('cfg-sash-badge-style') === 'frosted';
+  const ref = c('tog-bar-frost-reference');
+  document.getElementById('bar-reference-row').style.display = frostedNotch ? 'none' : '';
+  document.getElementById('bar-saturation-field').style.display = (frostedNotch || ref) ? 'none' : '';
 }
 
 function updateCustomPaletteFields() {
@@ -4115,7 +4167,7 @@ const PRESETS = [
     name: 'Frosted',
     description: 'Both the bar and notch will reflect the poster\'s color, resulting in some beautifully colorful designs. Maintains a low footprint to show off as much of the art as possible.',
     screenshot: '/static/presets/frosted_notch.jpg',
-    params: 'top_gradient=medium&bottom_gradient=high&fallback_to_imdb=true&rating_display_mode=4&bar_style=frosted&bar_append=rating_year&bar_score_out_of_10=false&bar_match_notch=true&bar_height_ratio=0.080&bar_font_size_ratio=0.55&bar_frost_opacity=0.85&movie_weights=letterboxd%3A0.99%2Ctrakt%3A0.01%2Ctomatoes%3A0.00%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Crogerebert%3A0.00%2Cmyanimelist%3A0.00&tv_weights=trakt%3A0.80%2Ctomatoes%3A0.20%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Cmyanimelist%3A0.00&textless=false&use_original_art=false&original_art_source=primary&logo_language=en&logo_priority=native_original&fallback_bg_style=photoreal&logo_max_w_ratio=0.75&logo_max_h_ratio=0.25&logo_bottom_ratio=0.28&show_award_sash=true&cinema_greyscale=true&release_status_cinema_only=true&sash_badge=true&sash_badge_style=frosted&sash_badge_size_w=1.40&sash_badge_size_h=1.20&sash_badge_font_ratio=0.43&sash_badge_frost_opacity=0.75&sash_priority=wins%2Cgg_wins%2Cfestival%2Cpic_noms%2Cgg_noms%2Cstudio%2Cdirector%2Ccast%2Ctrending%2Cnew_season%2Creturning%2Cpremiere%2Cjust_added%2Cseason_finale%2Ccult%2Cforeign%2Cnew_release%2Cmetacritic%2Ctrue_story%2Cstructural%2Ctrending_broad%2Crelease_status&badge_display_mode=0',
+    params: 'top_gradient=medium&bottom_gradient=high&fallback_to_imdb=true&rating_display_mode=4&bar_style=frosted&bar_append=rating_year&bar_score_out_of_10=false&bar_height_ratio=0.080&bar_font_size_ratio=0.55&bar_frost_opacity=0.85&movie_weights=letterboxd%3A0.99%2Ctrakt%3A0.01%2Ctomatoes%3A0.00%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Crogerebert%3A0.00%2Cmyanimelist%3A0.00&tv_weights=trakt%3A0.80%2Ctomatoes%3A0.20%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Cmyanimelist%3A0.00&textless=false&use_original_art=false&original_art_source=primary&logo_language=en&logo_priority=native_original&fallback_bg_style=photoreal&logo_max_w_ratio=0.75&logo_max_h_ratio=0.25&logo_bottom_ratio=0.28&show_award_sash=true&cinema_greyscale=true&release_status_cinema_only=true&sash_badge=true&sash_badge_style=frosted&sash_badge_size_w=1.40&sash_badge_size_h=1.20&sash_badge_font_ratio=0.43&sash_badge_frost_opacity=0.75&sash_priority=wins%2Cgg_wins%2Cfestival%2Cpic_noms%2Cgg_noms%2Cstudio%2Cdirector%2Ccast%2Ctrending%2Cnew_season%2Creturning%2Cpremiere%2Cjust_added%2Cseason_finale%2Ccult%2Cforeign%2Cnew_release%2Cmetacritic%2Ctrue_story%2Cstructural%2Ctrending_broad%2Crelease_status&badge_display_mode=0',
   },
   {
     id: 'black_rating_bar_light_notch',
@@ -4366,6 +4418,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (!preserveClientInsets && p.has('sash_badge_inset')) _setEl('cfg-sash-badge-inset', p.get('sash_badge_inset'));
   if (p.has('sash_badge_font_ratio'))    _setEl('cfg-sash-badge-font-ratio',    p.get('sash_badge_font_ratio'));
   if (p.has('sash_badge_frost_opacity')) _setEl('cfg-sash-badge-frost-opacity', p.get('sash_badge_frost_opacity'));
+  if (p.has('sash_badge_frost_saturation')) _setEl('cfg-sash-badge-frost-sat', p.get('sash_badge_frost_saturation'));
   if (p.has('sash_length_ratio')) _setEl('cfg-sash-length',      p.get('sash_length_ratio'));
   if (p.has('sash_height_ratio')) _setEl('cfg-sash-height',      p.get('sash_height_ratio'));
   updateSashBadgeFields();
@@ -4417,10 +4470,13 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('bar_accent'))            _setEl('cfg-bar-accent', p.get('bar_accent'));
   if (p.has('bar_append'))            _setEl('cfg-bar4-append', p.get('bar_append'));
   if (p.has('bar_score_out_of_10'))   _setEl('tog-bar-score-10',  p.get('bar_score_out_of_10'));
-  if (p.has('bar_match_notch'))       _setEl('tog-bar-match-notch', p.get('bar_match_notch'));
   if (p.has('bar_height_ratio'))    _setEl('cfg-bar-height', p.get('bar_height_ratio'));
   if (p.has('bar_font_size_ratio')) _setEl('cfg-bar-font',   p.get('bar_font_size_ratio'));
   if (p.has('bar_frost_opacity'))   _setEl('cfg-bar-frost',  p.get('bar_frost_opacity'));
+  if (p.has('bar_frost_saturation')) _setEl('cfg-bar-frost-sat', p.get('bar_frost_saturation'));
+  { const _ref = p.has('frost_reference') ? p.get('frost_reference') : 'false';
+    _setEl('tog-bar-frost-reference', _ref); _setEl('tog-sash-frost-reference', _ref);
+    updateBadgeStyleFields(); }  // refresh which saturation slider hides
   if (!preserveClientInsets && p.has('bar_bottom_inset')) _setEl('cfg-bar-inset', p.get('bar_bottom_inset'));
   if (p.has('score_glow_threshold'))           _setEl('cfg-glow-thresh',  p.get('score_glow_threshold'));
   if (p.has('score_glow_blur'))                _setEl('cfg-glow-blur',    p.get('score_glow_blur'));

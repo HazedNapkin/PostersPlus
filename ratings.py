@@ -14,7 +14,7 @@ except ImportError:
     _HAS_CAIRO = False
     logger.warning("pycairo not available — shape edges will use PIL (no antialiasing)")
 
-from awards import FETCH_FAILED, _FetchFailed, _RateLimited
+from awards import FETCH_FAILED, _FetchFailed, _RateLimited, dominant_frost_rgb, _frosted_tint
 from config import (
     GENRE_MAP,
     GENRE_PRIORITY,
@@ -453,27 +453,6 @@ def draw_score_bar_vertical(
 # Frosted bar (rating_display_mode == 4)
 # ---------------------------------------------------------------------------
 
-def sample_frosted_bar_rgb(
-    image: Image.Image,
-    bar_height_ratio: float = 0.090,
-    bottom_inset: float = 0.0,
-) -> tuple[float, float, float]:
-    """Dominant RGB the frosted bar would sample from its bottom strip.
-
-    Mirrors the crop/blur/thumbnail in draw_frosted_bar's _build_frosted_base
-    so the colour-matching logic upstream can compare it against the notch.
-    """
-    width, height = image.size
-    bar_h = max(24, int(height * bar_height_ratio))
-    bar_y = height - bar_h - int(height * bottom_inset)
-    cy = max(0, bar_y); ch = min(bar_h, height - cy)
-    reg = image.crop((0, cy, width, cy + ch))
-    blr = reg.filter(ImageFilter.GaussianBlur(radius=max(6, int(bar_h * 0.45))))
-    th  = blr.resize((8, 8), Image.Resampling.LANCZOS).convert("RGB")
-    ar  = np.array(th, dtype=np.float32)
-    return float(ar[:, :, 0].mean()), float(ar[:, :, 1].mean()), float(ar[:, :, 2].mean())
-
-
 def draw_frosted_bar(
     image: Image.Image,
     left_text: str,
@@ -482,6 +461,8 @@ def draw_frosted_bar(
     bar_height_ratio: float = 0.090,
     font_size_ratio: float = 0.40,
     frost_opacity: float = 0.75,
+    frost_saturation: float = 1.2,
+    frost_reference: bool = False,
     bottom_inset: float = 0.0,
     style: str = "frosted",
     score: int | str | None = None,
@@ -542,15 +523,14 @@ def draw_frosted_bar(
         cy = max(0, bar_y); ch = min(bar_h, height - cy)
         reg = image.crop((0, cy, width, cy + ch))
         blr = reg.filter(ImageFilter.GaussianBlur(radius=blur_r))
+        # Colour comes from tint_rgb (a whole-poster sample the caller takes from
+        # the un-graded art); the blurred texture still comes from the image.
         if tint_rgb is not None:
             dr, dg, db = tint_rgb
         else:
-            th  = blr.resize((8, 8), Image.Resampling.LANCZOS).convert("RGB")
-            ar  = np.array(th, dtype=np.float32)
-            dr, dg, db = ar[:,:,0].mean(), ar[:,:,1].mean(), ar[:,:,2].mean()
+            dr, dg, db = dominant_frost_rgb(image)
         _h2, _s2, _v2 = _cs.rgb_to_hsv(dr/255, dg/255, db/255)
-        tr, tg, tb = _cs.hsv_to_rgb(_h2, min(1.0, _s2*1.2), _v2*0.4+0.60)
-        r, g, b = int(tr*255*0.6+255*0.4), int(tg*255*0.6+255*0.4), int(tb*255*0.6+255*0.4)
+        r, g, b = _frosted_tint(dr, dg, db, frost_saturation, frost_reference)
         base  = blr.resize((width, bar_h), Image.Resampling.LANCZOS).convert("RGBA")
         frost = Image.new("RGBA", (width, bar_h), (r, g, b, int(frost_opacity*255)))
         return Image.alpha_composite(base, frost), _h2, _s2, _v2
