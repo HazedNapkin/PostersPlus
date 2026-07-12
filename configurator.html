@@ -373,6 +373,9 @@
     min-height: 0;
     overflow-y: auto;
     scrollbar-width: none;
+    /* Match the section-body fill so short tabs don't reveal a lighter strip
+       below their content — the field background spans the whole panel. */
+    background: var(--black);
   }
   #tab-host::-webkit-scrollbar { display: none; }
 
@@ -501,6 +504,8 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
+  /* Keep the typed hex uppercase, but show the "Default" hint in normal case. */
+  .color-field input[type="text"]::placeholder { text-transform: none; letter-spacing: normal; }
   .color-field input[type="color"] {
     position: absolute;
     top: 50%;
@@ -2019,7 +2024,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <div class="field" style="border-top:none; padding-top:0; margin-top:6px;">
                 <label class="field-label">Text Colour</label>
                 <div class="color-field">
-                  <input type="text" id="cfg-rtc-m1" placeholder="default" maxlength="6"                         oninput="_syncRtcM(1); build(); queuePreviewReload()">
+                  <input type="text" id="cfg-rtc-m1" placeholder="Default" maxlength="6"                         oninput="_syncRtcM(1); build(); queuePreviewReload()">
                   <input type="color" id="cfg-rtcp-m1" value="#c8c8c8"                         oninput="document.getElementById('cfg-rtc-m1').value=this.value.slice(1).toUpperCase(); _setAllRtc(this.value.slice(1).toUpperCase()); build(); queuePreviewReload()">
                 </div>
                 <div class="field-hint">Hex colour for the genre/rating text. Leave blank for the mode default.</div>
@@ -2067,7 +2072,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <div class="field" style="border-top:none; padding-top:0; margin-top:6px;">
                 <label class="field-label">Text Colour</label>
                 <div class="color-field">
-                  <input type="text" id="cfg-rtc-m2" placeholder="default" maxlength="6"                         oninput="_syncRtcM(2); build(); queuePreviewReload()">
+                  <input type="text" id="cfg-rtc-m2" placeholder="Default" maxlength="6"                         oninput="_syncRtcM(2); build(); queuePreviewReload()">
                   <input type="color" id="cfg-rtcp-m2" value="#c8c8c8"                         oninput="document.getElementById('cfg-rtc-m2').value=this.value.slice(1).toUpperCase(); _setAllRtc(this.value.slice(1).toUpperCase()); build(); queuePreviewReload()">
                 </div>
                 <div class="field-hint">Hex colour for the genre/rating text. Leave blank for the mode default.</div>
@@ -2109,7 +2114,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <div class="field" style="border-top:none; padding-top:0; margin-top:6px;">
                 <label class="field-label">Text Colour</label>
                 <div class="color-field">
-                  <input type="text" id="cfg-rtc-m3" placeholder="default" maxlength="6"                         oninput="_syncRtcM(3); build(); queuePreviewReload()">
+                  <input type="text" id="cfg-rtc-m3" placeholder="Default" maxlength="6"                         oninput="_syncRtcM(3); build(); queuePreviewReload()">
                   <input type="color" id="cfg-rtcp-m3" value="#c8c8c8"                         oninput="document.getElementById('cfg-rtc-m3').value=this.value.slice(1).toUpperCase(); _setAllRtc(this.value.slice(1).toUpperCase()); build(); queuePreviewReload()">
                 </div>
                 <div class="field-hint">Hex colour for the genre/rating text. Leave blank for the mode default.</div>
@@ -2172,7 +2177,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <div class="field" style="border-top:none; padding-top:0; margin-top:6px;">
                 <label class="field-label">Text Colour</label>
                 <div class="color-field">
-                  <input type="text" id="cfg-rtc-m4" placeholder="default" maxlength="6"                         oninput="_syncRtcM(4); build(); queuePreviewReload()">
+                  <input type="text" id="cfg-rtc-m4" placeholder="Default" maxlength="6"                         oninput="_syncRtcM(4); build(); queuePreviewReload()">
                   <input type="color" id="cfg-rtcp-m4" value="#c8c8c8"                         oninput="document.getElementById('cfg-rtc-m4').value=this.value.slice(1).toUpperCase(); _setAllRtc(this.value.slice(1).toUpperCase()); build(); queuePreviewReload()">
                 </div>
                 <div class="field-hint">Hex colour for the genre/rating text. Leave blank for the mode default.</div>
@@ -2369,7 +2374,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             <div class="field" id="sash-text-color-field" style="display:none; border-top:none; padding-top:0; margin-top:6px;">
               <label class="field-label">Text Colour</label>
               <div class="color-field">
-                <input type="text" id="cfg-sash-text-color" placeholder="default" maxlength="6"
+                <input type="text" id="cfg-sash-text-color" placeholder="Default" maxlength="6"
                        oninput="_syncSashColorPicker(); build(); queuePreviewReload()">
                 <input type="color" id="cfg-sash-text-color-picker" value="#e1e1e1"
                        oninput="document.getElementById('cfg-sash-text-color').value=this.value.slice(1).toUpperCase(); build(); queuePreviewReload()">
