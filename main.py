@@ -743,6 +743,9 @@ class RequestConfig:
     score_glow_threshold:          int   = field(default_factory=lambda: _cfg.SCORE_GLOW_THRESHOLD)
     score_glow_blur:               int   = field(default_factory=lambda: _cfg.SCORE_GLOW_BLUR)
     score_glow_alpha:              int   = field(default_factory=lambda: _cfg.SCORE_GLOW_ALPHA)
+    # Glow colour: "" = white (default), "match" = the score bar's own colour, or
+    # a 6-digit hex string for a custom colour.
+    score_glow_color:              str   = ""
     minimalist_mode_font_size_ratio:  float = field(default_factory=lambda: _cfg.MINIMALIST_MODE_FONT_SIZE_RATIO)
     minimalist_mode_font_x_offset: float = field(default_factory=lambda: _cfg.MINIMALIST_MODE_FONT_X_OFFSET)
     minimalist_mode_font_y_offset: float = field(default_factory=lambda: _cfg.MINIMALIST_MODE_FONT_Y_OFFSET)
@@ -1035,6 +1038,13 @@ def build_request_config(params: dict) -> RequestConfig:
     # above ~50 starts measurably slowing the render.  Hard cap at 50.
     cfg.score_glow_blur               = _i("score_glow_blur",               cfg.score_glow_blur,               0,   50)
     cfg.score_glow_alpha              = _i("score_glow_alpha",              cfg.score_glow_alpha,              0,   255)
+    _gc_raw = (params.get("score_glow_color") or "").strip().lstrip("#").lower()
+    if _gc_raw == "match":
+        cfg.score_glow_color = "match"
+    elif len(_gc_raw) == 6 and all(ch in "0123456789abcdef" for ch in _gc_raw):
+        cfg.score_glow_color = _gc_raw
+    else:
+        cfg.score_glow_color = ""
     cfg.minimalist_mode_font_size_ratio = _f("minimalist_mode_font_size_ratio", cfg.minimalist_mode_font_size_ratio, 0.0, 0.5)
     cfg.minimalist_mode_font_x_offset = _f("minimalist_mode_font_x_offset", cfg.minimalist_mode_font_x_offset, 0.0, 1.0)
     cfg.minimalist_mode_font_y_offset = _f("minimalist_mode_font_y_offset", cfg.minimalist_mode_font_y_offset, 0.0, 1.0)
@@ -1762,12 +1772,19 @@ def build_poster(
                 font=font_meta,
                 fill=(*cfg.rating_text_color, 255) if cfg.rating_text_color else (200, 200, 200, 255),
             )
+            if cfg.score_glow_color == "match":
+                _glow_color = "match"
+            elif len(cfg.score_glow_color) == 6:
+                _glow_color = tuple(int(cfg.score_glow_color[i:i+2], 16) for i in (0, 2, 4))
+            else:
+                _glow_color = None
             draw_score_bar(
                 image, score,
                 bottom_margin=int(height * cfg.accent_bar_bottom_ratio),
                 glow_threshold=cfg.score_glow_threshold,
                 glow_blur=cfg.score_glow_blur,
                 glow_alpha=cfg.score_glow_alpha,
+                glow_color=_glow_color,
                 color_mode=cfg.score_color_mode,
                 custom_palette=cfg.score_custom_palette,
             )

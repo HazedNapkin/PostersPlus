@@ -2024,6 +2024,23 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </div>
                 <div class="field-hint">Hex colour for the genre/rating text. Leave blank for the mode default.</div>
               </div>
+              <div class="field" style="border-top:none; padding-top:0; margin-top:6px;">
+                <label class="field-label">Glow Colour</label>
+                <select id="cfg-glow-color-mode" onchange="updateGlowColorField(); build(); queuePreviewReload()">
+                  <option value="white" selected>White</option>
+                  <option value="match">Match Bar Colour</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </div>
+              <div class="field" id="glow-color-custom-field" style="display:none;">
+                <label class="field-label">Custom Glow Colour</label>
+                <div class="color-field">
+                  <input type="text" id="cfg-glow-color" placeholder="FFFFFF" maxlength="6"
+                         oninput="_syncGlowColorPicker(); build(); queuePreviewReload()">
+                  <input type="color" id="cfg-glow-color-picker" value="#ffffff"
+                         oninput="document.getElementById('cfg-glow-color').value=this.value.slice(1).toUpperCase(); build(); queuePreviewReload()">
+                </div>
+              </div>
               <div class="field">
                 <label class="field-label">Font Size</label>
                 <div class="range-row">
@@ -3732,6 +3749,10 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
       params.set('score_glow_threshold', ni('cfg-glow-thresh'));
       params.set('score_glow_blur',      ni('cfg-glow-blur'));
       params.set('score_glow_alpha',     ni('cfg-glow-alpha'));
+      const _glowMode = vEl('cfg-glow-color-mode');
+      if (_glowMode === 'match') params.set('score_glow_color', 'match');
+      else if (_glowMode === 'custom' && /^[0-9a-fA-F]{6}$/.test(vEl('cfg-glow-color')))
+        params.set('score_glow_color', vEl('cfg-glow-color'));
     } else if (ratingMode === 2) {
       params.set('numeric_score_font_size_ratio', n('cfg-font-mode2').toFixed(3));
       params.set('numeric_score_y_offset',        n('cfg-y-mode2').toFixed(2));
@@ -3996,6 +4017,17 @@ function _syncSashColorPicker() {
   const hex = document.getElementById('cfg-sash-text-color').value.trim();
   if (/^[0-9a-fA-F]{6}$/.test(hex))
     document.getElementById('cfg-sash-text-color-picker').value = '#' + hex;
+}
+
+function _syncGlowColorPicker() {
+  const hex = document.getElementById('cfg-glow-color').value.trim();
+  if (/^[0-9a-fA-F]{6}$/.test(hex))
+    document.getElementById('cfg-glow-color-picker').value = '#' + hex;
+}
+
+function updateGlowColorField() {
+  document.getElementById('glow-color-custom-field').style.display =
+    vEl('cfg-glow-color-mode') === 'custom' ? '' : 'none';
 }
 
 function onSashModeChange() {
@@ -4481,6 +4513,11 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('score_glow_threshold'))           _setEl('cfg-glow-thresh',  p.get('score_glow_threshold'));
   if (p.has('score_glow_blur'))                _setEl('cfg-glow-blur',    p.get('score_glow_blur'));
   if (p.has('score_glow_alpha'))               _setEl('cfg-glow-alpha',   p.get('score_glow_alpha'));
+  { const _gc = (p.get('score_glow_color') || '').trim();
+    if (_gc.toLowerCase() === 'match') { _setEl('cfg-glow-color-mode', 'match'); }
+    else if (/^[0-9a-fA-F]{6}$/.test(_gc)) { _setEl('cfg-glow-color-mode', 'custom'); _setEl('cfg-glow-color', _gc.toUpperCase()); }
+    else { _setEl('cfg-glow-color-mode', 'white'); }
+    updateGlowColorField(); }
   if (p.has('score_color_mode'))               _setEl('cfg-score-color-mode', p.get('score_color_mode'));
   if (p.has('score_custom_palette'))           _setEl('cfg-score-custom-palette', p.get('score_custom_palette'));
   if (p.has('rating_text_color')) {

@@ -300,6 +300,7 @@ def draw_score_bar(
     glow_threshold: int = SCORE_GLOW_THRESHOLD,
     glow_blur: int = SCORE_GLOW_BLUR,
     glow_alpha: int = SCORE_GLOW_ALPHA,
+    glow_color: tuple[int, int, int] | str | None = None,
     color_mode: int = 0,
     custom_palette: CustomScorePalette | None = None,
 ) -> None:
@@ -386,11 +387,19 @@ def draw_score_bar(
         pad = glow_blur * 3 + 2
         cx0, cy0 = max(0, rx0 - pad), max(0, ry0 - pad)
         cx1, cy1 = min(W, rx1 + pad), min(H, ry1 + pad)
+        # Glow colour: "match" blends the bar's own gradient ends for a cohesive
+        # coloured halo; a tuple is a custom colour; anything else stays white.
+        if glow_color == "match":
+            gc = tuple((left_color[i] + right_color[i]) // 2 for i in range(3))
+        elif isinstance(glow_color, (tuple, list)) and len(glow_color) == 3:
+            gc = tuple(int(c) for c in glow_color)
+        else:
+            gc = (255, 255, 255)
         glow = Image.new("RGBA", (cx1 - cx0, cy1 - cy0), (0, 0, 0, 0))
         ImageDraw.Draw(glow).rounded_rectangle(
             [(rx0 - cx0, ry0 - cy0), (rx1 - cx0, ry1 - cy0)],
             radius=radius + expand,
-            fill=(255, 255, 255, glow_alpha),
+            fill=(*gc, glow_alpha),
         )
         glow = glow.filter(ImageFilter.GaussianBlur(glow_blur))
         image.alpha_composite(glow, dest=(cx0, cy0))
