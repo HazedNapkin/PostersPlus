@@ -2077,15 +2077,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </div>
                 <div class="field-hint">Hex colour for the genre/rating text. Leave blank for the mode default.</div>
               </div>
-              <div class="toggle-row cfg-sep">
-                <div>
-                  <div class="toggle-label">Display score out of 10</div>
-                </div>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="tog-score-out-of-10" onchange="build(); queuePreviewReload()">
-                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
-                </label>
-              </div>
               <div class="field" style="margin-top:10px;">
                 <label class="field-label">Font Size</label>
                 <div class="range-row">
@@ -2182,15 +2173,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </div>
                 <div class="field-hint">Hex colour for the genre/rating text. Leave blank for the mode default.</div>
               </div>
-              <div class="toggle-row">
-                <div>
-                  <div class="toggle-label">Display score out of 10</div>
-                </div>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="tog-bar-score-10" onchange="build(); queuePreviewReload()">
-                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
-                </label>
-              </div>
               <div class="field" style="margin-top:10px;">
                 <label class="field-label">Bar Height</label>
                 <div class="range-row">
@@ -2267,6 +2249,36 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </div>
               <label class="toggle-switch">
                 <input type="checkbox" id="tog-hide-genre" onchange="build(); queuePreviewReload()">
+                <div class="toggle-track"><div class="toggle-thumb"></div></div>
+              </label>
+            </div>
+            <!-- Score-out-of-10 toggles: one per rating mode that prints a
+                 numeric score. Grouped here rather than inside each mode's
+                 own block so every mode-agnostic toggle sits together. -->
+            <div class="toggle-row cfg-sep" id="numeric-score10-row" style="display:none;">
+              <div>
+                <div class="toggle-label">Display score out of 10</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="tog-score-out-of-10" onchange="build(); queuePreviewReload()">
+                <div class="toggle-track"><div class="toggle-thumb"></div></div>
+              </label>
+            </div>
+            <div class="toggle-row cfg-sep" id="minimalist-score10-row" style="display:none;">
+              <div>
+                <div class="toggle-label">Display score out of 10</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="tog-minimalist-score-10" onchange="build(); queuePreviewReload()">
+                <div class="toggle-track"><div class="toggle-thumb"></div></div>
+              </label>
+            </div>
+            <div class="toggle-row cfg-sep" id="bar-score10-row" style="display:none;">
+              <div>
+                <div class="toggle-label">Display score out of 10</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="tog-bar-score-10" onchange="build(); queuePreviewReload()">
                 <div class="toggle-track"><div class="toggle-thumb"></div></div>
               </label>
             </div>
@@ -3767,6 +3779,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
       params.set('minimalist_mode_font_size_ratio', n('cfg-font-mode3').toFixed(3));
       params.set('minimalist_mode_font_x_offset',   n('cfg-x-mode3').toFixed(3));
       params.set('minimalist_mode_font_y_offset',   n('cfg-y-mode3').toFixed(3));
+      params.set('minimalist_score_out_of_10',      c('tog-minimalist-score-10') ? 'true' : 'false');
     } else if (ratingMode === 4) {
       params.set('bar_style',           vEl('cfg-bar-style') || 'frosted');
       const _bs = vEl('cfg-bar-style') || '';
@@ -4122,6 +4135,9 @@ function updateRatingFields() {
   document.getElementById('rating-mode4-fields').style.display      = mode === 4 ? '' : 'none';
   document.getElementById('rating-glow-fields').style.display       = mode === 1 ? '' : 'none';
   document.getElementById('rating-alt-colors-toggle').style.display = (mode === 1 || mode === 3) ? '' : 'none';
+  document.getElementById('numeric-score10-row').style.display      = mode === 2 ? '' : 'none';
+  document.getElementById('minimalist-score10-row').style.display   = mode === 3 ? '' : 'none';
+  document.getElementById('bar-score10-row').style.display          = mode === 4 ? '' : 'none';
   if (mode === 4) _updateBarRatingRows();
   updateCustomPaletteFields();
 }
@@ -4503,6 +4519,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('minimalist_mode_font_size_ratio'))_setEl('cfg-font-mode3',   p.get('minimalist_mode_font_size_ratio'));
   if (p.has('minimalist_mode_font_x_offset'))  _setEl('cfg-x-mode3',      p.get('minimalist_mode_font_x_offset'));
   if (p.has('minimalist_mode_font_y_offset'))  _setEl('cfg-y-mode3',      p.get('minimalist_mode_font_y_offset'));
+  if (p.has('minimalist_score_out_of_10'))     _setEl('tog-minimalist-score-10', p.get('minimalist_score_out_of_10'));
   if (p.has('bar_style'))           { _setEl('cfg-bar-style',  p.get('bar_style')); _updateBarRatingRows(); }
   if (p.has('bar_accent'))            _setEl('cfg-bar-accent', p.get('bar_accent'));
   if (p.has('bar_append'))            _setEl('cfg-bar4-append', p.get('bar_append'));

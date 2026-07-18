@@ -754,6 +754,7 @@ class RequestConfig:
     #   1 = Rating (Genre | Score, score printed as text)
     #   2 = Year + Rating (Genre | Year | Score)
     minimalist_append_mode: int = 0
+    minimalist_score_out_of_10: bool = False
 
     # Frosted bar (rating_display_mode == 4)
     bar_height_ratio:        float = 0.080
@@ -1049,6 +1050,7 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.minimalist_mode_font_x_offset = _f("minimalist_mode_font_x_offset", cfg.minimalist_mode_font_x_offset, 0.0, 1.0)
     cfg.minimalist_mode_font_y_offset = _f("minimalist_mode_font_y_offset", cfg.minimalist_mode_font_y_offset, 0.0, 1.0)
     cfg.minimalist_append_mode = _i("minimalist_append_mode", cfg.minimalist_append_mode, 0, 2)
+    cfg.minimalist_score_out_of_10 = _b("minimalist_score_out_of_10", cfg.minimalist_score_out_of_10)
 
     cfg.bar_height_ratio        = _f("bar_height_ratio",        cfg.bar_height_ratio,        0.04, 0.20)
     cfg.bar_font_size_ratio     = _f("bar_font_size_ratio",     cfg.bar_font_size_ratio,     0.15, 0.70)
@@ -1837,18 +1839,24 @@ def build_poster(
             # Mode 1 ("Rating"): genre ★ score
             # Mode 2 ("Year + Rating"): genre [pip] year ★ score
             _has_score = score not in ("N/A", None)
+            # Score formatting matches the other modes: out of 100 by default,
+            # one decimal out of 10 ("8.7"), with a bare "10" at the top.
+            if _has_score and cfg.minimalist_score_out_of_10:
+                _score_str = "10" if int(score) >= 100 else f"{int(score) / 10:.1f}"
+            else:
+                _score_str = str(score)
             parts = [(genre_label, None)] if genre_label else []
             if cfg.minimalist_append_mode == 0:
                 if release_year:
                     parts.append((str(release_year), "rpip" if parts else None))
             elif cfg.minimalist_append_mode == 1:
                 if _has_score:
-                    parts.append((str(score), "star" if parts else None))
+                    parts.append((_score_str, "star" if parts else None))
             else:  # 2 — Year + Rating
                 if release_year:
                     parts.append((str(release_year), "pip" if parts else None))
                 if _has_score:
-                    parts.append((str(score), "star" if parts else None))
+                    parts.append((_score_str, "star" if parts else None))
 
             pip_gap = int(font_size * 0.55)
             pip_w   = max(4, int(font_size * 0.18))
