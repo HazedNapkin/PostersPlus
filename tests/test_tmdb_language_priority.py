@@ -218,10 +218,60 @@ class ImageLanguageOrderTests(unittest.TestCase):
 
         self.assertIn("/neutral-after-metahub-test.png", asyncio.run(run_case()))
 
+    def test_region_qualified_spanish_does_not_cross_between_spain_and_mexico(self):
+        spain = {"iso_639_1": "es", "iso_3166_1": "ES"}
+        mexico = {"iso_639_1": "es", "iso_3166_1": "MX"}
+        generic = {"iso_639_1": "es", "iso_3166_1": None}
+
+        self.assertEqual(_image_language_keys(spain), ["es-es", "es"])
+        self.assertEqual(_image_language_keys(mexico), ["es-mx", "es"])
+
+        self.assertTrue(_image_matches_language(spain, "es-es"))
+        self.assertFalse(_image_matches_language(mexico, "es-es"))
+        self.assertTrue(_image_matches_language(mexico, "es-mx"))
+        self.assertFalse(_image_matches_language(spain, "es-mx"))
+
+        # Untagged Spanish art is not claimed by either region, but both are
+        # still Spanish for a bare "es" request.
+        self.assertFalse(_image_matches_language(generic, "es-es"))
+        self.assertFalse(_image_matches_language(generic, "es-mx"))
+        self.assertTrue(_image_matches_language(spain, "es"))
+        self.assertTrue(_image_matches_language(mexico, "es"))
+
+    def test_region_qualified_spanish_does_not_fall_back_to_bare_spanish_art(self):
+        for locale in ("es-es", "es-mx"):
+            with self.subTest(locale=locale):
+                order = image_language_order(locale, "en", "native_original")
+                self.assertEqual(order, [locale, "en"])
+                self.assertNotIn("es", order)
+
+    def test_region_qualified_spanish_fetch_includes_base_language_for_tmdb(self):
+        self.assertEqual(
+            _tmdb_include_image_languages("es-es"),
+            ["es-es", "es", "en", "null"],
+        )
+        self.assertEqual(
+            _tmdb_include_image_languages("es-mx"),
+            ["es-mx", "es", "en", "null"],
+        )
+
     def test_region_qualified_language_uses_base_translation_table(self):
         load_languages()
         self.assertEqual(translate_genre("Drama", "fr-FR"), "Drame")
         self.assertEqual(translate_sash("Season Finale", "fr-FR"), "Finale saison")
+
+    def test_region_qualified_spanish_uses_base_translation_table(self):
+        load_languages()
+        for locale in ("es-ES", "es-MX"):
+            with self.subTest(locale=locale):
+                self.assertEqual(
+                    translate_genre("Drama", locale),
+                    translate_genre("Drama", "es"),
+                )
+                self.assertEqual(
+                    translate_sash("Season Finale", locale),
+                    translate_sash("Season Finale", "es"),
+                )
 
 
 if __name__ == "__main__":

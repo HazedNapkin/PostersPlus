@@ -171,7 +171,7 @@ All configuration is done via environment variables. Copy `.env.example` to `.en
 | `TEXTLESS_DETECTION_CONCURRENCY` | `2` | Independent PP-OCR sessions in a dedicated executor. Use `1` on small hosts; each extra session uses roughly 25-40 MB; capped at 4 and CPU count |
 | `TEXTLESS_SCAN_TOP` | `0.08` | Fraction of poster height skipped from the top before counting text (covers top/middle/bottom titles; ignores top-edge logos) |
 | `BAKE_PPOCR_MODEL` | `true` | Build-time only. Bake the ~4.6MB PP-OCRv5 Mobile model into the image |
-| `DEFAULT_LOGO_LANGUAGE` | `en` | ISO language/locale code for title logos and poster language preference. `TMDB_LANGUAGE` is also accepted as a fallback alias. Use `fr-fr` for French-France fallback behavior. |
+| `DEFAULT_LOGO_LANGUAGE` | `en` | ISO language/locale code for title logos and poster language preference. `TMDB_LANGUAGE` is also accepted as a fallback alias. Region-qualified locales (`fr-fr`, `es-es`, `es-mx`) select artwork tagged for that region only, falling back to English rather than to the bare language. |
 | `DISCOVERY_OVERRIDES_PATH` | `/app/cache/discovery_overrides.json` | Optional custom path for discovery list overrides |
 
 > CPU guidance: keep `WORKERS × TEXTLESS_DETECTION_CONCURRENCY` at or below the CPU cores available to the container. Larger values can oversubscribe CPU, duplicate uncached work across workers, and reduce sustained throughput.
