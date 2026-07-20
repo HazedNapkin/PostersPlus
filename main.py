@@ -3941,6 +3941,12 @@ async def get_poster(
 
         # A rate-limited server key gets one same-request rescue attempt on the
         # next healthy configured key. Query-supplied keys remain isolated.
+        #
+        # This rescue is hand-rolled rather than routed through _with_retry on
+        # purpose: _with_retry re-calls blindly on FETCH_FAILED, so wrapping the
+        # rating fetch would fire a second request at the key that just returned
+        # 429 — before the cooldown below can register it — doubling load on a
+        # key that explicitly asked us to back off. Rotate first, then retry.
         if isinstance(rating_result, _RateLimited) and effective_mdblist_key:
             _failed_key = effective_mdblist_key
             _backoff_secs, _rescue_key = _mark_mdblist_rate_limit(

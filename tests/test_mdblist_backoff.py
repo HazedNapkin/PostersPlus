@@ -47,6 +47,16 @@ class MDBListBackoffTests(unittest.TestCase):
         self.assertEqual(selected, "key-2")
         self.assertEqual(main._mdblist_active_key_idx, 1)
 
+    def test_rotation_can_fall_back_to_primary_after_secondary_limit(self):
+        main._cfg.SERVER_MDBLIST_KEYS = ["key-1", "key-2"]
+        main._mdblist_key_cooldown["key-2"] = 100.0
+
+        selected = main._next_mdblist_server_key("key-2", now=10.0)
+
+        self.assertEqual(selected, "key-1")
+        self.assertEqual(main._mdblist_active_key_idx, 0)
+        self.assertEqual(main._mdblist_server_key_label(selected), "configured key #1")
+
     def test_rotation_does_not_replace_query_supplied_key(self):
         main._cfg.SERVER_MDBLIST_KEYS = ["key-1", "key-2"]
         self.assertIsNone(main._next_mdblist_server_key("user-key", now=10.0))
