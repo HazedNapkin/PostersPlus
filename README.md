@@ -1,6 +1,6 @@
 # PostersPlus
 
-A self-hosted poster generation service that composites extensive metadata onto TMDB posters - ratings, award sashes, quality badges, and title logos - served as ready-to-use JPEGs. PostersPlus is compatible with AIOMetadata, Bingecat, Plex, Jellyfin, and really any application that can pass IMDb/TMDB IDs and type.
+A self-hosted poster generation service that composites extensive metadata onto TMDB posters - ratings, award sashes, quality badges, and title logos - served as ready-to-use WebP or JPEG images. PostersPlus is compatible with AIOMetadata, Bingecat, Plex, Jellyfin, and really any application that can pass IMDb/TMDB IDs and type.
 
 Those not self-hosting can [visit the public instance.](https://postersplus.elfhosted.com)
 
@@ -42,11 +42,15 @@ Those not self-hosting can [visit the public instance.](https://postersplus.elfh
 
 - **Art fallback chain** - when a title has no textless poster on TMDB the landscape backdrop is cropped to portrait using face and visual-saliency detection. If no poster exists at all, you'll get either a minimalist gradient background or photorealistic fallback plus your usual ratings and info sash. Replace `static/genre_bg/<style>/<Genre>.png` with your own 500×750 PNG to use custom art.
 
+- **TheTVDB fallback** - optional TheTVDB v4 integration. When a TMDB API key alone can't find a usable logo, backdrop, or (opt-in, text-detection-gated) poster, PostersPlus falls back to TheTVDB before dropping to a text title or genre canvas. Configurable per-asset toggles and logo priority.
+
 - **Web configurator** - browser-based UI to tune every parameter and generate a ready-to-paste URL template. Tabbed layout covering Core, Rating, Logo, Sash, Quality, and Weights. Per-section info modals, URL import (paste any `/poster` URL to hydrate every control), persistent settings, a preset gallery with ready-made styles, light/dark mode toggle, and a mobile-optimised expanded preview.
 
 - **Plex and Jellyfin sync** - companion scripts (`plex_sync.py` / `jellyfin_sync.py`) that read your media library, derive quality tokens from each title's actual file metadata, and push PostersPlus-generated posters back as library covers. Includes an `--inspect` mode for auditing token derivation without writing anything.
 
-- **Composite poster cache** - fully rendered posters are cached by config hash and served directly on repeat requests, with configurable TTL and max-entry cap.
+- **Composite poster cache** - fully rendered posters (WebP by default, JPEG optional) are cached by config hash and served directly on repeat requests — checked first against an in-memory LRU, then SQLite — with configurable TTL (plus jitter to avoid mass-expiry stampedes) and max-entry cap.
+
+- **Cache warming** - optional background task that proactively pre-populates the TMDB and MDBList caches (metadata, images, logos, ratings) for trending, popular, and top-rated/now-playing titles ahead of real requests, so first views render fast instead of hitting upstream APIs cold. Can also pre-warm specific Stremio addon catalogs. Configurable budgets, schedule, and an opt-in quality-badge pre-fetch. Off by default.
 
 - **Operator overrides** - drop a `discovery_overrides.json` into the cache volume to replace or merge the built-in notable-studio / director / cast lists without editing source. A huge optional env list to choose your own preferences about how the application runs, rather than having them forced on you.
 
@@ -138,6 +142,9 @@ All configuration is done via environment variables. Copy `.env.example` to `.en
 | `TVDB_USE_POSTERS` | `false` | Use TVDB posters as a last resort. Off by default because they often carry burned-in title text; only used when text detection confirms a clean image |
 | `TVDB_LOGO_PRIORITY` | `3` | Where a TVDB clearlogo sits in the logo chain: `1` = before TMDB and Metahub, `2` = after TMDB but before Metahub, `3` = last resort (only when both have nothing). TVDB logos are often higher quality, so `1`/`2` improve results but change logos currently sourced from TMDB/Metahub |
 | `TVDB_CONCURRENCY` | `3` | Maximum concurrent outbound TVDB requests per worker |
+| `TVDB_ARTWORK_CACHE_DURATION` | `14` | Days to cache a title's resolved TVDB id and artwork listing |
+| `TVDB_NEG_CACHE_DURATION` | `3` | Days to cache a "no TVDB match / no art" result, so newly-added TVDB art is picked up sooner than a positive match |
+| `TVDB_TYPES_CACHE_DURATION` | `30` | Days to cache the TVDB artwork-type catalogue, which rarely changes |
 | `ACCESS_KEY` | - | Shared secret for request authentication. Leave blank to allow open access |
 | `WORKERS` | `1` | Uvicorn worker processes. One worker avoids duplicate uncached renders, scans, and API work across processes |
 | `AIOSTREAMS_URL` | - | Base URL of your AIOStreams instance (used when `QUALITY_SOURCE=aiostreams`) |
@@ -148,9 +155,20 @@ All configuration is done via environment variables. Copy `.env.example` to `.en
 | `QUALITY_BG_CONCURRENCY` | `5` | Max concurrent background quality fetches |
 | `QUALITY_WAIT_TIMEOUT` | `30` | Maximum seconds to wait when a request enables synchronous quality fetching |
 | `CDN_CACHE_TTL` | `0` | Adds `Cache-Control: public, max-age=N` to poster responses. Set to `0` to disable |
-| `JPEG_QUALITY` | `85` | JPEG output quality for composited posters (70–95). Raise to `92` for higher fidelity; lower to reduce file size |
+| `IMAGE_FORMAT` | `webp` | Output format for composited posters: `webp` or `jpeg`. WebP gives smaller files at equivalent quality |
+| `JPEG_QUALITY` | `85` | JPEG output quality for composited posters (70–95), used when `IMAGE_FORMAT=jpeg`. Raise to `92` for higher fidelity; lower to reduce file size |
+| `WEBP_QUALITY` | `85` | WebP output quality for composited posters (70–95), used when `IMAGE_FORMAT=webp` (the default) |
+| `RELEASE_STATUS_MAX_AGE_YEARS` | `5` | Maximum title age, in years, to bother fetching release status (Cinema/Streaming/etc.) at all. Prevents stale-data lookups on very old titles |
+| `CINEMA_MAX_AGE_YEARS` | `3` | Movies whose only known release is a theatrical date older than this are treated as "Streaming" rather than "Cinema" — guards against stale TMDB data missing a physical/digital date. `0` disables the gate |
+| `TRENDING_FETCH_TIME` | - | Local time of day (e.g. `04:00`) to refresh the trending-titles list used by the Trending sashes. Empty = refresh on a rolling 24-hour interval instead of a fixed time |
+| `TRENDING_FETCH_TIMEZONE` | `UTC` | Timezone for `TRENDING_FETCH_TIME`, e.g. `America/New_York` |
+| `TRENDING_FETCH_COUNT` | `40` | Number of top trending titles that qualify for the **Trending** sash |
+| `TRENDING_BROAD_FETCH_COUNT` | `100` | Number of additional lower-ranked trending titles (ranks past `TRENDING_FETCH_COUNT`, up to this count) that qualify for the lower-priority **Trending (Broad)** sash |
+| `TMDB_IMAGE_CACHE_JITTER_DAYS` | `10` | +/- half this many days of per-title jitter applied to TMDB poster/logo cache durations, so a large batch cached at once doesn't all expire the same day |
 | `COMPOSITE_CACHE_TTL` | `604800` | Seconds to keep a rendered poster before re-rendering (default 7 days) |
-| `COMPOSITE_MAX_ENTRIES` | `0` | Cap on composite cache entries. `0` = no cap |
+| `COMPOSITE_CACHE_TTL_JITTER` | `172800` | +/- half this many seconds of per-title jitter applied to `COMPOSITE_CACHE_TTL`, so a large batch of composites rendered together doesn't all expire (and re-render) at once |
+| `COMPOSITE_MAX_ENTRIES` | `0` | Cap on composite cache entries (SQLite). `0` = no cap |
+| `COMPOSITE_MEM_ENTRIES` | `500` | Fully-rendered composites kept in the in-memory LRU (L1) cache, served without a SQLite read. ~100–300 KB each. `0` disables the in-memory cache |
 | `DISABLE_COMPOSITE_CACHE` | - | Set to `true` to skip composite cache reads and writes entirely. Every request re-renders from scratch. For development only |
 | `LOGO_CONTRAST_RESCUE` | `false` | Recolour a flat logo (white/black/accent) when it blends into the poster background. Multi-colour/outline logos are never touched. Experimental, off by default while tested; set `true` to enable |
 | `LOGO_STRETCH_DISABLED` | `true` | Fill-stretch is off by default; every logo is kept at its true clamped size. Set `false` to enable the stretch below |
@@ -276,7 +294,7 @@ Sashes display contextual metadata about a title - awards, festival recognition,
 | Notable Studio | A24, Neon, Pixar, and other curated studios |
 | Notable Director | Curated list of notable directors |
 | Notable Cast | Curated list of notable cast members |
-| Trending | Currently in TMDB's trending top 40 |
+| Trending | Currently in TMDB's trending list, rank 1–`TRENDING_FETCH_COUNT` (default top 40) |
 | New Season | TV show with a recent or upcoming S2+ season premiere |
 | Returning | TV show with a recent or upcoming non-premiere episode |
 | Premiere | Show initial release within the last two weeks |
@@ -288,6 +306,8 @@ Sashes display contextual metadata about a title - awards, festival recognition,
 | Metacritic Must-See | High Metacritic score |
 | True Story | Based on a true story |
 | Short / Mini / Binge | Short film, miniseries, or bingeable series |
+| Trending (Broad) | Lower-ranked trending titles, rank `TRENDING_FETCH_COUNT`+1–`TRENDING_BROAD_FETCH_COUNT` (default 41–100) |
+| Release Status | Title's current release state: Cinema / Streaming / Physical / Production for movies, Airing / Ended / Cancelled for TV. Lowest default priority; movies require an extra TMDB API call the first time |
 
 Sash priority order is configurable in the web configurator via drag-and-drop. The Primary Client selector sets recommended edge insets: Stremio TV, Nuvio, Plex, and Jellyfin use `0` for both bar and notch; Stremio Desktop/Web use `0.007` for the bar and `0.004` for the notch. Both sliders remain manually adjustable, and loading a preset preserves them. Existing URLs can override the notch with `sash_badge_inset` and the bar with `bar_bottom_inset`. Individual sashes can be disabled entirely with the ✕ button - disabled sashes are serialised as `-slot_name` in the URL (e.g. `&sash_priority=wins,cast,-trending`).
 
@@ -329,6 +349,25 @@ PostersPlus uses SQLite (WAL mode) for metadata and rendered-poster caching, plu
 | Quality badges (new) | 1 day |
 | Quality badges (older) | 90 days |
 | Composite posters | 7 days |
+
+---
+
+## Cache Warming
+
+An optional background task that proactively populates the TMDB metadata/image/logo cache and the MDBList rating/award cache for a mix of currently-trending, popular, and top-rated/now-playing/on-the-air titles, plus any Stremio addon catalogs you point it at — so the *first* real request for a hot title is already cached instead of hitting upstream APIs cold. Off by default; enable it once you understand your server API keys' rate limits, since it spends its own budget of upstream calls independent of real traffic.
+
+| Variable | Default | Description |
+|---|---|---|
+| `CACHE_WARM_ENABLED` | `false` | Master switch for the background warm cycle |
+| `CACHE_WARM_TMDB_BUDGET` | `2000` | Ceiling on TMDB metadata/image API calls per cycle. Cache hits are free and don't count against it |
+| `CACHE_WARM_MDBLIST_BUDGET` | `500` | Ceiling on MDBList rating/award API calls per cycle |
+| `CACHE_WARM_INTERVAL_HOURS` | `24` | Hours between the end of one cycle and the start of the next (ignored once `CACHE_WARM_AT_HOUR` is set, after the first cycle) |
+| `CACHE_WARM_AT_HOUR` | - | Optional fixed local hour (e.g. `4` or `4:30`) to align steady-state cycles to, instead of running exactly `CACHE_WARM_INTERVAL_HOURS` after the previous cycle. Useful for scheduling the OCR-heavy cycle off-peak. Uses the container's `TZ` (UTC if unset). The very first cycle after startup always runs shortly after boot regardless |
+| `CACHE_WARM_QUALITY_ENABLED` | `false` | Also pre-fetch quality-badge data (resolution/source/HDR tokens) for every warmed title via your configured quality source. **Warning:** against a public Stremio scraper addon (rather than your own self-hosted instance) this volume of traffic can get your server's IP rate-limited or blocked — only enable against your own AIOStreams/scraper instance |
+| `CACHE_WARM_CATALOG_URLS` | - | Comma-separated Stremio addon manifest URLs (the same install links you'd paste into Stremio). Each catalog the manifest exposes is fetched and warmed first, ahead of trending/popular/supplemental, within the budgets above |
+| `CACHE_WARM_CATALOG_MAX_ITEMS` | `100` | Max items pre-warmed per catalog (across pagination), so one large catalog can't consume the whole cycle's budget |
+
+Candidates are split roughly 40% trending / 30% popular / 30% supplemental (top rated, now playing, on the air), deduplicated, and any configured catalog candidates are warmed first. Cycle progress (candidates found, budgets spent) is logged at startup and after each run.
 
 ---
 
