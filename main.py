@@ -4153,32 +4153,16 @@ async def get_poster(
         _recent_digital_release_date: str | None = None
         _rs_slots = {"release_status", "cinema", "streaming", "physical", "production", "ended", "cancelled", "airing"}
         if any(s in rcfg.sash_priority for s in _rs_slots):
-            _fetch_rs = True
-            
-            import datetime
-            current_year = datetime.date.today().year
-            _check_year = None
-            
-            # The age gate exists to cap movie /release_dates calls and to avoid
-            # stale theatrical data, so it only applies to movies.  TV status is
-            # a free dict lookup on metadata we already hold (no extra API call)
-            # and "Ended" / "Cancelled" stays accurate however long ago the show
-            # finished — gating it meant any series that ended more than
-            # RELEASE_STATUS_MAX_AGE_YEARS ago silently lost its status entirely.
-            # Stale "Cinema" on old movies is handled separately by
+            # Resolved for every title regardless of age.  There used to be an
+            # age gate here that skipped the lookup for anything older than a
+            # configurable limit, but it silently blanked the status on older
+            # titles — which read as a bug rather than a setting.  Results are
+            # cached, and stale "Cinema" on an old film is handled properly by
             # CINEMA_MAX_AGE_YEARS, which downgrades it to "Streaming".
-            if type not in ("tv", "series"):
-                _check_year = release_year
-
-            if _check_year and str(_check_year).isdigit():
-                if (current_year - int(_check_year)) > _cfg.RELEASE_STATUS_MAX_AGE_YEARS:
-                    _fetch_rs = False
-            
-            if _fetch_rs:
-                _release_status = await fetch_release_status(
-                    client, tmdb_id, effective_tmdb_key, type,
-                    tmdb_data.get("tmdb_status"),
-                )
+            _release_status = await fetch_release_status(
+                client, tmdb_id, effective_tmdb_key, type,
+                tmdb_data.get("tmdb_status"),
+            )
             # r/movieleaks confirmation overrides TMDB's theatrical/production
             # status — if the film is in the digital-release cache it's already
             # streaming regardless of what the official release dates say.

@@ -90,10 +90,6 @@ JPEG_QUALITY          = max(70, min(95, int(os.environ.get("JPEG_QUALITY", "85")
 # WebP output quality for composited posters (70-95).
 WEBP_QUALITY          = max(70, min(95, int(os.environ.get("WEBP_QUALITY", "85"))))
 
-# Maximum age in years for a title to fetch its release status (like Cinema, Streaming).
-# Prevents showing stale "Cinema" badges on very old titles.
-RELEASE_STATUS_MAX_AGE_YEARS = int(os.environ.get("RELEASE_STATUS_MAX_AGE_YEARS", "5"))
-
 # Feature Defaults 
 
 SHOW_RATING_DISPLAY_MODE = 1

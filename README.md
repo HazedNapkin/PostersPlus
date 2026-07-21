@@ -158,7 +158,6 @@ All configuration is done via environment variables. Copy `.env.example` to `.en
 | `IMAGE_FORMAT` | `webp` | Output format for composited posters: `webp` or `jpeg`. WebP gives smaller files at equivalent quality |
 | `JPEG_QUALITY` | `85` | JPEG output quality for composited posters (70–95), used when `IMAGE_FORMAT=jpeg`. Raise to `92` for higher fidelity; lower to reduce file size |
 | `WEBP_QUALITY` | `85` | WebP output quality for composited posters (70–95), used when `IMAGE_FORMAT=webp` (the default) |
-| `RELEASE_STATUS_MAX_AGE_YEARS` | `5` | Maximum title age, in years, to bother fetching release status (Cinema/Streaming/etc.) at all. Prevents stale-data lookups on very old titles |
 | `CINEMA_MAX_AGE_YEARS` | `3` | Movies whose only known release is a theatrical date older than this are treated as "Streaming" rather than "Cinema" — guards against stale TMDB data missing a physical/digital date. `0` disables the gate |
 | `TRENDING_FETCH_TIME` | - | Local time of day (e.g. `04:00`) to refresh the trending-titles list used by the Trending sashes. Empty = refresh on a rolling 24-hour interval instead of a fixed time |
 | `TRENDING_FETCH_TIMEZONE` | `UTC` | Timezone for `TRENDING_FETCH_TIME`, e.g. `America/New_York` |
