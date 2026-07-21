@@ -2411,6 +2411,16 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <div class="toggle-track"><div class="toggle-thumb"></div></div>
               </label>
             </div>
+            <div class="toggle-row" id="sash-release-cinema-only-row">
+              <div>
+                <div class="toggle-label">Release Status: Unavailable Only</div>
+                <div class="field-hint">Only show the release status sash when a title is in cinemas or in production.</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="tog-release-cinema-only" checked onchange="build(); queuePreviewReload()">
+                <div class="toggle-track"><div class="toggle-thumb"></div></div>
+              </label>
+            </div>
 
             <div class="toggle-row">
               <div>
@@ -3841,6 +3851,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   params.set('sash_mode', sashMode);
   params.set('cinema_greyscale', c('tog-cinema-greyscale') ? 'true' : 'false');
   params.set('cinema_greyscale_skip_if_available', c('tog-cinema-greyscale-skip') ? 'true' : 'false');
+  params.set('release_status_cinema_only', c('tog-release-cinema-only') ? 'true' : 'false');
 
   if (showSash) {
     if (c('tog-sash-winner-star')) params.set('sash_winner_star', 'true');
@@ -4036,7 +4047,7 @@ function updateSashBadgeFields() {
   const isBand  = mode === 'sash';   // category/poster + muted apply to diagonal sash
   const shown   = mode !== 'hidden';
   // Release-status-only filter does nothing when no sash is drawn.
-
+  document.getElementById('sash-release-cinema-only-row').style.display = shown ? '' : 'none';
   document.getElementById('sash-style-field').style.display      = isNotch ? '' : 'none';
   document.getElementById('sash-text-color-field').style.display = shown ? '' : 'none';
   document.getElementById('sash-muted-row').style.display        = isBand ? '' : 'none';
@@ -4474,6 +4485,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('sash_winner_star')) _setEl('tog-sash-winner-star',  p.get('sash_winner_star'));
   if (p.has('cinema_greyscale')) _setEl('tog-cinema-greyscale', p.get('cinema_greyscale'));
   if (p.has('cinema_greyscale_skip_if_available')) _setEl('tog-cinema-greyscale-skip', p.get('cinema_greyscale_skip_if_available'));
+  if (p.has('release_status_cinema_only')) _setEl('tog-release-cinema-only', p.get('release_status_cinema_only'));
 
   if (p.has('muted'))           _setEl('tog-muted',         p.get('muted'));
   // sash_mode supersedes the legacy show_award_sash + sash_badge bools.
