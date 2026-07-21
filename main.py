@@ -4159,16 +4159,18 @@ async def get_poster(
             current_year = datetime.date.today().year
             _check_year = None
             
-            if type in ("tv", "series"):
-                _last_air = tmdb_data.get("last_air_date")
-                if _last_air and len(_last_air) >= 4 and _last_air[:4].isdigit():
-                    _check_year = _last_air[:4]
-                else:
-                    _check_year = release_year
-            else:
+            # The age gate exists to cap movie /release_dates calls and to avoid
+            # stale theatrical data, so it only applies to movies.  TV status is
+            # a free dict lookup on metadata we already hold (no extra API call)
+            # and "Ended" / "Cancelled" stays accurate however long ago the show
+            # finished — gating it meant any series that ended more than
+            # RELEASE_STATUS_MAX_AGE_YEARS ago silently lost its status entirely.
+            # Stale "Cinema" on old movies is handled separately by
+            # CINEMA_MAX_AGE_YEARS, which downgrades it to "Streaming".
+            if type not in ("tv", "series"):
                 _check_year = release_year
 
-            if _check_year:
+            if _check_year and str(_check_year).isdigit():
                 if (current_year - int(_check_year)) > _cfg.RELEASE_STATUS_MAX_AGE_YEARS:
                     _fetch_rs = False
             
