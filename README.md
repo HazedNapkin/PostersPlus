@@ -90,7 +90,7 @@ Create a `compose.yaml` with the following content, substituting your own values
 ```yaml
 services:
   postersplus:
-    image: ghcr.io/umbraprojects/postersplus:latest
+    image: ghcr.io/umbraprojects/postersplus:dev # main if you want a stable, 1 update/month branch
     ports:
       - "8000:8000"    # change the left side if port 8000 is already in use
     restart: unless-stopped
@@ -99,9 +99,7 @@ services:
     environment:
       - TMDB_API_KEY=your_tmdb_key
       - MDBLIST_API_KEY=your_mdblist_key
-      - WORKERS=1
-      - TEXTLESS_DETECTION_CONCURRENCY=2
-      - TEXTLESS_DETECTION_MAX_VOTES=3000
+      - TEXTLESS_TEXT_DETECTION=true # set off for faster renders at the cost of potentially printing double logos
       - ACCESS_KEY=youraccesskey # Highly suggested if exposing to the internet.*
       # See .env.example for all available options
 ```
