@@ -1901,13 +1901,64 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             </div>
             <div class="field" style="margin-top:6px;">
               <label class="field-label">Language Priority</label>
-              <select id="cfg-logo-priority" onchange="build(); queuePreviewReload()">
+              <select id="cfg-logo-priority" onchange="syncSecondaryLangVisibility(); build(); queuePreviewReload()">
                 <option value="native_original" selected>Native &gt; Original &gt; Text</option>
                 <option value="original_native">Original &gt; Native &gt; Text</option>
                 <option value="native_if_original_english">Native if Original, otherwise English &gt; Original &gt; Text</option>
                 <option value="native_text">Native &gt; English &gt; Neutral &gt; Text</option>
+                <option value="native_custom_text">Native &gt; Custom &gt; Text</option>
+                <option value="native_custom_original_text">Native &gt; Custom &gt; Original &gt; Text</option>
               </select>
-              <div class="field-hint">Original is the source language of the content, text is plain text.</div>
+              <div class="field-hint">Original is the source language of the content, text is plain text. Custom is your secondary language, below.</div>
+            </div>
+            <div class="field" id="secondary-lang-field" style="margin-top:6px; display:none;">
+              <label class="field-label">Secondary Language (Custom)</label>
+              <select id="cfg-language-secondary" oninput="build(); queuePreviewReload()">
+                <option value="" selected>None</option>
+                <option value="en">English ★</option>
+                <option value="es">Spanish ★</option>
+                <option value="es-es">Spanish (Spain) ★</option>
+                <option value="es-mx">Spanish (Mexico) ★</option>
+                <option value="fr">French ★</option>
+                <option value="fr-fr">French (France) ★</option>
+                <option value="de">German</option>
+                <option value="it">Italian ★</option>
+                <option value="pt">Portuguese ★</option>
+                <option value="ja">Japanese</option>
+                <option value="ko">Korean</option>
+                <option value="zh">Chinese</option>
+                <option value="ru">Russian</option>
+                <option value="tr">Turkish</option>
+                <option value="pl">Polish</option>
+                <option value="nl">Dutch</option>
+                <option value="sv">Swedish</option>
+                <option value="da">Danish</option>
+                <option value="fi">Finnish</option>
+                <option value="no">Norwegian</option>
+                <option value="el">Greek</option>
+                <option value="cs">Czech</option>
+                <option value="hu">Hungarian</option>
+                <option value="ro">Romanian</option>
+                <option value="uk">Ukrainian</option>
+                <option value="bg">Bulgarian</option>
+                <option value="hr">Croatian</option>
+                <option value="sk">Slovak</option>
+                <option value="ar">Arabic</option>
+                <option value="hi">Hindi</option>
+                <option value="bn">Bengali</option>
+                <option value="ta">Tamil</option>
+                <option value="te">Telugu</option>
+                <option value="ml">Malayalam</option>
+                <option value="ur">Urdu</option>
+                <option value="fa">Persian</option>
+                <option value="he">Hebrew</option>
+                <option value="id">Indonesian</option>
+                <option value="ms">Malay</option>
+                <option value="vi">Vietnamese</option>
+                <option value="sw">Swahili</option>
+                <option value="af">Afrikaans</option>
+              </select>
+              <div class="field-hint">Tried after your native language for the "Custom" priority modes above. ★ indicates the poster text is fully translated, not just the logo.</div>
             </div>
             <div class="field" style="margin-top:6px;">
               <label class="field-label">Fallback Poster Style</label>
@@ -3722,6 +3773,16 @@ function normaliseCustomPalette(raw = vEl('cfg-score-custom-palette')) {
     .join(',');
 }
 
+// The secondary-language picker is only meaningful for the "Custom" priority
+// modes, so only reveal it then.
+function syncSecondaryLangVisibility() {
+  const lp    = vEl('cfg-logo-priority') || 'native_original';
+  const field = document.getElementById('secondary-lang-field');
+  if (!field) return;
+  const show  = (lp === 'native_custom_text' || lp === 'native_custom_original_text');
+  field.style.display = show ? '' : 'none';
+}
+
 function build() {
   const url = buildPreviewUrl();
   if (_SHOW_URL_BOX) {
@@ -3841,6 +3902,15 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   params.set('original_art_source',   vEl('cfg-original-art-source') || 'primary');
   params.set('logo_language',         logoLanguage);
   params.set('logo_priority',         vEl('cfg-logo-priority') || 'native_original');
+  {
+    // Only emit the secondary language for the priority modes that consult it,
+    // so unrelated URLs stay clean and cache keys don't needlessly diverge.
+    const _lp  = vEl('cfg-logo-priority') || 'native_original';
+    const _sec = vEl('cfg-language-secondary') || '';
+    if (_sec && (_lp === 'native_custom_text' || _lp === 'native_custom_original_text')) {
+      params.set('logo_language_secondary', _sec);
+    }
+  }
   params.set('fallback_bg_style',     vEl('cfg-fallback-bg-style') || 'minimal');
   params.set('logo_max_w_ratio',      n('cfg-logo-w').toFixed(2));
   params.set('logo_max_h_ratio',      n('cfg-logo-h').toFixed(2));
@@ -4449,6 +4519,8 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     _setEl('cfg-logo-priority',
            (p.get('logo_native_fallback') === 'false') ? 'native_text' : 'native_original');
   }
+  if (p.has('logo_language_secondary')) _setEl('cfg-language-secondary', p.get('logo_language_secondary'));
+  syncSecondaryLangVisibility();
   if (p.has('fallback_bg_style')) _setEl('cfg-fallback-bg-style', p.get('fallback_bg_style'));
   if (p.has('top_gradient')) {
     // Accept legacy boolean values from pre-v1.0.4 URLs
@@ -4707,6 +4779,7 @@ if (!localStorage.getItem('postersplus_selection')) applyDefaultSelection();
 // Re-apply the user's persisted settings on top of the freshly-reset defaults
 // (Core Config — keys / language / selection — is left untouched).
 restoreSettings();
+syncSecondaryLangVisibility();
 updateRatingFields();
 updateOriginalArt();
 updateBadgeModeHint();

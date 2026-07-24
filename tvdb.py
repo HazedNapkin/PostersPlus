@@ -438,6 +438,7 @@ def _logo_language_order(
     logo_language: str | None,
     original_language: str | None,
     logo_priority: str,
+    secondary_language: str | None = None,
 ) -> list[str]:
     """Ordered list of TVDB (3-letter) language codes to prefer, derived from the
     same priority rules TMDB uses so both sources agree on which languages count
@@ -446,7 +447,9 @@ def _logo_language_order(
     Deduplicated because region collapsing can fold two distinct TMDB entries
     onto one TVDB code — es-mx before es both become spa."""
     from tmdb import image_language_order
-    order = image_language_order(logo_language or "en", original_language, logo_priority)
+    order = image_language_order(
+        logo_language or "en", original_language, logo_priority, secondary_language
+    )
     return list(dict.fromkeys(lang for lang in (_to_tvdb_lang(c) for c in order) if lang))
 
 
@@ -456,11 +459,14 @@ async def fetch_tvdb_logo(
     logo_language: str | None = None,
     original_language: str | None = None,
     logo_priority: str = "native_original",
+    secondary_language: str | None = None,
 ) -> Image.Image | None:
     """Best TVDB clearlogo as an alpha-trimmed RGBA image, or None."""
     chosen = _select_by_language(
         artworks.get("logos", []),
-        _logo_language_order(logo_language, original_language, logo_priority),
+        _logo_language_order(
+            logo_language, original_language, logo_priority, secondary_language
+        ),
         strict=True,
     )
     if not chosen:
@@ -496,6 +502,7 @@ async def tvdb_logo(
     logo_language: str | None = None,
     original_language: str | None = None,
     logo_priority: str = "native_original",
+    secondary_language: str | None = None,
     imdb_id: str | None = None,
     tmdb_id: str | None = None,
     tvdb_id_hint: int | str | None = None,
@@ -519,6 +526,7 @@ async def tvdb_logo(
         logo = await fetch_tvdb_logo(
             client, artworks, logo_language,
             original_language=original_language, logo_priority=logo_priority,
+            secondary_language=secondary_language,
         )
         if logo is not None:
             logger.info(f"TVDB logo rescue succeeded for tvdb_id={tvdb_id}")
