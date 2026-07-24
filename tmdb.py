@@ -294,13 +294,17 @@ def _recolor_logo_solid(logo: Image.Image, rgb: tuple[int, int, int]) -> Image.I
 # ---------------------------------------------------------------------------
 
 def tmdb_metadata_cache_key(
-    endpoint: str, tmdb_id: str, logo_language: str
+    endpoint: str, tmdb_id: str, logo_language: str, secondary_language: str = ""
 ) -> str:
     selection_sig = (
         f"p{TMDB_POSTER_MIN_VOTES}"
         f"d{TMDB_POSTER_MAX_SCORE_DROP:g}"
     )
-    return f"{endpoint}_{tmdb_id}_{logo_language}_{selection_sig}"
+    base = f"{endpoint}_{tmdb_id}_{logo_language}_{selection_sig}"
+    # A secondary preferred language changes the image set fetched from TMDB, so
+    # it must key separately.  Suffixed (not inlined) so existing single-language
+    # cache entries keep their key and don't all miss on deploy.
+    return f"{base}_s{secondary_language}" if secondary_language else base
 
 
 def _select_textless_poster(posters: list[dict]) -> dict | None:
@@ -335,6 +339,7 @@ async def fetch_poster_metadata(
     tmdb_key: str,
     media_type: str = "movie",
     logo_language: str = "en",
+    secondary_language: str = "",
 ) -> tuple[list[int], bool, list[dict], str | None, str, str, str | None, dict]:
     """
     Fetch (or return cached) TMDB metadata, including credits,
@@ -348,7 +353,7 @@ async def fetch_poster_metadata(
     # so a title cached under one language must not be served to another without
     # that language's art.  Each language gets its own correctly-fetched entry.
     metadata_cache_key = tmdb_metadata_cache_key(
-        endpoint, tmdb_id, logo_language
+        endpoint, tmdb_id, logo_language, secondary_language
     )
 
     meta = get_cached_tmdb_metadata(metadata_cache_key)
@@ -396,7 +401,7 @@ async def fetch_poster_metadata(
     # a fr-fr request.
     # Note: null-language ≠ guaranteed text-free; TMDB uses it for both truly
     # textless art and posters where the language simply wasn't catalogued.
-    _img_langs = ",".join(_tmdb_include_image_languages(logo_language))
+    _img_langs = ",".join(_tmdb_include_image_languages(logo_language, secondary_language))
 
     logger.info(f"External API Call: Requested meta from TMDB for {tmdb_id}")
     resp = await client.get(
@@ -502,6 +507,8 @@ async def fetch_poster_metadata(
     # original-art mode needs the original-language poster (e.g. the Spanish
     # poster for a Spanish film) to honour poster-language priority.
     _covered = {logo_language, "en"}
+    if secondary_language:
+        _covered.add(secondary_language)
     _have_orig_logos   = any(lg.get("iso_639_1") == original_language for lg in logos)
     _have_orig_posters = any(p.get("iso_639_1")  == original_language for p in posters)
     if (
@@ -992,24 +999,44 @@ def _image_matches_language(image: dict, requested: str | None) -> bool:
     return requested in keys
 
 
-def _tmdb_include_image_languages(logo_language: str | None) -> list[str]:
-    requested = _normalise_image_locale(logo_language) or "en"
+def _tmdb_include_image_languages(
+    logo_language: str | None, secondary_language: str | None = None
+) -> list[str]:
     languages: list[str] = []
-    if requested != "en":
-        languages.append(requested)
-        base = requested.split("-", 1)[0]
-        if base and base != requested:
-            languages.append(base)
+    for candidate in (logo_language, secondary_language):
+        requested = _normalise_image_locale(candidate) or ""
+        if requested and requested != "en":
+            languages.append(requested)
+            base = requested.split("-", 1)[0]
+            if base and base != requested:
+                languages.append(base)
     languages.extend(["en", "null"])
     return list(dict.fromkeys(languages))
+
+
+# Priorities whose fallback tail is "text-forward": once the language buckets
+# are exhausted we prefer TMDB English → Metahub → language-neutral, and finally
+# a rendered text title, rather than dropping to a neutral/wrong-language logo.
+TEXT_FORWARD_PRIORITIES = frozenset({
+    "native_text",
+    "native_custom_text",
+    "native_custom_original_text",
+})
 
 
 def image_language_order(
     logo_language: str,
     original_language: str | None,
     logo_priority: str,
+    secondary_language: str | None = None,
 ) -> list[str]:
-    """Return the distinct language buckets to try, in priority order."""
+    """Return the distinct language buckets to try, in priority order.
+
+    *secondary_language* is a user's second preferred language ("custom").  It is
+    only consulted by the ``native_custom_*`` priorities; a blank value there
+    degrades those modes to ``native_text`` / ``native_original`` respectively
+    (the falsy filter below drops it), so the field is safe to leave unset.
+    """
     if logo_priority == "original_native":
         languages = [original_language, logo_language]
     elif logo_priority == "native_if_original_english":
@@ -1020,6 +1047,10 @@ def image_language_order(
         )
     elif logo_priority == "native_text":
         languages = [logo_language]
+    elif logo_priority == "native_custom_text":
+        languages = [logo_language, secondary_language]
+    elif logo_priority == "native_custom_original_text":
+        languages = [logo_language, secondary_language, original_language]
     else:
         languages = [logo_language, original_language]
 
@@ -1034,6 +1065,7 @@ async def fetch_logo(
     original_language: str | None = None,
     logo_priority: str = "native_original",
     use_metahub: bool = True,
+    secondary_language: str | None = None,
 ) -> Image.Image | None:
     """
     Fetch the best available logo for a title, with a Metahub CDN fallback.
@@ -1051,6 +1083,10 @@ async def fetch_logo(
                                         otherwise English, then original
         "native_text"               → native only, then English before neutral
                                        fallback (skip original-language logos)
+        "native_custom_text"          → native, then the secondary_language
+                                       ("custom"), then English/neutral/text
+        "native_custom_original_text" → native, secondary_language, original,
+                                       then English/neutral/text
 
     After the priority buckets, the common fallbacks apply:
       → TMDB English logo, Metahub, then neutral logo for native_text
@@ -1069,7 +1105,7 @@ async def fetch_logo(
     language_buckets = {
         language: [lg for lg in _cand if _image_matches_language(lg, language)]
         for language in image_language_order(
-            logo_language, original_language, logo_priority
+            logo_language, original_language, logo_priority, secondary_language
         )
     }
     neutral   = [lg for lg in _cand if lg.get("iso_639_1") in (None, "")]
@@ -1081,7 +1117,7 @@ async def fetch_logo(
             candidates = language_buckets[language]
             break
 
-    if logo_priority == "native_text":
+    if logo_priority in TEXT_FORWARD_PRIORITIES:
         if not candidates and english:
             candidates = english
         if not candidates and use_metahub and imdb_id:
