@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Localization
+
+- Added Brazilian Portuguese (`pt-br`) poster-output translations, contributed
+  by @danilopagotto82.
+- Region-qualified translation files take precedence over the bare language, so
+  a `pt-br` request uses `languages/pt-br.json` rather than `languages/pt.json`.
+  Selecting `pt-br` also restricts logo artwork to Brazil-tagged entries,
+  falling back to English rather than to Portugal-tagged art.
+
 ## v1.1.0 - 2026-06-09
 
 This release is compared with the original `v1.0.0` release. It also includes
