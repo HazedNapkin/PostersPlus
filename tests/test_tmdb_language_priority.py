@@ -255,6 +255,37 @@ class ImageLanguageOrderTests(unittest.TestCase):
             ["es-mx", "es", "en", "null"],
         )
 
+    def test_brazilian_portuguese_does_not_cross_with_european_portuguese(self):
+        brazil = {"iso_639_1": "pt", "iso_3166_1": "BR"}
+        portugal = {"iso_639_1": "pt", "iso_3166_1": "PT"}
+        generic = {"iso_639_1": "pt", "iso_3166_1": None}
+
+        self.assertEqual(_image_language_keys(brazil), ["pt-br", "pt"])
+
+        self.assertTrue(_image_matches_language(brazil, "pt-br"))
+        self.assertFalse(_image_matches_language(portugal, "pt-br"))
+        self.assertFalse(_image_matches_language(generic, "pt-br"))
+        self.assertTrue(_image_matches_language(brazil, "pt"))
+
+    def test_brazilian_portuguese_does_not_fall_back_to_bare_portuguese_art(self):
+        order = image_language_order("pt-br", "en", "native_original")
+        self.assertEqual(order, ["pt-br", "en"])
+        self.assertNotIn("pt", order)
+
+    def test_brazilian_portuguese_fetch_includes_base_language_for_tmdb(self):
+        self.assertEqual(
+            _tmdb_include_image_languages("pt-br"),
+            ["pt-br", "pt", "en", "null"],
+        )
+
+    def test_brazilian_portuguese_renders_translated_poster_text(self):
+        # Resolves against languages/pt-br.json when present, otherwise the
+        # bare pt.json — either way the poster must not fall back to English.
+        load_languages()
+        self.assertEqual(translate_genre("Horror", "pt-BR"), "Terror")
+        self.assertEqual(translate_genre("Comedy", "pt-BR"), "Comédia")
+        self.assertNotEqual(translate_sash("Season Finale", "pt-BR"), "Season Finale")
+
     def test_region_qualified_language_uses_base_translation_table(self):
         load_languages()
         self.assertEqual(translate_genre("Drama", "fr-FR"), "Drame")
