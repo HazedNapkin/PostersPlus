@@ -27,7 +27,6 @@
     "Talk": "Entrevista"
   },
   "sashLabels": {
-   "sashLabels": {
   "trendingToday": "#{rank} Hoje",
   "New": "Novo",
   "Must-See": "Imperdível",
@@ -83,6 +82,6 @@
   "Best Picture": "Melhor Filme",
   "Emmy Winner": "Vencedor do Emmy",
   "Emmy Nominee": "Indicado ao Emmy",
-  "Golden Globe": "Globo de Ouro"}
+  "Golden Globe": "Globo de Ouro"
  }
 }
