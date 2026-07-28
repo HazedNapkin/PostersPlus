@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Quality
+
+- Added QualiCache as a quality source: set `QUALITY_SOURCE=qualicache` and
+  `QUALICACHE_URL` (plus `QUALICACHE_API_KEY` if QualiCache sets an access key).
+  QualiCache crawls Stremio addons in the background and answers from its own
+  cache, so poster rendering no longer waits on a scrape and one instance can
+  serve PostersPlus and other clients at once.
+- Titles QualiCache hasn't collected yet report as pending rather than failed.
+  The poster is served without badges and the composite isn't cached, so a later
+  request picks the badges up — and a cold title no longer counts against the
+  quality source's failure budget the way a real outage does.
+- QualiCache tokens with no PostersPlus badge (`8K`, `1440P`, `720P`, `SD`,
+  `BLURAY`, `WEBRIP`, `HDTV`) are dropped rather than mapped to an approximate
+  equivalent.
+- Quality backend selection now runs through one dispatcher instead of being
+  repeated at each call site. `/status` reports the active backend as
+  `quality_source`.
+
 ### Localization
 
 - Added Brazilian Portuguese (`pt-br`) poster-output translations, contributed
