@@ -437,18 +437,19 @@ _mdblist_key_cooldown: dict[str, float] = {}
 _mdblist_active_key_idx: int = 0
 
 
-def _quality_source_name() -> str:
-    return "scraper" if _cfg.QUALITY_SOURCE == "scraper" else "aiostreams"
-
-
 def _quality_backoff_remaining(now: float | None = None) -> float:
     if now is None:
         now = asyncio.get_running_loop().time()
-    return max(0.0, _quality_source_backoff_until.get(_quality_source_name(), 0.0) - now)
+    return max(0.0, _quality_source_backoff_until.get(active_quality_source(), 0.0) - now)
 
 
 def _record_quality_result(result) -> None:
-    source = _quality_source_name()
+    # QUALITY_PENDING means the source answered and is healthy — it just has no
+    # value for this title yet. It is neither a success to reset the failure
+    # count on nor a failure to count, so the backoff state is left untouched.
+    if result is QUALITY_PENDING:
+        return
+    source = active_quality_source()
     if result is not FETCH_FAILED:
         _quality_source_backoff_until.pop(source, None)
         _quality_source_fail_count.pop(source, None)
@@ -532,18 +533,16 @@ async def _background_quality_fetch(
                     f"Quality fetch skipped for {imdb_id}; source cooldown has {remaining:.0f}s remaining"
                 )
                 return
-            if _cfg.QUALITY_SOURCE == "scraper" and _cfg.SCRAPER_URL:
-                result = await _with_retry(
-                    fetch_quality_from_scraper,
-                    _HTTP_CLIENT, _cfg.SCRAPER_URL, imdb_id, media_type, season, episode, release_date,
-                )
-            else:
-                result = await _with_retry(
-                    fetch_quality_from_aiostreams,
-                    _HTTP_CLIENT, imdb_id, media_type, season, episode, release_date,
-                )
+            result = await _with_retry(
+                fetch_quality,
+                _HTTP_CLIENT, imdb_id, media_type, season, episode, release_date,
+            )
             _record_quality_result(result)
-            if result is not FETCH_FAILED:
+            if result is QUALITY_PENDING:
+                # QualiCache is collecting in the background; the next request
+                # for this title picks up the value once it lands.
+                logger.info(f"Background quality fetch pending for {imdb_id}")
+            elif result is not FETCH_FAILED:
                 logger.info(f"Background quality fetch complete for {imdb_id}")
     except Exception as exc:
         _record_quality_result(FETCH_FAILED)
@@ -586,11 +585,14 @@ from discovery import (
     pick_sash,
 )
 from quality import (
+    QUALITY_PENDING,
+    QUALITY_SOURCES,
     BadgeItem,
-    fetch_quality_from_aiostreams,
-    fetch_quality_from_scraper,
+    active_quality_source,
+    fetch_quality,
     get_resized_badge,
     parse_quality,
+    quality_source_configured,
     render_badges_left,
 )
 from ratings import (
@@ -2259,29 +2261,23 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
         # warm of the most commonly requested entry point. Off by default;
         # see CACHE_WARM_QUALITY_ENABLED for why.
         if _cfg.CACHE_WARM_QUALITY_ENABLED and imdb_id:
-            _has_quality_source = (
-                bool(_cfg.AIOSTREAMS_URL and _cfg.AIOSTREAMS_AUTH)
-                or (_cfg.QUALITY_SOURCE == "scraper" and bool(_cfg.SCRAPER_URL))
-            )
-            if _has_quality_source and _quality_backoff_remaining() <= 0:
+            if quality_source_configured() and _quality_backoff_remaining() <= 0:
                 if get_cached_quality(imdb_id, release_year) is None:
                     if _quality_bg_semaphore is None:
                         _quality_bg_semaphore = asyncio.Semaphore(_cfg.QUALITY_BG_CONCURRENCY)
                     try:
                         async with _quality_bg_semaphore:
-                            if _cfg.QUALITY_SOURCE == "scraper" and _cfg.SCRAPER_URL:
-                                q_result = await _with_retry(
-                                    fetch_quality_from_scraper,
-                                    client, _cfg.SCRAPER_URL, imdb_id, media_type, 1, 1, release_year,
-                                )
-                            else:
-                                q_result = await _with_retry(
-                                    fetch_quality_from_aiostreams,
-                                    client, imdb_id, media_type, 1, 1, release_year,
-                                )
+                            q_result = await _with_retry(
+                                fetch_quality,
+                                client, imdb_id, media_type, 1, 1, release_year,
+                            )
                         quality_calls += 1
                         _record_quality_result(q_result)
-                        if q_result is FETCH_FAILED:
+                        if q_result is QUALITY_PENDING:
+                            # Still counts as a warm: the lookup registered the
+                            # title with QualiCache, which now queues it.
+                            logger.debug(f"Cache warm: quality pending for {imdb_id}")
+                        elif q_result is FETCH_FAILED:
                             logger.warning(f"Cache warm: quality fetch failed for {imdb_id}")
                     except Exception as exc:
                         quality_calls += 1
@@ -2591,16 +2587,24 @@ async def lifespan(app: FastAPI):
     _HTTP_CLIENT = _make_http_client()
     logger.info("HTTP client initialised")
     # Warn on quality source misconfiguration
-    if _cfg.QUALITY_SOURCE == "scraper" and (bool(_cfg.AIOSTREAMS_URL) or bool(_cfg.AIOSTREAMS_AUTH)):
+    _quality_source = active_quality_source()
+    if _cfg.QUALITY_SOURCE not in QUALITY_SOURCES:
         logger.warning(
-            "QUALITY_SOURCE=scraper but AIOSTREAMS_URL/AIOSTREAMS_AUTH are also set — "
-            "scraper will be used; AIOSTREAMS settings are ignored. "
+            f"Unknown QUALITY_SOURCE={_cfg.QUALITY_SOURCE!r} — expected one of "
+            f"{', '.join(QUALITY_SOURCES)}; defaulting to aiostreams behaviour."
+        )
+    elif _quality_source != "aiostreams" and (bool(_cfg.AIOSTREAMS_URL) or bool(_cfg.AIOSTREAMS_AUTH)):
+        logger.warning(
+            f"QUALITY_SOURCE={_quality_source} but AIOSTREAMS_URL/AIOSTREAMS_AUTH are also set — "
+            f"{_quality_source} will be used; AIOSTREAMS settings are ignored. "
             "Unset AIOSTREAMS_URL and AIOSTREAMS_AUTH to silence this warning."
         )
-    if _cfg.QUALITY_SOURCE == "scraper" and not _cfg.SCRAPER_URL:
+    if _quality_source == "scraper" and not _cfg.SCRAPER_URL:
         logger.warning("QUALITY_SOURCE=scraper but SCRAPER_URL is not set — quality fetching is disabled.")
-    if _cfg.QUALITY_SOURCE not in ("aiostreams", "scraper"):
-        logger.warning(f"Unknown QUALITY_SOURCE={_cfg.QUALITY_SOURCE!r} — defaulting to aiostreams behaviour.")
+    if _quality_source == "qualicache" and not _cfg.QUALICACHE_URL:
+        logger.warning("QUALITY_SOURCE=qualicache but QUALICACHE_URL is not set — quality fetching is disabled.")
+    if _quality_source == "qualicache" and _cfg.QUALICACHE_URL:
+        logger.info(f"Quality source: QualiCache at {_cfg.QUALICACHE_URL}")
     _configurator_html = _load_configurator_html()
     load_languages()   # poster-output translations (English fallback if absent)
     _render_assets_signature = _compute_render_assets_signature()
@@ -2769,10 +2773,8 @@ async def server_caps(access_key: str = ""):
         "mdblist_key_set":       bool(_cfg.SERVER_MDBLIST_KEYS),
         "mdblist_key_count":     len(_cfg.SERVER_MDBLIST_KEYS),
         "aiostreams_configured": bool(_cfg.AIOSTREAMS_URL and _cfg.AIOSTREAMS_AUTH),
-        "quality_configured":    (
-            bool(_cfg.AIOSTREAMS_URL and _cfg.AIOSTREAMS_AUTH)
-            or (_cfg.QUALITY_SOURCE == "scraper" and bool(_cfg.SCRAPER_URL))
-        ),
+        "quality_source":        active_quality_source(),
+        "quality_configured":    quality_source_configured(),
         "trending_fetch_count":  _cfg.TRENDING_FETCH_COUNT,
         "trending_fetch_time":   _cfg.TRENDING_FETCH_TIME,
         "trending_fetch_timezone": _cfg.TRENDING_FETCH_TIMEZONE,
@@ -3490,12 +3492,9 @@ async def get_poster(
         cached_tokens  = get_cached_quality(imdb_id, release_date_for_quality_ttl)
         quality_tokens = cached_tokens or []
 
-    # A quality source is available when the server has AIOStreams configured,
-    # or QUALITY_SOURCE=scraper with a valid SCRAPER_URL.
-    _has_quality_source = (
-        bool(_cfg.AIOSTREAMS_URL and _cfg.AIOSTREAMS_AUTH)
-        or (_cfg.QUALITY_SOURCE == "scraper" and bool(_cfg.SCRAPER_URL))
-    )
+    # A quality source is available when the backend QUALITY_SOURCE selects has
+    # the settings it needs — AIOStreams URL + auth, SCRAPER_URL, or QUALICACHE_URL.
+    _has_quality_source = quality_source_configured()
     _quality_cooldown_active = _has_quality_source and _quality_backoff_remaining() > 0
     quality_needs_fetch = (
         rcfg.badge_display_mode in (1, 2, 4, 5)
@@ -4008,27 +4007,28 @@ async def get_poster(
         # Inline quality wait — runs after gather so rating coalescing is never
         # blocked.  Used for poster-warm workflows where latency doesn't matter.
         if quality_needs_fetch and rcfg.wait_for_quality:
-            async def _inline_fetch():
-                if _cfg.QUALITY_SOURCE == "scraper" and _cfg.SCRAPER_URL:
-                    return await _with_retry(
-                        fetch_quality_from_scraper,
-                        client, _cfg.SCRAPER_URL,
-                        imdb_id, type, season, episode, release_date_for_quality_ttl,
-                    )
-                return await _with_retry(
-                    fetch_quality_from_aiostreams,
-                    client, imdb_id, type, season, episode, release_date_for_quality_ttl,
-                )
             try:
                 fetched = await asyncio.wait_for(
-                    _inline_fetch(), timeout=_cfg.QUALITY_WAIT_TIMEOUT
+                    _with_retry(
+                        fetch_quality,
+                        client, imdb_id, type, season, episode, release_date_for_quality_ttl,
+                    ),
+                    timeout=_cfg.QUALITY_WAIT_TIMEOUT,
                 )
                 _record_quality_result(fetched)
-                if fetched is not FETCH_FAILED:
+                if fetched is QUALITY_PENDING:
+                    # QualiCache has queued this title but has no value yet.
+                    # Waiting longer wouldn't help — it collects out of band.
+                    logger.info(
+                        f"Inline quality fetch pending for {imdb_id} "
+                        "— serving without quality, composite not cached"
+                    )
+                    quality_pending = True
+                elif fetched is not FETCH_FAILED:
                     quality_tokens = fetched
                     logger.info(f"Inline quality fetch complete for {imdb_id}: {quality_tokens}")
                 else:
-                    # AIOStreams/scraper returned a transient error — don't cache
+                    # The quality source returned a transient error — don't cache
                     # the composite poster without quality so the next request retries.
                     logger.warning(
                         f"Inline quality fetch failed for {imdb_id} "

@@ -70,7 +70,8 @@ Those not self-hosting can [visit the public instance.](https://postersplus.elfh
 - An [AIOMetadata](https://github.com/cedya77/aiometadata) config. Self hosted or public instance are both fine. Plex, Jellyfin or Bingecat don't need this.
 - Optionally, a quality source for quality badges (choose one):
   - An [AIOStreams](https://github.com/Viren070/AIOStreams) self hosted instance (set `AIOSTREAMS_URL` + `AIOSTREAMS_AUTH`), **or**
-  - Any standalone Stremio stream addon such as [Torrentio](https://torrentio.strem.fun) or [Comet](https://comet.elfhosted.com) (set `QUALITY_SOURCE=scraper` + `SCRAPER_URL` to the addon's base URL, e.g. `https://torrentio.strem.fun/`). Note: Stremthru Torz requires authentication and won't work standalone; use it via AIOStreams instead.
+  - Any standalone Stremio stream addon such as [Torrentio](https://torrentio.strem.fun) or [Comet](https://comet.elfhosted.com) (set `QUALITY_SOURCE=scraper` + `SCRAPER_URL` to the addon's base URL, e.g. `https://torrentio.strem.fun/`). Note: Stremthru Torz requires authentication and won't work standalone; use it via AIOStreams instead, **or**
+  - A [QualiCache](https://github.com/UmbraProjects/QualiCache) instance (set `QUALITY_SOURCE=qualicache` + `QUALICACHE_URL`). QualiCache talks to the same addons but crawls them in the background, so PostersPlus reads quality from a cache instead of waiting on a scrape. See [Quality via QualiCache](#quality-via-qualicache).
 
 ---
 
@@ -147,8 +148,10 @@ All configuration is done via environment variables. Copy `.env.example` to `.en
 | `WORKERS` | `1` | Uvicorn worker processes. One worker avoids duplicate uncached renders, scans, and API work across processes |
 | `AIOSTREAMS_URL` | - | Base URL of your AIOStreams instance (used when `QUALITY_SOURCE=aiostreams`) |
 | `AIOSTREAMS_AUTH` | - | AIOStreams credentials as Base64 `user:password` |
-| `QUALITY_SOURCE` | `aiostreams` | Quality data source: `aiostreams` or `scraper`. Set to `scraper` to use any Stremio stream addon instead of AIOStreams |
+| `QUALITY_SOURCE` | `aiostreams` | Quality data source: `aiostreams`, `scraper`, or `qualicache` |
 | `SCRAPER_URL` | - | Base URL of a Stremio stream addon (e.g. `https://torrentio.strem.fun/`). Only used when `QUALITY_SOURCE=scraper`. Standalone addons like Torrentio and Comet work best; Stremthru Torz requires auth and should be used via AIOStreams instead |
+| `QUALICACHE_URL` | - | Base URL of your QualiCache instance (e.g. `http://qualicache:8000`). Only used when `QUALITY_SOURCE=qualicache` |
+| `QUALICACHE_API_KEY` | - | Must match QualiCache's own `ACCESS_KEY`. Leave blank if QualiCache is unauthenticated |
 | `QUALITY_OLD_CACHE_DURATION` | `90` | Days to cache quality data for titles older than 2 weeks |
 | `QUALITY_BG_CONCURRENCY` | `5` | Max concurrent background quality fetches |
 | `QUALITY_WAIT_TIMEOUT` | `30` | Maximum seconds to wait when a request enables synchronous quality fetching |
@@ -197,6 +200,53 @@ When OCR rejects a TMDB poster marked as textless, Posters Plus records it in
 `/app/cache/fake_textless_posters.txt`. Each image appears once, with direct
 TMDB and image links for manual review. The report is advisory only and never
 edits TMDB automatically; delete it at any time to start a fresh review list.
+
+---
+
+## Quality via QualiCache
+
+The `aiostreams` and `scraper` backends scrape on the request path: the first
+view of a title waits on an addon, and a slow or rate-limited Torrentio/Comet
+shows up as posters served without badges.
+
+[QualiCache](https://github.com/UmbraProjects/QualiCache) inverts that. It
+crawls Stremio catalogues on its own schedule, queries the same addons in the
+background, picks one best release from a known release group, and serves only
+what is already in its cache. A read is a single SQLite lookup, so PostersPlus
+never blocks on a scrape. Because it exposes a plain HTTP API, one QualiCache
+instance can back PostersPlus and any other client at the same time.
+
+```dotenv
+QUALITY_SOURCE=qualicache
+QUALICACHE_URL=http://qualicache:8000
+# Only if QualiCache sets ACCESS_KEY
+QUALICACHE_API_KEY=
+```
+
+Leave `AIOSTREAMS_URL` and `AIOSTREAMS_AUTH` unset — they're ignored when
+`QUALITY_SOURCE` isn't `aiostreams`, and PostersPlus warns at startup if both
+are configured. Point QualiCache itself at your addons with its own
+`STREMIO_ADDONS` setting; PostersPlus never sees those URLs or credentials.
+
+**Pending results.** A title QualiCache hasn't collected yet answers `pending`
+rather than an error. PostersPlus serves the poster immediately without badges
+and doesn't cache that composite, so the next request picks the badges up once
+QualiCache has them. Crucially, pending doesn't count against the quality
+source's failure budget — a cold title never triggers the backoff that a real
+outage does. In practice, catalogue crawling means common and recently released
+titles are usually warm before anyone asks for them.
+
+QualiCache also ships an AIOStreams-shaped compatibility endpoint, so it works
+with `QUALITY_SOURCE=aiostreams` and no PostersPlus changes. Prefer
+`QUALITY_SOURCE=qualicache`: it reads QualiCache's tokens directly instead of
+round-tripping them through the AIOStreams response shape, and it can tell
+"still collecting" apart from "failed", which the compatibility endpoint can't
+express.
+
+QualiCache's token vocabulary is wider than PostersPlus's badge set. Tokens with
+no badge (`8K`, `1440P`, `720P`, `SD`, `BLURAY`, `WEBRIP`, `HDTV`) are dropped
+rather than mapped to an approximate equivalent, so a badge is never shown for
+quality the release doesn't actually have.
 
 ---
 

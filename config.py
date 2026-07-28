@@ -22,13 +22,25 @@ AIOSTREAMS_URL        = os.environ.get("AIOSTREAMS_URL", "")
 AIOSTREAMS_AUTH       = os.environ.get("AIOSTREAMS_AUTH", "")
 
 # Quality source selection.
-# QUALITY_SOURCE: "aiostreams" (default) or "scraper".
-# SCRAPER_URL:    Stremio addon manifest/base URL — only used when QUALITY_SOURCE=scraper.
-#                 Example: https://torrentio.stremio.ru/{config}/manifest.json
-# Setting QUALITY_SOURCE=scraper while AIOSTREAMS_URL/AUTH are also set is a
-# misconfiguration — the scraper path is ignored and a warning is logged at startup.
+# QUALITY_SOURCE:   "aiostreams" (default), "scraper", or "qualicache".
+# SCRAPER_URL:      Stremio addon manifest/base URL — only used when QUALITY_SOURCE=scraper.
+#                   Example: https://torrentio.stremio.ru/{config}/manifest.json
+# QUALICACHE_URL:   Base URL of a QualiCache instance — only used when
+#                   QUALITY_SOURCE=qualicache. Example: http://qualicache:8000
+# QUALICACHE_API_KEY: Optional; must match QualiCache's own ACCESS_KEY when set.
+#
+# Unlike aiostreams/scraper, QualiCache never scrapes on the request path: it
+# crawls catalogues in the background and answers from its own SQLite cache, so
+# a cold title returns "pending" instead of blocking on a slow addon. See
+# quality.fetch_quality_from_qualicache for how pending is handled.
+#
+# Setting QUALITY_SOURCE to a non-aiostreams backend while AIOSTREAMS_URL/AUTH
+# are also set is a misconfiguration — the AIOStreams settings are ignored and a
+# warning is logged at startup.
 QUALITY_SOURCE        = os.environ.get("QUALITY_SOURCE", "aiostreams").lower().strip()
 SCRAPER_URL           = os.environ.get("SCRAPER_URL", "").strip()
+QUALICACHE_URL        = os.environ.get("QUALICACHE_URL", "").strip()
+QUALICACHE_API_KEY    = os.environ.get("QUALICACHE_API_KEY", "").strip()
 SERVER_TMDB_KEY       = os.environ.get("TMDB_API_KEY", "").strip()
 SERVER_MDBLIST_KEY    = os.environ.get("MDBLIST_API_KEY", "").strip()
 SERVER_MDBLIST_KEY_2  = os.environ.get("MDBLIST_API_KEY_2", "").strip()
