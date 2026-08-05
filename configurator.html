@@ -3812,7 +3812,12 @@ function build() {
 }
 
 function decodePlaceholders(url) {
-  return url.replace(/%7B/g, '{').replace(/%7D/g, '}');
+  return url.replace(/%7B/g, '{').replace(/%7D/g, '}')
+            // AIOMetadata's optional-placeholder form is "{name?}". The "?" has
+            // to survive as a literal or the pattern won't match, but decoding
+            // every %3F would corrupt genuine values, so this is anchored to the
+            // closing brace.
+            .replace(/%3F\}/g, '?}');
 }
 
 function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}) {
@@ -3833,18 +3838,27 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   const params = new URLSearchParams();
 
   // ── Core identity ──────────────────────────────────────────────────────────
-  params.set('tmdb_id', tmdbId);
-  params.set('imdb_id', imdbId);
-  // Anime-native ids, opt-in. Placeholder-only: there is nothing to substitute
-  // in the live preview, which renders one concrete title the user picked from
-  // TMDB search. An unsubstituted "{kitsu_id}" is treated as absent by the
-  // server, so leaving these in a template can't break non-anime titles.
-  // AIOMetadata also offers {mal_id} and {anidb_id}; those aren't emitted
-  // because neither is wired as an art source (MAL needs auth, AniDB's API is
-  // heavily restricted). The server ignores them if you add them by hand.
-  if (usePlaceholders && c('tog-anime-ids')) {
-    params.set('anilist_id', '{anilist_id}');
-    params.set('kitsu_id',   '{kitsu_id}');
+  // Anime-native ids, opt-in and placeholder-only (the live preview renders one
+  // concrete title picked from TMDB search, so there is nothing to substitute).
+  //
+  // Every id here uses AIOMetadata's OPTIONAL placeholder form, "{name?}". Its
+  // resolver bails out entirely — returning null and falling back to plain TMDB
+  // art without ever calling us — as soon as any *required* "{name}" placeholder
+  // has no value for a title. So the required form would break both directions:
+  // "{anilist_id}" kills every live-action poster, and "{tmdb_id}"/"{imdb_id}"
+  // kill every anime-only title, which is exactly the case this feature exists
+  // for. The optional form substitutes empty instead, and the server treats an
+  // empty id as absent.
+  //
+  // AIOMetadata also offers {mal_id} and {anidb_id}; neither is emitted because
+  // neither is wired as an art source (MAL needs auth, AniDB's API is heavily
+  // restricted). The server ignores them if you add them by hand.
+  const animeIds = usePlaceholders && c('tog-anime-ids');
+  params.set('tmdb_id', animeIds ? '{tmdb_id?}' : tmdbId);
+  params.set('imdb_id', animeIds ? '{imdb_id?}' : imdbId);
+  if (animeIds) {
+    params.set('anilist_id', '{anilist_id?}');
+    params.set('kitsu_id',   '{kitsu_id?}');
   }
   params.set('type',    type);
   params.set('primary_client', vEl('cfg-primary-client') || 'stremio_desktop_web');
