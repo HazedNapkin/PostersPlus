@@ -329,6 +329,14 @@ https://yourdomain.com/poster?kitsu_id={kitsu_id}&type=series
 
 No id conversion happens in either direction. If your client can't supply one of these ids, don't use these parameters — simpler providers group anime under TV series with `tmdb_id`/`imdb_id` and keep working exactly as before. Both bare (`12345`) and Stremio-prefixed (`kitsu:12345`) forms are accepted. When both params are supplied, AniList wins.
 
+**Use AIOMetadata's optional placeholder form (`{name?}`) for every id**, which is what the configurator's **Anime IDs** toggle emits:
+
+```
+?tmdb_id={tmdb_id?}&imdb_id={imdb_id?}&anilist_id={anilist_id?}&kitsu_id={kitsu_id?}&type={type}
+```
+
+AIOMetadata's resolver abandons the whole URL — falling back to plain TMDB art without ever calling PostersPlus — as soon as any *required* `{name}` placeholder has no value for a title. With the required form, `{anilist_id}` silently kills every live-action poster, and `{tmdb_id}`/`{imdb_id}` kill every anime-only title. The `{name?}` form substitutes an empty string instead, and PostersPlus treats an empty id as absent.
+
 What changes on this path:
 
 - **Art** is the provider's single cover image, served as-is. These covers essentially always have the title logotype baked into the design, so no logo is composited over them, no burned-in-text scan runs, and there's no backdrop crop fallback. Anime cover art is ~0.72 aspect against the 500×750 canvas, so roughly 8% is cropped from the sides. Kitsu's `original` images are ~920×1270 and downscale cleanly; AniList's are ~460×636 and are upscaled slightly, so **prefer `kitsu_id` when your client has both**.

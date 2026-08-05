@@ -311,15 +311,24 @@ class ConfiguratorAnimeIdTests(unittest.TestCase):
         # concrete TMDB title) never carries an unsubstitutable placeholder.
         self.assertRegex(
             self.html,
-            r"if \(usePlaceholders && c\('tog-anime-ids'\)\) \{\s*"
-            r"params\.set\('anilist_id',\s*'\{anilist_id\}'\);\s*"
-            r"params\.set\('kitsu_id',\s*'\{kitsu_id\}'\);",
+            r"const animeIds = usePlaceholders && c\('tog-anime-ids'\);",
         )
 
-    def test_placeholder_names_match_aiometadata(self):
-        for placeholder in ("{anilist_id}", "{kitsu_id}"):
+    def test_every_id_uses_the_optional_placeholder_form(self):
+        # AIOMetadata's resolver returns null — falling back to plain TMDB art
+        # without ever calling us — the moment any REQUIRED "{name}" placeholder
+        # has no value. The required form breaks both directions: {anilist_id}
+        # kills every live-action title, {tmdb_id}/{imdb_id} kill every
+        # anime-only one. Only "{name?}" substitutes empty instead.
+        for placeholder in ("{tmdb_id?}", "{imdb_id?}", "{anilist_id?}", "{kitsu_id?}"):
             with self.subTest(placeholder=placeholder):
                 self.assertIn(f"'{placeholder}'", self.html)
+
+    def test_question_mark_survives_url_encoding(self):
+        # URLSearchParams encodes "?" as %3F; the pattern only matches if it
+        # reaches AIOMetadata literally. Anchored to the closing brace so real
+        # values containing "?" aren't corrupted.
+        self.assertIn(r".replace(/%3F\}/g, '?}')", self.html)
 
     def test_unsupported_namespaces_are_not_emitted(self):
         # MAL needs auth and AniDB's API is heavily restricted, so neither is
