@@ -318,6 +318,26 @@ Append `&debug=1` to any poster URL to receive a JSON response with all computed
 
 Append `&nocache=1` (requires `ACCESS_KEY` to be set and valid) to force a fresh render of a single title, bypassing the composite cache read and re-caching the result. Lets you refresh one poster without flushing the whole cache.
 
+### Anime IDs (AniList / Kitsu)
+
+Advanced metadata providers such as AIOMetadata can pass an anime-native id instead of `tmdb_id`/`imdb_id`, in which case the cover art, title, genres, air dates, status and community score all come from that provider:
+
+```
+https://yourdomain.com/poster?anilist_id={anilist_id}&type=series
+https://yourdomain.com/poster?kitsu_id={kitsu_id}&type=series
+```
+
+No id conversion happens in either direction. If your client can't supply one of these ids, don't use these parameters — simpler providers group anime under TV series with `tmdb_id`/`imdb_id` and keep working exactly as before. Both bare (`12345`) and Stremio-prefixed (`kitsu:12345`) forms are accepted. When both params are supplied, AniList wins.
+
+What changes on this path:
+
+- **Art** is the provider's single cover image, served as-is. These covers essentially always have the title logotype baked into the design, so no logo is composited over them, no burned-in-text scan runs, and there's no backdrop crop fallback. Anime cover art is ~0.72 aspect against the 500×750 canvas, so roughly 8% is cropped from the sides. Kitsu's `original` images are ~920×1270 and downscale cleanly; AniList's are ~460×636 and are upscaled slightly, so **prefer `kitsu_id` when your client has both**.
+- **Ratings** come from the provider, in the same response as the art, at no extra request. Give the `anilist` or `kitsu` source a non-zero weight to use it. Note both score high and compressed (anime clusters ~65–80, and a poor show still scores mid-50s), so blend deliberately rather than matching your Letterboxd weight.
+- **Quality badges** keep working — Torrentio, Comet and AIOStreams all accept anime-native stream ids, so the id passes straight through.
+- **Sashes** are limited to what the provider knows: lifecycle status (airing / ended / cancelled) works; awards, trending, digital-release and cinema status do not, because those are TMDB/MDBList lookups with nothing to match against.
+
+If you only want MyAnimeList *scores* on anime that already has an IMDb id, you don't need any of this — MDBList already returns a `myanimelist` rating, so just give that source a non-zero weight.
+
 ### Operator endpoints
 
 These are gated behind `access_key` when one is configured:
@@ -369,6 +389,8 @@ Sash priority order is configurable in the web configurator via drag-and-drop. T
 ## Ratings
 
 Scores from multiple providers are normalised to a 0–100 scale and combined using configurable weights. Default weights use Letterboxd with Trakt fallback for movies, and Trakt (80%) and Rotten Tomatoes (20%) for TV. Weights are fully adjustable in the web configurator.
+
+Weights renormalise over the sources actually present for a title, so a source with no score contributes nothing rather than dragging the average down. That makes the anime-only sources safe to weight: `myanimelist` (via MDBList, for anything with an IMDb id) and `anilist` / `kitsu` (only for titles requested by [anime id](#anime-ids-anilist--kitsu)) are inert on everything else. All three default to a weight of `0`.
 
 ---
 

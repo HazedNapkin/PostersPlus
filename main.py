@@ -619,6 +619,7 @@ _SECONDARY_LANGUAGE_PRIORITIES = frozenset({
     "native_custom_original_text",
 })
 import tvdb
+import anime
 
 # ---------------------------------------------------------------------------
 # Persistent HTTP client
@@ -677,6 +678,35 @@ def _check_imdb_id(val: str) -> None:
 def _check_type(val: str) -> None:
     if val not in _VALID_TYPES:
         raise HTTPException(status_code=400, detail="Invalid type")
+
+
+def _resolve_anime_request(anilist_id: str, kitsu_id: str) -> "tuple[str | None, int | None]":
+    """Select the anime provider for this request, or (None, None) for the
+    ordinary TMDB path.
+
+    A malformed id raises 400 rather than falling through to the TMDB path,
+    where it would surface as a confusing "Invalid tmdb_id".  AniList wins when
+    both params are supplied — arbitrary, but deterministic, so a client that
+    sends both always lands on the same cache entry.
+    """
+    if not _cfg.ANIME_SOURCES_ENABLED:
+        return None, None
+    for namespace, raw in (("anilist", anilist_id), ("kitsu", kitsu_id)):
+        raw = (raw or "").strip()
+        if not raw:
+            continue
+        # A template pasted into a metadata provider may arrive with the
+        # placeholder unsubstituted ("{kitsu_id}") when that provider has no id
+        # for the title. Treat it as absent rather than malformed — otherwise a
+        # single anime placeholder in the URL would 400 every live-action
+        # poster served through the same template.
+        if raw.startswith("{") and raw.endswith("}"):
+            continue
+        parsed = anime.parse_anime_id(namespace, raw)
+        if parsed is None:
+            raise HTTPException(status_code=400, detail=f"Invalid {namespace}_id")
+        return namespace, parsed
+    return None, None
 
 
 # ---------------------------------------------------------------------------
@@ -3183,8 +3213,10 @@ async def get_logo(
 @app.get("/poster")
 async def get_poster(
     request: Request,
-    tmdb_id: str,
-    imdb_id: str,
+    tmdb_id: str = "",
+    imdb_id: str = "",
+    anilist_id: str = "",
+    kitsu_id: str = "",
     type: str = "movie",
     quality: str = "",
     season: int = 1,
@@ -3226,9 +3258,35 @@ async def get_poster(
     if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
         raise HTTPException(status_code=403, detail="Unauthorized, your access key is not valid for this instance.")
 
-    _check_tmdb_id(tmdb_id)
-    _check_imdb_id(imdb_id)
     _check_type(type)
+
+    # -----------------------------------------------------------------------
+    # Anime-native ids (AniList / Kitsu).
+    #
+    # A client that can supply one — AIOMetadata and similar advanced metadata
+    # providers — gets art, titles, genres and a community score straight from
+    # the anime provider, with no id conversion anywhere. Clients that only
+    # speak imdb/tmdb/tvdb pass neither param and take the unchanged TMDB path.
+    #
+    # `canonical_id` replaces imdb_id as the identity for every cache table,
+    # dedup key and scraper stream id. Its "<namespace>:<id>" shape can't
+    # collide with a bare TMDB id or a tt-prefixed IMDb id, and it is already
+    # the form Torrentio/Comet/AIOStreams expect for anime stream lookups.
+    # -----------------------------------------------------------------------
+    anime_namespace, anime_id = _resolve_anime_request(anilist_id, kitsu_id)
+    is_anime = anime_namespace is not None
+
+    if is_anime:
+        canonical_id = anime.namespaced_id(anime_namespace, anime_id)
+        # Downstream art fetching, log lines and detection keys are all written
+        # in terms of tmdb_id; reusing it as the provider-scoped identity keeps
+        # those paths working without threading a second id through them.
+        tmdb_id = canonical_id
+        imdb_id = ""
+    else:
+        _check_tmdb_id(tmdb_id)
+        _check_imdb_id(imdb_id)
+        canonical_id = imdb_id
 
     # -----------------------------------------------------------------------
     # Single-user mode: check for a cached final poster first.
@@ -3241,7 +3299,16 @@ async def get_poster(
     effective_tmdb_key    = _resolve_tmdb_key(tmdb_key)
     effective_mdblist_key = _resolve_mdblist_key(mdblist_key)
 
-    if not effective_tmdb_key:
+    # MDBList is keyed by IMDb id, which an anime-native request doesn't have.
+    # Nulling the key here makes every downstream MDBList gate (cooldown,
+    # back-off, coalescing, the fetch itself) skip naturally rather than
+    # needing an is_anime branch at each one. The rating still arrives — the
+    # provider ships it in the same response as the cover art.
+    if is_anime:
+        effective_mdblist_key = None
+
+    # An anime-native request never touches TMDB, so it doesn't need a key.
+    if not effective_tmdb_key and not is_anime:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -3253,7 +3320,14 @@ async def get_poster(
     raw_params = {
         k: v for k, v in request.query_params.items()
         if k not in (
-            "tmdb_id", "imdb_id", "mdblist_key", "tmdb_key", "type",
+            "tmdb_id", "imdb_id", "anilist_id", "kitsu_id",
+            # Not art sources here (MAL needs auth, AniDB's API is heavily
+            # restricted), but AIOMetadata templates carry the full placeholder
+            # set. Excluded so their presence — substituted or not — can't
+            # fragment the composite cache key across otherwise identical
+            # requests.
+            "mal_id", "anidb_id",
+            "mdblist_key", "tmdb_key", "type",
             "quality", "season", "episode", "access_key", "debug", "nocache",
         )
     }
@@ -3303,7 +3377,13 @@ async def get_poster(
                 + _server_sig
             ).encode()
         ).hexdigest()[:16]
-        final_cache_key = f"{imdb_id}:{tmdb_id}:{type}:{_params_hash}"
+        # Anime requests carry no imdb_id and set tmdb_id to the namespaced
+        # provider id, so the canonical id alone identifies the title.
+        final_cache_key = (
+            f"{canonical_id}:{type}:{_params_hash}"
+            if is_anime
+            else f"{imdb_id}:{tmdb_id}:{type}:{_params_hash}"
+        )
         cached_jpeg = None if _force_refresh else get_cached_final_poster(final_cache_key)
         if _force_refresh:
             logger.info(f"Force refresh (nocache) for {final_cache_key} — bypassing cache read")
@@ -3356,7 +3436,7 @@ async def get_poster(
     # doesn't complain about use-before-global-declaration.
     global _mdblist_active_key_idx
 
-    cached_rating = get_cached_rating(imdb_id)
+    cached_rating = get_cached_rating(canonical_id)
 
     if cached_rating is not None:
         (
@@ -3489,7 +3569,7 @@ async def get_poster(
         quality_tokens = parse_quality(quality)
         cached_tokens  = None
     else:
-        cached_tokens  = get_cached_quality(imdb_id, release_date_for_quality_ttl)
+        cached_tokens  = get_cached_quality(canonical_id, release_date_for_quality_ttl)
         quality_tokens = cached_tokens or []
 
     # A quality source is available when the backend QUALITY_SOURCE selects has
@@ -3508,21 +3588,27 @@ async def get_poster(
     if quality_needs_fetch and not rcfg.wait_for_quality:
         # Fire-and-forget background fetch — poster is served immediately
         # without badges; the cache will be warm on the next request.
-        if imdb_id not in _quality_bg_inflight:
-            _quality_bg_inflight.add(imdb_id)
+        # Torrentio, Comet and AIOStreams all accept an anime-native stream id
+        # ("kitsu:12345:1:1") because that is exactly what Stremio sends them
+        # for Kitsu-catalogue items, so the canonical id passes straight
+        # through and the quality badge keeps working without an IMDb id.
+        if canonical_id not in _quality_bg_inflight:
+            _quality_bg_inflight.add(canonical_id)
             asyncio.create_task(
                 _background_quality_fetch(
-                    imdb_id, type, season, episode,
+                    canonical_id, type, season, episode,
                     release_date_for_quality_ttl,
                 )
             )
-            logger.info(f"Quality fetch deferred to background for {imdb_id}")
+            logger.info(f"Quality fetch deferred to background for {canonical_id}")
         else:
-            logger.info(f"Quality background fetch already in progress for {imdb_id}")
+            logger.info(f"Quality background fetch already in progress for {canonical_id}")
         quality_needs_fetch = False
         quality_pending = True
 
-    if not rating_already_cached and not effective_mdblist_key:
+    # Anime requests null the key deliberately (no IMDb id to look up), so this
+    # would be noise rather than a warning.
+    if not rating_already_cached and not effective_mdblist_key and not is_anime:
         logger.warning(
             f"MDBList unavailable for {imdb_id}: {_mdblist_unavailable_reason} — "
             "poster will be served without rating/award data."
@@ -3545,12 +3631,25 @@ async def get_poster(
     global _active_poster_renders
     _active_poster_renders += 1
     try:
-        genre_ids, is_textless, logos, release_year, title, poster_path, backdrop_path, tmdb_data = (
-            await _coalesced_fetch_poster_metadata(
-                client, tmdb_id, effective_tmdb_key, type, rcfg.logo_language,
-                _effective_secondary,
+        if is_anime:
+            _anime_meta = await anime.fetch_anime_metadata(
+                client, anime_namespace, anime_id
             )
-        )
+            if _anime_meta is None:
+                # Provider has no usable entry — fall through to the same genre
+                # canvas path a TMDB title with no art takes.
+                _anime_meta = anime.empty_metadata(anime_namespace)
+            (
+                genre_ids, is_textless, logos, release_year, title,
+                poster_path, backdrop_path, tmdb_data,
+            ) = _anime_meta
+        else:
+            genre_ids, is_textless, logos, release_year, title, poster_path, backdrop_path, tmdb_data = (
+                await _coalesced_fetch_poster_metadata(
+                    client, tmdb_id, effective_tmdb_key, type, rcfg.logo_language,
+                    _effective_secondary,
+                )
+            )
         # Canonical IMDb id for downstream lookups (e.g. TVDB remoteid resolution):
         # the request param if supplied, else the one TMDB returned in external_ids.
         effective_imdb_id = (imdb_id or "").strip() or tmdb_data.get("imdb_id") or None
@@ -3622,7 +3721,38 @@ async def get_poster(
             logger.info(f"Original-art mode for {tmdb_id} — poster {poster_path} "
                         f"(priority={rcfg.logo_priority})")
 
-        if rating_already_cached or not effective_mdblist_key:
+        # Anime providers ship exactly one cover image per title and it
+        # essentially always has the title logotype baked into the art, so it is
+        # served as-is under the same rules as original-art mode: no logo
+        # composited over it, no burned-in-text scan (it would reject nearly
+        # every one, at the cost of an OCR pass), and no backdrop rescue —
+        # AniList banners are 1900x400 and the portrait crop would destroy them.
+        if is_anime and poster_path:
+            _use_original_art = True
+            is_textless       = False
+            _use_backdrop     = False
+
+        if is_anime and not rating_already_cached:
+            # The community score arrived in the same response as the cover art,
+            # so it costs no extra request. It enters the normal weighted-score
+            # pipeline as the "anilist"/"kitsu" source; a source that isn't
+            # present contributes nothing and the remaining weights renormalise,
+            # so operators can give it a weight without affecting anything else.
+            _anime_score = tmdb_data.get("anime_score")
+            _anime_ratings = (
+                {anime_namespace: _anime_score} if _anime_score is not None else {}
+            )
+            rating_coro = _resolved((
+                None,
+                (
+                    _anime_ratings,
+                    _tmdb_genre,
+                    tmdb_data.get("tmdb_release_date"),
+                    [],
+                    tmdb_data.get("anime_age_rating"),
+                ),
+            ))
+        elif rating_already_cached or not effective_mdblist_key:
             rating_coro = _resolved((
                 None,
                 (cached_ratings_dict, cached_genre, cached_release_date, [], cached_age_rating),
@@ -3966,7 +4096,10 @@ async def get_poster(
             _image_coro,
             _resolve_logo() if (is_textless and not is_no_poster) else _resolved(None),
             rating_coro,
-            fetch_trending_rank(client, tmdb_id, effective_tmdb_key, type),
+            # Trending rank is a TMDB list lookup, so it has nothing to match an
+            # anime-native id against.
+            _resolved(None) if is_anime
+            else fetch_trending_rank(client, tmdb_id, effective_tmdb_key, type),
         )
 
         rating_key_used, rating_result = rating_fetch_result
@@ -4152,9 +4285,13 @@ async def get_poster(
         # ------------------------------------------------------------------
         # Write rating + awards to cache (only on a fresh fetch).
         # ------------------------------------------------------------------
-        if not rating_failed and not rating_already_cached and effective_mdblist_key:
+        # Anime ratings come from the provider rather than MDBList, so they are
+        # cached on the same terms but gated on is_anime instead of a key.
+        if not rating_failed and not rating_already_cached and (
+            effective_mdblist_key or is_anime
+        ):
             set_cached_rating(
-                imdb_id,
+                canonical_id,
                 ratings_dict if isinstance(ratings_dict, dict) else {},
                 genre,
                 rel,
@@ -4167,7 +4304,7 @@ async def get_poster(
                 is_true_story=is_true_story,
                 is_metacritic=is_metacritic,
             )
-            logger.info(f"Rating cached for {imdb_id}: score={score} genre={genre} "
+            logger.info(f"Rating cached for {canonical_id}: score={score} genre={genre} "
                         f"wins={award_wins} noms={award_noms} festival={festival_label} "
                         f"age_rating={age_rating}")
 
@@ -4196,10 +4333,16 @@ async def get_poster(
             # titles — which read as a bug rather than a setting.  Results are
             # cached, and stale "Cinema" on an old film is handled properly by
             # CINEMA_MAX_AGE_YEARS, which downgrades it to "Streaming".
-            _release_status = await fetch_release_status(
-                client, tmdb_id, effective_tmdb_key, type,
-                tmdb_data.get("tmdb_status"),
-            )
+            # For series this is a pure mapping of the status field already in
+            # hand — no API call — so anime series get their lifecycle sashes
+            # from the provider's status. The movie branch needs TMDB's
+            # /release_dates, which an anime-native request has no id for, so
+            # it is skipped and the slot simply doesn't fire.
+            if not is_anime or type in ("tv", "series"):
+                _release_status = await fetch_release_status(
+                    client, tmdb_id, effective_tmdb_key, type,
+                    tmdb_data.get("tmdb_status"),
+                )
             # r/movieleaks confirmation overrides TMDB's theatrical/production
             # status — if the film is in the digital-release cache it's already
             # streaming regardless of what the official release dates say.
@@ -4211,7 +4354,8 @@ async def get_poster(
             if rcfg.release_status_cinema_only and _release_status not in ("Cinema", "Production"):
                 _release_status = None
 
-        if type not in ("tv", "series") and "just_added" in rcfg.sash_priority:
+        if (type not in ("tv", "series") and "just_added" in rcfg.sash_priority
+                and not is_anime):
             _recent_digital_release_date = await fetch_recent_movie_digital_release_date(
                 client, tmdb_id, effective_tmdb_key,
                 tmdb_data.get("tmdb_status"),

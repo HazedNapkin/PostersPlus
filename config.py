@@ -79,6 +79,18 @@ TVDB_LOGO_PRIORITY    = max(1, min(3, int(os.environ.get("TVDB_LOGO_PRIORITY", "
 # Caps concurrent TVDB API calls so a burst of uncached misses can't stampede it.
 TVDB_CONCURRENCY      = max(1, int(os.environ.get("TVDB_CONCURRENCY", "3")))
 
+# Anime-native art sources (AniList / Kitsu).
+# These engage only when a client passes anilist_id / kitsu_id — no id conversion
+# is ever performed, so metadata providers that only speak imdb/tmdb/tvdb are
+# completely unaffected.  Neither provider requires an API key.
+ANIME_SOURCES_ENABLED = _tvdb_flag("ANIME_SOURCES_ENABLED", True)
+# AniList throttles aggressively (nominally 90 req/min per IP, in practice often
+# lower), so cap concurrency the same way TVDB is capped.  Art and metadata are
+# cached after first fetch, so this only bites on a cold-cache catalogue burst.
+ANIME_CONCURRENCY     = max(1, int(os.environ.get("ANIME_CONCURRENCY", "3")))
+ANILIST_API_URL       = os.environ.get("ANILIST_API_URL", "https://graphql.anilist.co").strip()
+KITSU_API_BASE        = os.environ.get("KITSU_API_BASE", "https://kitsu.io/api/edge").strip().rstrip("/")
+
 # Ordered list of all configured server-side MDBList keys (primary first).
 # Used by the key-rotation logic in main.py to fall back when a key is exhausted.
 SERVER_MDBLIST_KEYS: list[str] = [k for k in [SERVER_MDBLIST_KEY, SERVER_MDBLIST_KEY_2] if k]
@@ -160,6 +172,12 @@ TVDB_ARTWORK_CACHE_DURATION  = int(os.environ.get("TVDB_ARTWORK_CACHE_DURATION",
 TVDB_NEG_CACHE_DURATION      = int(os.environ.get("TVDB_NEG_CACHE_DURATION", "3"))         # days
 # Artwork-type catalogue (/artwork/types) almost never changes — cache it long.
 TVDB_TYPES_CACHE_DURATION    = int(os.environ.get("TVDB_TYPES_CACHE_DURATION", "30"))      # days
+# Anime metadata changes slowly once a title has aired, but the community score
+# does drift, so this is shorter than the TVDB artwork window.  Negative results
+# (no such id on the provider) are cached briefly so a newly-added entry appears
+# without waiting out the full window.
+ANIME_METADATA_CACHE_DURATION = int(os.environ.get("ANIME_METADATA_CACHE_DURATION", "7"))  # days
+ANIME_NEG_CACHE_DURATION      = int(os.environ.get("ANIME_NEG_CACHE_DURATION", "3"))       # days
 DAYS_CONSIDERED_NEW          = 14
 NEW_CACHE_DURATION           = 1
 OLD_CACHE_DURATION           = 14
@@ -357,6 +375,12 @@ MOVIE_WEIGHTS = {   # set weight of movie ranking providers, must sum to 1
     "tmdb":           0,
     "rogerebert":     0,
     "myanimelist":    0,
+    # Only ever present for titles requested by anilist_id / kitsu_id. A source
+    # that isn't present contributes nothing and the remaining weights
+    # renormalise (see calculate_weighted_score), so a non-zero weight here is
+    # inert for every non-anime title.
+    "anilist":        0,
+    "kitsu":          0,
 }
 
 TV_WEIGHTS = {   # set weight of TV ranking providers, must sum to 1
@@ -368,6 +392,8 @@ TV_WEIGHTS = {   # set weight of TV ranking providers, must sum to 1
     "metacriticuser": 0,
     "tmdb":           0,
     "myanimelist":    0,
+    "anilist":        0,
+    "kitsu":          0,
 }
 
 RATING_MIN_VOTES = max(0, int(os.environ.get("RATING_MIN_VOTES", "10")))
@@ -434,6 +460,9 @@ SCORE_NORMALISERS = {
     "tmdb":           lambda v: v,
     "rogerebert":      lambda v: (v / 4)   * 100,
     "myanimelist":    lambda v: (v / 10)  * 100,
+    # AniList averageScore and Kitsu averageRating are both already percentages.
+    "anilist":        lambda v: v,
+    "kitsu":          lambda v: v,
 }
 
 # Default Sash Priority

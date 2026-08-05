@@ -1835,7 +1835,18 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <input type="text" id="cfg-mdblist-key" placeholder="If blank uses server key." oninput="build(); queuePreviewReload(); saveApiKeys()">
               <div class="field-hint" id="mdblist-key-hint" style="display:none"></div>
             </div>
-            
+
+            <div class="toggle-row cfg-sep" id="anime-ids-row">
+              <div>
+                <div class="toggle-label">Anime IDs</div>
+                <div class="field-hint" style="margin-top:2px;">Adds <code>{anilist_id}</code> and <code>{kitsu_id}</code> to the copied URL. When your provider fills one in, art, title, genres and score come from that source instead of TMDB. Titles without one are unaffected.</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="tog-anime-ids" onchange="build()">
+                <div class="toggle-track"><div class="toggle-thumb"></div></div>
+              </label>
+            </div>
+
             <div class="field" id="trending-schedule-field" style="display:none; margin-top: 12px; padding: 10px; background: rgba(255,255,255,0.03); border-radius: 6px; border: 1px solid rgba(255,255,255,0.08);">
               <label class="field-label" style="display:flex; align-items:center; gap:6px;">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
@@ -2861,15 +2872,21 @@ const _SHOW_URL_BOX   = _LAN_IP;   // 127.0.0.1 supports clipboard; LAN IPs don'
   }
 })();
 
-const MOVIE_SOURCES = ['letterboxd','trakt','tomatoes','popcorn','imdb','metacritic','metacriticuser','tmdb','rogerebert','myanimelist'];
-const TV_SOURCES    = ['trakt','tomatoes','popcorn','imdb','metacritic','metacriticuser','tmdb','myanimelist'];
+// anilist/kitsu only ever carry a value for titles requested by anilist_id /
+// kitsu_id. A source with no value contributes nothing and the remaining
+// weights renormalise, so a non-zero weight here is inert for everything else.
+// Both score noticeably higher than the Western sources (anime clusters ~65-80,
+// and a poor show still scores mid-50s), so blend them deliberately.
+const MOVIE_SOURCES = ['letterboxd','trakt','tomatoes','popcorn','imdb','metacritic','metacriticuser','tmdb','rogerebert','myanimelist','anilist','kitsu'];
+const TV_SOURCES    = ['trakt','tomatoes','popcorn','imdb','metacritic','metacriticuser','tmdb','myanimelist','anilist','kitsu'];
 const SOURCE_LABELS = {
   letterboxd:'Letterboxd', trakt:'Trakt', tomatoes:'RT Critic', popcorn:'RT User',
   imdb:'IMDB', metacritic:'Metacritic', metacriticuser:'MC User', tmdb:'TMDB',
   rogerebert:'Roger Ebert', myanimelist:'MyAnimeList',
+  anilist:'AniList', kitsu:'Kitsu',
 };
-const DEFAULT_MOVIE_W = {letterboxd:0.99,trakt:0.01,tomatoes:0,popcorn:0,imdb:0,metacritic:0,metacriticuser:0,tmdb:0,rogerebert:0,myanimelist:0};
-const DEFAULT_TV_W    = {trakt:0.8,tomatoes:0.2,popcorn:0,imdb:0,metacritic:0,metacriticuser:0,tmdb:0,myanimelist:0};
+const DEFAULT_MOVIE_W = {letterboxd:0.99,trakt:0.01,tomatoes:0,popcorn:0,imdb:0,metacritic:0,metacriticuser:0,tmdb:0,rogerebert:0,myanimelist:0,anilist:0,kitsu:0};
+const DEFAULT_TV_W    = {trakt:0.8,tomatoes:0.2,popcorn:0,imdb:0,metacritic:0,metacriticuser:0,tmdb:0,myanimelist:0,anilist:0,kitsu:0};
 
 const CLIENT_INSETS = {
   stremio_tv_nuvio:    { bar: 0.000, notch: 0.000 },
@@ -3818,6 +3835,17 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   // ── Core identity ──────────────────────────────────────────────────────────
   params.set('tmdb_id', tmdbId);
   params.set('imdb_id', imdbId);
+  // Anime-native ids, opt-in. Placeholder-only: there is nothing to substitute
+  // in the live preview, which renders one concrete title the user picked from
+  // TMDB search. An unsubstituted "{kitsu_id}" is treated as absent by the
+  // server, so leaving these in a template can't break non-anime titles.
+  // AIOMetadata also offers {mal_id} and {anidb_id}; those aren't emitted
+  // because neither is wired as an art source (MAL needs auth, AniDB's API is
+  // heavily restricted). The server ignores them if you add them by hand.
+  if (usePlaceholders && c('tog-anime-ids')) {
+    params.set('anilist_id', '{anilist_id}');
+    params.set('kitsu_id',   '{kitsu_id}');
+  }
   params.set('type',    type);
   params.set('primary_client', vEl('cfg-primary-client') || 'stremio_desktop_web');
   if (accKey)         params.set('access_key',  accKey);
@@ -4545,6 +4573,10 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   }
   if (p.has('top_vignette_sash_only')) _setEl('tog-top-vignette-sash-only', p.get('top_vignette_sash_only'));
   if (p.has('hide_genre')) _setEl('tog-hide-genre', p.get('hide_genre'));
+  // Presence of either anime placeholder re-arms the toggle, so pasting a
+  // previously generated URL round-trips it (and so does the localStorage
+  // restore, which replays the saved params through this same importer).
+  if (p.has('anilist_id') || p.has('kitsu_id')) _setEl('tog-anime-ids', 'true');
   updateGradientFields();
   if (p.has('fallback_to_imdb')) _setEl('tog-fallback-imdb', p.get('fallback_to_imdb'));
 
