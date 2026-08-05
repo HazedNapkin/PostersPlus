@@ -1,6 +1,7 @@
 #tmdb.py
 import asyncio
 import colorsys
+import hashlib
 import io
 import logging
 from datetime import date as _date
@@ -622,19 +623,36 @@ async def fetch_poster_image(
     The image is returned as RGBA so the compositing pipeline can use
     alpha_composite throughout without mode-checking.
     """
-    poster_cache_key = f"{media_type}_{tmdb_id}_{poster_path.strip('/')}"
+    # Anime providers (AniList/Kitsu) hand us an absolute CDN url rather than a
+    # TMDB path.  Detect that and fetch it directly; the cache/normalise/return
+    # path below is identical either way.  The url is hashed into the cache key
+    # because provider urls contain characters that don't belong in a filename.
+    _is_absolute = poster_path.startswith(("http://", "https://"))
+    if _is_absolute:
+        # tmdb_id is the namespaced anime id here ("kitsu:12345"); the colon is
+        # replaced so the key is a portable filename on every filesystem.
+        poster_cache_key = (
+            f"{media_type}_{tmdb_id.replace(':', '_')}_"
+            f"{hashlib.sha256(poster_path.encode()).hexdigest()[:16]}"
+        )
+    else:
+        poster_cache_key = f"{media_type}_{tmdb_id}_{poster_path.strip('/')}"
     cached_bytes = get_cached_tmdb_poster(poster_cache_key)
 
     if cached_bytes:
-        logger.info(f"TMDB poster cache hit for {tmdb_id}")
+        logger.info(f"Poster cache hit for {tmdb_id}")
         # Stored as JPEG RGB — convert to RGBA for the compositing pipeline
         image = Image.open(io.BytesIO(cached_bytes)).convert("RGBA")
         if image.size != (POSTER_WIDTH, POSTER_HEIGHT):
             image = normalise_poster(image)
         return image
 
-    logger.info(f"External API Call: Requested poster from TMDB for {tmdb_id}")
-    img_resp = await client.get(f"https://image.tmdb.org/t/p/w500{poster_path}")
+    if _is_absolute:
+        logger.info(f"External API Call: Requested poster art for {tmdb_id}")
+        img_resp = await client.get(poster_path, follow_redirects=True)
+    else:
+        logger.info(f"External API Call: Requested poster from TMDB for {tmdb_id}")
+        img_resp = await client.get(f"https://image.tmdb.org/t/p/w500{poster_path}")
     img_resp.raise_for_status()
     image = Image.open(io.BytesIO(img_resp.content)).convert("RGBA")
     image = normalise_poster(image)
