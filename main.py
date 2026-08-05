@@ -3355,6 +3355,21 @@ async def get_poster(
     }
     rcfg = build_request_config(raw_params)
 
+    # Anime is essentially always Japanese, so the foreign-language slot says
+    # nothing here — but ranked highly (a reasonable choice for live-action,
+    # where it is a real signal) it would mask every sash below it on every
+    # anime title. Demote it to last rather than dropping it, so a title with
+    # nothing else to say still gets a label; a user who removed the slot
+    # entirely keeps it removed.
+    #
+    # Applied to rcfg itself rather than at the pick_sash call sites because
+    # build_poster derives its own ordering from cfg.sash_priority, and that is
+    # the one that ends up on the rendered poster.
+    if is_anime and "foreign" in rcfg.sash_priority:
+        rcfg.sash_priority = (
+            [s for s in rcfg.sash_priority if s != "foreign"] + ["foreign"]
+        )
+
     # Operator force-refresh: ?nocache=1 skips the composite cache READ so a fresh
     # render is produced (and re-cached), letting an operator invalidate a single
     # title without flushing the whole cache.  Only honoured when an ACCESS_KEY is
@@ -4460,14 +4475,7 @@ async def get_poster(
             recent_digital_release_date=_recent_digital_release_date,
         )
 
-        # Anime is essentially always Japanese, so the foreign-language slot
-        # says nothing here — but ranked highly (a reasonable choice for
-        # live-action, where it is a real signal) it would mask every sash
-        # below it on every anime title. Demote it to last rather than dropping
-        # it, so a title with nothing else to say still gets a label.
         _sash_priority = rcfg.sash_priority
-        if is_anime and "foreign" in _sash_priority:
-            _sash_priority = [s for s in _sash_priority if s != "foreign"] + ["foreign"]
 
         # ------------------------------------------------------------------
         # Debug mode: return diagnostic JSON instead of rendering the poster.
