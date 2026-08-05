@@ -4278,7 +4278,7 @@ async def get_poster(
                 is_cult       = bool({"cult-classic", "cult-film"} & kw_names)
                 is_true_story = "based-on-true-story" in kw_names
                 is_metacritic = "metacritic-must-see" in kw_names
-                logger.info(f"Awards for {imdb_id}: wins={award_wins} noms={award_noms} "
+                logger.info(f"Awards for {canonical_id}: wins={award_wins} noms={award_noms} "
                             f"festival={festival_label} age_rating={age_rating} "
                             f"cult={is_cult} true_story={is_true_story} metacritic={is_metacritic}")
 
@@ -4316,7 +4316,7 @@ async def get_poster(
             _rating_fetch_inflight.pop(imdb_id, None)
             _rating_event_to_set = None
 
-        logger.info(f"Quality for {imdb_id}: tokens={quality_tokens} year={release_year}")
+        logger.info(f"Quality for {canonical_id}: tokens={quality_tokens} year={release_year}")
 
         # ------------------------------------------------------------------
         # Release status / freshness facts. TV status is mapped from already
