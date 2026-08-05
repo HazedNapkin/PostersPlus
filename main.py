@@ -3662,7 +3662,10 @@ async def get_poster(
         # fallback if the rating fetch fails or is skipped entirely.
         _gid_set = set(genre_ids)
         _tmdb_genre = "Unknown"
-        for _gid in _cfg.GENRE_PRIORITY:
+        _genre_priority = (
+            _cfg.ANIME_GENRE_PRIORITY if is_anime else _cfg.GENRE_PRIORITY
+        )
+        for _gid in _genre_priority:
             if _gid in _gid_set:
                 _candidate = _cfg.GENRE_MAP.get(_gid, "")
                 if _candidate:
@@ -4253,6 +4256,11 @@ async def get_poster(
                     ratings_dict,
                     weights,
                     fallback_to_imdb=rcfg.fallback_to_imdb,
+                    # The provider's score is the only rating an anime-native
+                    # title has, and existing weights strings name none of the
+                    # anime sources, so fall back to it rather than showing N/A.
+                    # Giving anilist/kitsu a real weight overrides this.
+                    fallback_source=anime_namespace if is_anime else None,
                 )
             else:
                 score = ratings_dict

@@ -433,6 +433,41 @@ GENRE_PRIORITY = [
     10764, 10762, 10763, 10766, 10767,
 ]
 
+# Separate ordering for titles requested by anime id, because the list above is
+# tuned for a Western catalogue: there, Horror / Thriller / Mystery / Crime are
+# strong discriminators and Action / Adventure / Drama are generic filler, so
+# they sit near the end. Anime inverts that. Action, Adventure and Fantasy are
+# the *primary* descriptors, while Mystery, Psychological and Supernatural are
+# applied liberally as secondary tags — AniList tags Attack on Titan "Mystery"
+# and Kitsu tags One Piece "Crime". Running anime through the Western order
+# therefore surfaced the least representative label almost every time
+# (One Piece -> Comedy, Evangelion -> Thriller, Hunter x Hunter -> Fantasy).
+#
+# This order was checked against the real genre lists of a sample of well-known
+# titles from both providers. It is a presentation choice, not a correctness
+# one — reorder freely if a different label reads better to you.
+ANIME_GENRE_PRIORITY = [
+    10749,            # Romance — if it's a romance, that's the hook
+    27,               # Horror
+    37,               # Western — vanishingly rare in anime, so highly telling
+    99,               # Documentary — likewise
+    878, 10765,       # Sci-Fi (also where Mecha lands)
+    53,               # Thriller (also where Psychological lands)
+    12,               # Adventure — the long-running shounen staple
+    28, 10759,        # Action
+    9648,             # Mystery — demoted below Action; over-applied in anime
+    14,               # Fantasy (also where Supernatural lands)
+    35,               # Comedy
+    80,               # Crime
+    10752, 10768,     # War (also where Military lands)
+    36,               # History
+    10402,            # Music
+    18,               # Drama (also where Slice of Life lands)
+    10762,            # Kids
+    10751,            # Family
+    16,               # Animation — guaranteed floor, always present
+]
+
 # Text based fallback, not important if everything is working properly
 
 QUALITY_LABELS: dict[str, str] = {

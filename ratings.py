@@ -648,7 +648,18 @@ def calculate_weighted_score(
     weights: dict,
     *,
     fallback_to_imdb: bool = False,
+    fallback_source: str | None = None,
 ) -> int | str:
+    """Blend the available ratings using *weights*, renormalised over the
+    sources actually present.
+
+    *fallback_source* names a source to fall back on when no weighted source is
+    present at all. Used by the anime path: the provider's score is the only
+    rating such a title has, and existing weights strings name none of the anime
+    sources, so without this the score would always be N/A on exactly the titles
+    that path exists for. Checked before *fallback_to_imdb* because an
+    anime-native request has no IMDb rating to fall back to.
+    """
 
     total_weight = 0.0
     weighted_sum = 0.0
@@ -671,6 +682,11 @@ def calculate_weighted_score(
         total_weight += weight
 
     if total_weight == 0:
+        if fallback_source:
+            fallback_value = ratings.get(fallback_source)
+            fallback_normaliser = SCORE_NORMALISERS.get(fallback_source)
+            if fallback_value is not None and fallback_normaliser:
+                return round(fallback_normaliser(fallback_value))
         imdb_value = ratings.get("imdb")
         imdb_normaliser = SCORE_NORMALISERS.get("imdb")
         if fallback_to_imdb and imdb_value is not None and imdb_normaliser:

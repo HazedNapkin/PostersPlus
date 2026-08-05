@@ -384,3 +384,99 @@ class ResolveAnimeRequestTests(unittest.TestCase):
             self.resolve("", "not-an-id")
         self.assertEqual(ctx.exception.status_code, 400)
         self.assertEqual(ctx.exception.detail, "Invalid kitsu_id")
+
+
+class AnimeGenrePriorityTests(unittest.TestCase):
+    """The Western priority order surfaces the least representative label for
+    anime, because the two catalogues invert which genres are discriminating."""
+
+    def test_covers_every_id_the_mapper_can_emit(self):
+        # A mapped id missing from the anime order would fall through to
+        # "Unknown" and lose its genre background.
+        emitted = set(anime._GENRE_IDS.values()) | {16}
+        for gid in emitted:
+            with self.subTest(gid=gid):
+                self.assertIn(gid, config.ANIME_GENRE_PRIORITY)
+
+    def test_animation_is_last_so_it_only_wins_as_a_floor(self):
+        self.assertEqual(config.ANIME_GENRE_PRIORITY[-1], 16)
+
+    def test_action_and_adventure_outrank_mystery(self):
+        order = config.ANIME_GENRE_PRIORITY
+        self.assertLess(order.index(12), order.index(9648))   # Adventure
+        self.assertLess(order.index(28), order.index(9648))   # Action
+
+    def test_no_duplicates(self):
+        self.assertEqual(
+            len(config.ANIME_GENRE_PRIORITY), len(set(config.ANIME_GENRE_PRIORITY))
+        )
+
+    def _pick(self, genres, order):
+        ids = set(anime._map_genres(genres))
+        for gid in order:
+            if gid in ids and config.GENRE_MAP.get(gid):
+                return config.GENRE_MAP[gid]
+        return "Unknown"
+
+    def test_representative_labels_for_known_titles(self):
+        # Real AniList genre lists. Each expectation is what a viewer would
+        # actually call the show; the Western order gets most of these wrong.
+        cases = {
+            "Attack on Titan":  (["Action", "Drama", "Fantasy", "Mystery"], "Action"),
+            "Death Note":       (["Mystery", "Psychological", "Supernatural", "Thriller"], "Thriller"),
+            "One Piece":        (["Action", "Adventure", "Comedy", "Drama", "Fantasy"], "Adventure"),
+            "Evangelion":       (["Action", "Drama", "Mecha", "Mystery", "Psychological", "Sci-Fi"], "Sci-Fi"),
+            "Steins;Gate":      (["Drama", "Psychological", "Sci-Fi", "Thriller"], "Sci-Fi"),
+            "Your Name":        (["Drama", "Romance", "Supernatural"], "Romance"),
+            "Jujutsu Kaisen":   (["Action", "Drama", "Supernatural"], "Action"),
+            "Cowboy Bebop":     (["Action", "Adventure", "Drama", "Sci-Fi"], "Sci-Fi"),
+            "Perfect Blue":     (["Drama", "Horror", "Psychological", "Thriller"], "Horror"),
+        }
+        for title, (genres, expected) in cases.items():
+            with self.subTest(title=title):
+                self.assertEqual(
+                    self._pick(genres, config.ANIME_GENRE_PRIORITY), expected
+                )
+
+
+class AnimeScoreFallbackTests(unittest.TestCase):
+    """The provider score is the only rating an anime-native title has."""
+
+    def test_falls_back_when_no_anime_source_is_weighted(self):
+        # Every bundled preset and existing user URL carries a weights string
+        # naming none of the anime sources, so without the fallback the score
+        # would always be N/A on exactly the titles this path exists for.
+        weights = dict(config.TV_WEIGHTS, trakt=0.8, tomatoes=0.2)
+        self.assertEqual(
+            calculate_weighted_score({"kitsu": 84.47}, weights), "N/A"
+        )
+        self.assertEqual(
+            calculate_weighted_score(
+                {"kitsu": 84.47}, weights, fallback_source="kitsu"
+            ),
+            84,
+        )
+
+    def test_an_explicit_weight_still_wins(self):
+        weights = dict(config.TV_WEIGHTS, trakt=0, tomatoes=0, kitsu=1.0)
+        self.assertEqual(
+            calculate_weighted_score(
+                {"kitsu": 84.47}, weights, fallback_source="kitsu"
+            ),
+            84,
+        )
+
+    def test_fallback_does_not_fire_when_a_weighted_source_is_present(self):
+        weights = dict(config.TV_WEIGHTS, trakt=1.0, tomatoes=0)
+        self.assertEqual(
+            calculate_weighted_score(
+                {"trakt": 70, "kitsu": 90}, weights, fallback_source="kitsu"
+            ),
+            70,
+        )
+
+    def test_missing_provider_score_still_yields_na(self):
+        weights = dict(config.TV_WEIGHTS, trakt=0.8)
+        self.assertEqual(
+            calculate_weighted_score({}, weights, fallback_source="kitsu"), "N/A"
+        )
