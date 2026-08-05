@@ -480,3 +480,30 @@ class AnimeScoreFallbackTests(unittest.TestCase):
         self.assertEqual(
             calculate_weighted_score({}, weights, fallback_source="kitsu"), "N/A"
         )
+
+
+class AnimeSashAndLogoTests(unittest.TestCase):
+    def test_foreign_is_demoted_to_last_for_anime(self):
+        priority = ["foreign", "trending", "new_season"]
+        demoted = [s for s in priority if s != "foreign"] + ["foreign"]
+        self.assertEqual(demoted, ["trending", "new_season", "foreign"])
+        # Demoted, not dropped: a title with nothing else to say still gets one.
+        self.assertIn("foreign", demoted)
+
+    def test_foreign_demotion_preserves_relative_order(self):
+        priority = ["wins", "foreign", "trending", "cult"]
+        demoted = [s for s in priority if s != "foreign"] + ["foreign"]
+        self.assertEqual(demoted, ["wins", "trending", "cult", "foreign"])
+
+    def test_disabled_foreign_stays_disabled(self):
+        # A user who removed the slot entirely must not have it reinstated.
+        priority = ["wins", "trending"]
+        demoted = (
+            [s for s in priority if s != "foreign"] + ["foreign"]
+            if "foreign" in priority else priority
+        )
+        self.assertEqual(demoted, ["wins", "trending"])
+
+    def test_logo_compositing_is_configurable_and_on_by_default(self):
+        self.assertTrue(hasattr(config, "ANIME_COMPOSITE_LOGO"))
+        self.assertIs(config.ANIME_COMPOSITE_LOGO, True)

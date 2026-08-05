@@ -84,6 +84,12 @@ TVDB_CONCURRENCY      = max(1, int(os.environ.get("TVDB_CONCURRENCY", "3")))
 # is ever performed, so metadata providers that only speak imdb/tmdb/tvdb are
 # completely unaffected.  Neither provider requires an API key.
 ANIME_SOURCES_ENABLED = _tvdb_flag("ANIME_SOURCES_ENABLED", True)
+# Composite a title logo over anime cover art. On by default: that art either
+# carries no logotype or a small block of Japanese corner text most viewers
+# can't read, so a proper logo is usually an improvement. Turn off to serve the
+# provider's art untouched. Logos come from TMDB/Metahub/TVDB as usual — neither
+# anime provider ships them — so this needs a tmdb_id or imdb_id on the request.
+ANIME_COMPOSITE_LOGO  = _tvdb_flag("ANIME_COMPOSITE_LOGO", True)
 # AniList throttles aggressively (nominally 90 req/min per IP, in practice often
 # lower), so cap concurrency the same way TVDB is capped.  Art and metadata are
 # cached after first fetch, so this only bites on a cold-cache catalogue burst.

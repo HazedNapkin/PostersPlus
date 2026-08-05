@@ -3655,9 +3655,23 @@ async def get_poster(
     _active_poster_renders += 1
     try:
         if is_anime:
-            _anime_meta = await anime.fetch_anime_metadata(
-                client, anime_namespace, anime_id
+            # Neither provider ships title logos, so when a tmdb_id came with
+            # the request pull TMDB's metadata alongside — purely for its logo
+            # list, which is language-aware and has good anime coverage. The
+            # art, title, genres, dates and score still come from the anime
+            # provider. This is cached for a week and coalesced, so the
+            # amortised cost is one extra call per title per week.
+            _anime_meta, _logo_meta = await asyncio.gather(
+                anime.fetch_anime_metadata(client, anime_namespace, anime_id),
+                _coalesced_fetch_poster_metadata(
+                    client, tmdb_id, effective_tmdb_key, type,
+                    rcfg.logo_language, _effective_secondary,
+                ) if (has_tmdb_id and effective_tmdb_key) else _resolved(None),
+                return_exceptions=True,
             )
+            if isinstance(_anime_meta, BaseException):
+                logger.warning(f"Anime metadata fetch failed for {anime_key}: {_anime_meta}")
+                _anime_meta = None
             if _anime_meta is None:
                 # Provider has no usable entry — fall through to the same genre
                 # canvas path a TMDB title with no art takes.
@@ -3666,6 +3680,11 @@ async def get_poster(
                 genre_ids, is_textless, logos, release_year, title,
                 poster_path, backdrop_path, tmdb_data,
             ) = _anime_meta
+            # A failed logo lookup is never fatal — it just means no logo.
+            if isinstance(_logo_meta, BaseException):
+                logger.warning(f"TMDB logo lookup failed for {tmdb_id}: {_logo_meta}")
+            elif _logo_meta is not None:
+                logos = _logo_meta[2]
         else:
             genre_ids, is_textless, logos, release_year, title, poster_path, backdrop_path, tmdb_data = (
                 await _coalesced_fetch_poster_metadata(
@@ -3753,10 +3772,18 @@ async def get_poster(
         # composited over it, no burned-in-text scan (it would reject nearly
         # every one, at the cost of an OCR pass), and no backdrop rescue —
         # AniList banners are 1900x400 and the portrait crop would destroy them.
+        #
+        # ANIME_COMPOSITE_LOGO (default on) overrides the logo half of that.
+        # In practice anime cover art either carries no logotype at all or a
+        # small block of Japanese text in a corner that most viewers can't read,
+        # so a composited title logo is an improvement often enough to be worth
+        # doing unconditionally. Text detection stays off either way: it would
+        # flag that Japanese corner text on most titles and suppress the logo
+        # inconsistently, which reads worse than always printing it.
         if is_anime and poster_path:
             _use_original_art = True
-            is_textless       = False
             _use_backdrop     = False
+            is_textless       = bool(_cfg.ANIME_COMPOSITE_LOGO)
 
         if is_anime and not rating_already_cached and not effective_mdblist_key:
             # No IMDb id (or no key), so MDBList can't be asked. Supply what the
@@ -4000,6 +4027,10 @@ async def get_poster(
             and is_textless
             and not is_no_poster
             and not _backdrop_rescued
+            # Anime art is deliberately composited with a logo regardless of any
+            # Japanese corner text, so the scan would only burn an OCR pass to
+            # produce an inconsistent result. See the is_textless assignment.
+            and not is_anime
         )
         if _scan_selected_image:
             from text_detect import DETECT_RES_SIG
@@ -4429,13 +4460,22 @@ async def get_poster(
             recent_digital_release_date=_recent_digital_release_date,
         )
 
+        # Anime is essentially always Japanese, so the foreign-language slot
+        # says nothing here — but ranked highly (a reasonable choice for
+        # live-action, where it is a real signal) it would mask every sash
+        # below it on every anime title. Demote it to last rather than dropping
+        # it, so a title with nothing else to say still gets a label.
+        _sash_priority = rcfg.sash_priority
+        if is_anime and "foreign" in _sash_priority:
+            _sash_priority = [s for s in _sash_priority if s != "foreign"] + ["foreign"]
+
         # ------------------------------------------------------------------
         # Debug mode: return diagnostic JSON instead of rendering the poster.
         # Useful for troubleshooting wrong sashes, missing ratings, etc.
         # Activate with ?debug=1 (never cached, never stored).
         # ------------------------------------------------------------------
         if debug and debug.strip() in ("1", "true"):
-            _sash_result = pick_sash(discovery_meta, rcfg.sash_priority)
+            _sash_result = pick_sash(discovery_meta, _sash_priority)
             return JSONResponse({
                 "imdb_id":           imdb_id,
                 "tmdb_id":           tmdb_id,
@@ -4467,7 +4507,7 @@ async def get_poster(
                 "matched_directors": discovery_meta.matched_directors,
                 "matched_cast":      discovery_meta.matched_cast,
                 "release_status":    discovery_meta.release_status,
-                "sash_priority":     rcfg.sash_priority,
+                "sash_priority":     _sash_priority,
                 "badge_display_mode":rcfg.badge_display_mode,
                 "rating_display_mode":rcfg.rating_display_mode,
             })
@@ -4558,7 +4598,7 @@ async def get_poster(
                 and not rating_failed and not _rating_backoff_active):
             _ttl_override = None
             if discovery_meta is not None:
-                _sash_result = pick_sash(discovery_meta, rcfg.sash_priority)
+                _sash_result = pick_sash(discovery_meta, _sash_priority)
                 if _sash_result and _sash_result[1] in ("trending", "trending_broad"):
                     _ttl_override = 86400
                     
