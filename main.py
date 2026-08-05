@@ -4233,7 +4233,14 @@ async def get_poster(
             ratings_dict, genre, rel, keywords, age_rating = rating_result
             # genre from MDBlist/cache may be None when the key is absent and
             # nothing is cached yet — fall back to the TMDB-derived genre.
-            genre = genre or _tmdb_genre
+            #
+            # On the anime path the genre is always derived here from the
+            # provider's own genre list rather than read back from the cached
+            # rating row. The row's genre column exists to carry MDBList's
+            # answer, which anime titles never have; trusting it would pin a
+            # title to whatever ANIME_GENRE_PRIORITY said when it was first
+            # cached, so a reordering wouldn't take effect until the TTL expired.
+            genre = _tmdb_genre if is_anime else (genre or _tmdb_genre)
 
             # Fresh successful fetch — clear any escalation state so future
             # failures start back at the shortest interval.
