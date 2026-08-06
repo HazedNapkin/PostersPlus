@@ -301,17 +301,28 @@ class ConfiguratorAnimeIdTests(unittest.TestCase):
         from pathlib import Path
         cls.html = Path("configurator.html").read_text(encoding="utf-8")
 
-    def test_no_toggle_anime_ids_are_always_emitted(self):
-        # There is nothing to configure: a provider with no anime id for a title
-        # substitutes empty, and the server treats an empty id as absent.
-        self.assertNotIn("tog-anime-ids", self.html)
+    def test_anime_ids_are_opt_in_and_off_by_default(self):
+        # The optional "{name?}" syntax is not universally accepted — Bingecat
+        # rejects it at config time and won't save the URL at all. Only
+        # AIOMetadata passes anime ids, so this must not be on by default.
+        self.assertIn('id="tog-anime-ids"', self.html)
+        self.assertNotRegex(self.html, r'id="tog-anime-ids"[^>]*\bchecked\b')
+
+    def test_hint_names_the_only_supported_addon(self):
+        self.assertRegex(self.html, r"Anime IDs — AIOMetadata only")
 
     def test_placeholders_are_template_only(self):
         # Emitted under usePlaceholders, so the live preview (which renders one
         # concrete TMDB title) never carries an unsubstitutable placeholder.
         self.assertRegex(
             self.html,
-            r"if \(usePlaceholders\) \{\s*params\.set\('anilist_id'",
+            r"if \(usePlaceholders && c\('tog-anime-ids'\)\) \{\s*params\.set\('anilist_id'",
+        )
+
+    def test_import_round_trips_the_toggle(self):
+        self.assertIn(
+            "if (p.has('anilist_id') || p.has('kitsu_id')) _setEl('tog-anime-ids', 'true');",
+            self.html,
         )
 
     def test_core_ids_never_use_the_optional_placeholder_form(self):
