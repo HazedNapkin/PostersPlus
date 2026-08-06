@@ -680,17 +680,33 @@ def _check_type(val: str) -> None:
         raise HTTPException(status_code=400, detail="Invalid type")
 
 
-def _resolve_anime_request(anilist_id: str, kitsu_id: str) -> "tuple[str | None, int | None]":
+def _resolve_anime_request(
+    anilist_id: str, kitsu_id: str, stremio_id: str = ""
+) -> "tuple[str | None, int | None]":
     """Select the anime provider for this request, or (None, None) for the
     ordinary TMDB path.
 
-    A malformed id raises 400 rather than falling through to the TMDB path,
-    where it would surface as a confusing "Invalid tmdb_id".  AniList wins when
-    both params are supplied — arbitrary, but deterministic, so a client that
+    *stremio_id* is the preferred input: it carries the raw Stremio meta id
+    ("kitsu:7442", "tt0903747", "tmdb:1396"), so a client can send it with a
+    plain, always-populated placeholder and never needs the optional "{name?}"
+    syntax that some addons reject. Non-anime ids simply yield the TMDB path.
+
+    The per-namespace params remain accepted so URLs generated before this
+    existed keep working.
+
+    A malformed per-namespace id raises 400 rather than falling through to the
+    TMDB path, where it would surface as a confusing "Invalid tmdb_id".  AniList
+    wins when both are supplied — arbitrary, but deterministic, so a client that
     sends both always lands on the same cache entry.
     """
     if not _cfg.ANIME_SOURCES_ENABLED:
         return None, None
+
+    # A raw Stremio id is never malformed from our point of view — anything we
+    # don't recognise is just a non-anime title — so it never raises.
+    namespace, parsed = anime.parse_stremio_id(stremio_id)
+    if namespace is not None:
+        return namespace, parsed
     for namespace, raw in (("anilist", anilist_id), ("kitsu", kitsu_id)):
         raw = (raw or "").strip()
         if not raw:
@@ -3217,6 +3233,7 @@ async def get_poster(
     imdb_id: str = "",
     anilist_id: str = "",
     kitsu_id: str = "",
+    stremio_id: str = "",
     type: str = "movie",
     quality: str = "",
     season: int = 1,
@@ -3282,7 +3299,7 @@ async def get_poster(
     # can't collide with a bare TMDB id or a tt-prefixed IMDb id and is already
     # what Torrentio/Comet/AIOStreams expect for anime stream lookups.
     # -----------------------------------------------------------------------
-    anime_namespace, anime_id = _resolve_anime_request(anilist_id, kitsu_id)
+    anime_namespace, anime_id = _resolve_anime_request(anilist_id, kitsu_id, stremio_id)
     is_anime = anime_namespace is not None
     anime_key = anime.namespaced_id(anime_namespace, anime_id) if is_anime else ""
 
@@ -3342,7 +3359,7 @@ async def get_poster(
     raw_params = {
         k: v for k, v in request.query_params.items()
         if k not in (
-            "tmdb_id", "imdb_id", "anilist_id", "kitsu_id",
+            "tmdb_id", "imdb_id", "anilist_id", "kitsu_id", "stremio_id",
             # Not art sources here (MAL needs auth, AniDB's API is heavily
             # restricted), but AIOMetadata templates carry the full placeholder
             # set. Excluded so their presence — substituted or not — can't

@@ -329,17 +329,19 @@ https://yourdomain.com/poster?kitsu_id={kitsu_id}&type=series
 
 No id conversion happens in either direction. If your client can't supply one of these ids, don't use these parameters — simpler providers group anime under TV series with `tmdb_id`/`imdb_id` and keep working exactly as before. Both bare (`12345`) and Stremio-prefixed (`kitsu:12345`) forms are accepted. When both params are supplied, AniList wins.
 
-Enable **Anime IDs** in the configurator's Core tab (off by default) and it appends the two placeholders:
+Enable **Anime IDs** in the configurator's Core tab (off by default) and it appends one placeholder:
 
 ```
-?tmdb_id={tmdb_id}&imdb_id={imdb_id}&anilist_id={anilist_id?}&kitsu_id={kitsu_id?}&type={type}
+?tmdb_id={tmdb_id}&imdb_id={imdb_id}&stremio_id={id}&type={type}
 ```
 
-**This is for AIOMetadata only — leave it off for anything else.** No other metadata addon passes anime IDs, and the optional `{name?}` syntax isn't universally accepted: Bingecat rejects it outright with "Unsupported custom artwork placeholder syntax" and won't let you save the URL. AIOMetadata has supported it since **v2.9.0** (2026-07-30); older builds pass the placeholder through verbatim, which PostersPlus treats as absent, so they fall back to the ordinary TMDB path rather than breaking.
+`{id}` is AIOMetadata's raw Stremio meta id — `kitsu:7442` for a Kitsu-catalogue anime, `tt0903747` or `tmdb:1396` otherwise. PostersPlus reads the namespace off it and ignores anything that isn't an anime id, so the same URL serves your whole library.
 
-Note the mixed placeholder forms, which are load-bearing in both directions. **The core ids must use the plain `{name}` form** — put them in the optional form and pre-v2.9.0 AIOMetadata sends the placeholder literally, which fails validation and 400s every poster. **The anime ids must use `{name?}`** — AIOMetadata's resolver abandons the whole URL as soon as a plain `{name}` placeholder has no value, so `{kitsu_id}` would silently kill every live-action poster.
+**This is for AIOMetadata only — leave it off for anything else,** since no other metadata addon exposes anime IDs.
 
-The trade-off is that a title with an anime id but no `tmdb_id`/`imdb_id` never reaches PostersPlus; AIOMetadata serves its own art instead. In practice AIOMetadata sends all three.
+Why `{id}` rather than `{kitsu_id}`: the per-namespace placeholder is empty for every live-action title, and an empty *required* placeholder makes AIOMetadata's resolver abandon the whole URL — so it would have to be the optional `{kitsu_id?}` form. That syntax isn't universally accepted (Bingecat rejects it at config time, and it has been reported failing on AIOMetadata builds that nominally support it). `{id}` is a plain placeholder, present in every AIOMetadata version, and always populated, so it can never null the URL.
+
+`anilist_id=` and `kitsu_id=` are still accepted for URLs generated before this, and both bare (`12345`) and prefixed (`kitsu:12345`) forms work.
 
 What changes on this path:
 
