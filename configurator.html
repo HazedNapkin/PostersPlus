@@ -797,6 +797,11 @@
   /* A separated toggle centres its content, so match bottom padding to the top
      so it sits evenly between its separator and its own bottom border. */
   .toggle-row.cfg-sep { padding-bottom: 14px !important; }
+  /* Anime IDs sits alone between two fields, so it would draw its own bottom
+     border immediately above the next field's .field + .field top border —
+     two rules, two lines. Keep the separator above and let the following
+     field supply the one below. */
+  #anime-ids-row { border-bottom: none; }
   /* Hide Genre + the per-mode score-out-of-10 toggles close out the rating
      section as one group: no divider between them, and no trailing border
      under the last one (:last-child can't do it — the hidden rows for the
@@ -1839,7 +1844,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             <div class="toggle-row cfg-sep" id="anime-ids-row">
               <div>
                 <div class="toggle-label">Anime IDs — AIOMetadata only</div>
-                <div class="field-hint" style="margin-top:2px;">Appends <code>{kitsu_id?}</code> and <code>{anilist_id?}</code>, so anime gets its art, genres and score from Kitsu or AniList instead of TMDB. <strong>Leave off for any other addon.</strong> Bingecat rejects the <code>?</code> syntax outright and won't save the URL, and no other metadata addon passes anime IDs anyway.</div>
+                <div class="field-hint" style="margin-top:2px;">Support Kitsu/AniList IDs for artwork.</div>
               </div>
               <label class="toggle-switch">
                 <input type="checkbox" id="tog-anime-ids" onchange="build()">
