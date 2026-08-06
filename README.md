@@ -329,13 +329,15 @@ https://yourdomain.com/poster?kitsu_id={kitsu_id}&type=series
 
 No id conversion happens in either direction. If your client can't supply one of these ids, don't use these parameters — simpler providers group anime under TV series with `tmdb_id`/`imdb_id` and keep working exactly as before. Both bare (`12345`) and Stremio-prefixed (`kitsu:12345`) forms are accepted. When both params are supplied, AniList wins.
 
-The configurator emits the right template automatically — there is nothing to enable:
+Enable **Anime IDs** in the configurator's Core tab (off by default) and it appends the two placeholders:
 
 ```
 ?tmdb_id={tmdb_id}&imdb_id={imdb_id}&anilist_id={anilist_id?}&kitsu_id={kitsu_id?}&type={type}
 ```
 
-Note the mixed placeholder forms. **The core ids must use the plain `{name}` form** — the optional `{name?}` form isn't understood by every AIOMetadata build, and older ones pass it through verbatim, which fails validation and returns a 400 for every poster. The anime ids must use `{name?}`, because AIOMetadata's resolver abandons the whole URL as soon as a plain `{name}` placeholder has no value, so `{kitsu_id}` would silently kill every live-action poster. `{name?}` is safe for them either way: a build that understands it substitutes the id or an empty string, and one that doesn't leaves the placeholder literal — which PostersPlus also treats as absent.
+**This is for AIOMetadata only — leave it off for anything else.** No other metadata addon passes anime IDs, and the optional `{name?}` syntax isn't universally accepted: Bingecat rejects it outright with "Unsupported custom artwork placeholder syntax" and won't let you save the URL. AIOMetadata has supported it since **v2.9.0** (2026-07-30); older builds pass the placeholder through verbatim, which PostersPlus treats as absent, so they fall back to the ordinary TMDB path rather than breaking.
+
+Note the mixed placeholder forms, which are load-bearing in both directions. **The core ids must use the plain `{name}` form** — put them in the optional form and pre-v2.9.0 AIOMetadata sends the placeholder literally, which fails validation and 400s every poster. **The anime ids must use `{name?}`** — AIOMetadata's resolver abandons the whole URL as soon as a plain `{name}` placeholder has no value, so `{kitsu_id}` would silently kill every live-action poster.
 
 The trade-off is that a title with an anime id but no `tmdb_id`/`imdb_id` never reaches PostersPlus; AIOMetadata serves its own art instead. In practice AIOMetadata sends all three.
 

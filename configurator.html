@@ -1836,6 +1836,17 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <div class="field-hint" id="mdblist-key-hint" style="display:none"></div>
             </div>
 
+            <div class="toggle-row cfg-sep" id="anime-ids-row">
+              <div>
+                <div class="toggle-label">Anime IDs — AIOMetadata only</div>
+                <div class="field-hint" style="margin-top:2px;">Appends <code>{kitsu_id?}</code> and <code>{anilist_id?}</code>, so anime gets its art, genres and score from Kitsu or AniList instead of TMDB. <strong>Leave off for any other addon.</strong> Bingecat rejects the <code>?</code> syntax outright and won't save the URL, and no other metadata addon passes anime IDs anyway.</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="tog-anime-ids" onchange="build()">
+                <div class="toggle-track"><div class="toggle-thumb"></div></div>
+              </label>
+            </div>
+
             <div class="field" id="trending-schedule-field" style="display:none; margin-top: 12px; padding: 10px; background: rgba(255,255,255,0.03); border-radius: 6px; border: 1px solid rgba(255,255,255,0.08);">
               <label class="field-label" style="display:flex; align-items:center; gap:6px;">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
@@ -3827,11 +3838,16 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   const params = new URLSearchParams();
 
   // ── Core identity ──────────────────────────────────────────────────────────
-  // Anime-native ids, always emitted but placeholder-only (the live preview
-  // renders one concrete title picked from TMDB search, so there is nothing to
-  // substitute). They cost nothing when unused: a metadata provider that has no
-  // anime id for a title substitutes empty, and the server treats an empty id as
-  // absent and takes the ordinary TMDB path.
+  // Anime-native ids: opt-in, and placeholder-only (the live preview renders one
+  // concrete title picked from TMDB search, so there is nothing to substitute).
+  //
+  // Opt-in because the optional "{name?}" syntax is not universally accepted.
+  // Bingecat rejects it at config time — "Unsupported custom artwork placeholder
+  // syntax", and the URL can't be saved at all. AIOMetadata (v2.9.0+) and
+  // tmdb-discover-plus both tolerate it, the latter only because its detection
+  // regex is \{[a-z_]+\} and the "?" falls outside that class. A looser class
+  // would reject the whole URL. Since no metadata addon other than AIOMetadata
+  // passes anime ids anyway, defaulting off costs those users nothing.
   //
   // tmdb_id and imdb_id use the REQUIRED "{name}" form; the anime ids use the
   // optional "{name?}" form. That split is deliberate and load-bearing:
@@ -3857,7 +3873,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   // restricted). The server ignores them if you add them by hand.
   params.set('tmdb_id', tmdbId);
   params.set('imdb_id', imdbId);
-  if (usePlaceholders) {
+  if (usePlaceholders && c('tog-anime-ids')) {
     params.set('anilist_id', '{anilist_id?}');
     params.set('kitsu_id',   '{kitsu_id?}');
   }
@@ -4588,6 +4604,10 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   }
   if (p.has('top_vignette_sash_only')) _setEl('tog-top-vignette-sash-only', p.get('top_vignette_sash_only'));
   if (p.has('hide_genre')) _setEl('tog-hide-genre', p.get('hide_genre'));
+  // Presence of either anime placeholder re-arms the toggle, so pasting a
+  // previously generated URL round-trips it (and so does the localStorage
+  // restore, which replays the saved params through this same importer).
+  if (p.has('anilist_id') || p.has('kitsu_id')) _setEl('tog-anime-ids', 'true');
   updateGradientFields();
   if (p.has('fallback_to_imdb')) _setEl('tog-fallback-imdb', p.get('fallback_to_imdb'));
 
