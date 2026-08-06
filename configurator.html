@@ -3833,22 +3833,31 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   // anime id for a title substitutes empty, and the server treats an empty id as
   // absent and takes the ordinary TMDB path.
   //
-  // Every id here uses AIOMetadata's OPTIONAL placeholder form, "{name?}". Its
-  // resolver bails out entirely — returning null and falling back to plain TMDB
-  // art without ever calling us — as soon as any *required* "{name}" placeholder
-  // has no value for a title. So the required form would break both directions:
-  // "{anilist_id}" kills every live-action poster, and "{tmdb_id}"/"{imdb_id}"
-  // kill every anime-only title, which is exactly the case this feature exists
-  // for. The optional form substitutes empty instead, and the server treats an
-  // empty id as absent.
+  // tmdb_id and imdb_id use the REQUIRED "{name}" form; the anime ids use the
+  // optional "{name?}" form. That split is deliberate and load-bearing:
+  //
+  //   - Required is understood by every AIOMetadata build. Optional is not —
+  //     older ones leave the placeholder in the URL verbatim, and a literal
+  //     placeholder where the core id belongs fails validation server-side and
+  //     400s the poster. Never put the core ids in the optional form.
+  //   - The anime ids can't be required: the resolver returns null for the
+  //     whole URL as soon as a required placeholder has no value, so
+  //     "{kitsu_id}" would kill every live-action poster.
+  //   - Optional is safe for them precisely because they are optional to us.
+  //     A build that understands it substitutes the id (or empty); one that
+  //     doesn't leaves "{kitsu_id?}" literal, and the server treats a literal
+  //     placeholder as absent and takes the ordinary TMDB path.
+  //
+  // The cost is that a title with an anime id but no tmdb/imdb never reaches us
+  // — the resolver nulls it. Not observed in practice: every logged request has
+  // carried tmdb_id and imdb_id.
   //
   // AIOMetadata also offers {mal_id} and {anidb_id}; neither is emitted because
   // neither is wired as an art source (MAL needs auth, AniDB's API is heavily
   // restricted). The server ignores them if you add them by hand.
-  const animeIds = usePlaceholders;
-  params.set('tmdb_id', animeIds ? '{tmdb_id?}' : tmdbId);
-  params.set('imdb_id', animeIds ? '{imdb_id?}' : imdbId);
-  if (animeIds) {
+  params.set('tmdb_id', tmdbId);
+  params.set('imdb_id', imdbId);
+  if (usePlaceholders) {
     params.set('anilist_id', '{anilist_id?}');
     params.set('kitsu_id',   '{kitsu_id?}');
   }
