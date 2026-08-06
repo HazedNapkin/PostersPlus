@@ -90,10 +90,14 @@ ANIME_SOURCES_ENABLED = _tvdb_flag("ANIME_SOURCES_ENABLED", True)
 # provider's art untouched. Logos come from TMDB/Metahub/TVDB as usual — neither
 # anime provider ships them — so this needs a tmdb_id or imdb_id on the request.
 ANIME_COMPOSITE_LOGO  = _tvdb_flag("ANIME_COMPOSITE_LOGO", True)
-# AniList throttles aggressively (nominally 90 req/min per IP, in practice often
-# lower), so cap concurrency the same way TVDB is capped.  Art and metadata are
-# cached after first fetch, so this only bites on a cold-cache catalogue burst.
-ANIME_CONCURRENCY     = max(1, int(os.environ.get("ANIME_CONCURRENCY", "3")))
+# Capped per provider, because their limits differ by an order of magnitude.
+# AniList advertises 90 req/min per IP but has served a degraded 30 for a long
+# while (check the x-ratelimit-limit header), so it stays tight. Kitsu publishes
+# no hard limit and answers in ~0.2s, so throttling it to the same degree just
+# serialises a cold catalogue burst for no reason. Art and metadata are cached
+# after first fetch, so either only bites while the cache is cold.
+ANILIST_CONCURRENCY   = max(1, int(os.environ.get("ANILIST_CONCURRENCY", "3")))
+KITSU_CONCURRENCY     = max(1, int(os.environ.get("KITSU_CONCURRENCY", "8")))
 ANILIST_API_URL       = os.environ.get("ANILIST_API_URL", "https://graphql.anilist.co").strip()
 KITSU_API_BASE        = os.environ.get("KITSU_API_BASE", "https://kitsu.io/api/edge").strip().rstrip("/")
 
