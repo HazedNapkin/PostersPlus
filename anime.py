@@ -457,8 +457,15 @@ def _normalise_kitsu(data: dict) -> tuple:
 # Public entry point
 # ---------------------------------------------------------------------------
 
+# Bumped whenever the normalisers or the genre vocabulary change, so cached rows
+# built by the old logic are re-fetched rather than served. Without this a
+# mapping fix stays invisible for the whole ANIME_METADATA_CACHE_DURATION.
+#   v2 = prefer Kitsu's `genres` relationship over its `categories` tag cloud
+_METADATA_VERSION = "v2"
+
+
 def _cache_key(namespace: str, anime_id: int) -> str:
-    return f"anime:{namespace}:{anime_id}"
+    return f"anime:{_METADATA_VERSION}:{namespace}:{anime_id}"
 
 
 def poster_cache_key(namespace: str, anime_id: int, url: str) -> str:
