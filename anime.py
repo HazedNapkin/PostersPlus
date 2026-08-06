@@ -261,12 +261,27 @@ async def _fetch_anilist(client: httpx.AsyncClient, anime_id: int) -> dict | Non
 
 
 async def _fetch_kitsu(client: httpx.AsyncClient, anime_id: int) -> dict | None:
-    """One JSON:API call.  ``include=categories`` pulls the genre vocabulary in
-    the same response so no second round-trip is needed."""
+    """One JSON:API call.  Both vocabularies are sideloaded in the same response,
+    so no second round-trip is needed.
+
+    Kitsu exposes two of them and they are very different in quality:
+
+    * ``genres`` — the older relationship, a short list of actual genres
+      (Attack on Titan: Action, Drama, Mystery, Fantasy, Super Power, Military).
+    * ``categories`` — the current one, a descriptive tag cloud of 9-21 entries
+      mixing genres with themes, demographics and settings (the same title also
+      carries Post Apocalypse, Violence, Angst, Shounen, Cops, Horror).
+
+    ``categories`` is what makes the genre label read oddly: tags like Horror or
+    Crime are attached to shows that are neither, and then win the priority
+    order. ``genres`` is preferred for that reason, but it is not fully
+    populated — some titles (e.g. Demon Slayer) have none at all — so
+    ``categories`` remains the fallback rather than the primary.
+    """
     logger.info(f"External API Call: Kitsu metadata fetch for {anime_id}")
     resp = await client.get(
         f"{KITSU_API_BASE}/anime/{anime_id}",
-        params={"include": "categories"},
+        params={"include": "genres,categories"},
         headers={"Accept": "application/vnd.api+json"},
         timeout=15.0,
         follow_redirects=True,
@@ -282,13 +297,23 @@ async def _fetch_kitsu(client: httpx.AsyncClient, anime_id: int) -> dict | None:
     if not data:
         return None
 
-    # Category titles live in the sideloaded `included` array, not on the record.
+    # Both vocabularies live in the sideloaded `included` array, not on the
+    # record — and they use different attribute names ("name" vs "title").
+    included = payload.get("included") or []
+    genres = [
+        (item.get("attributes") or {}).get("name")
+        for item in included
+        if item.get("type") == "genres"
+    ]
     categories = [
         (item.get("attributes") or {}).get("title")
-        for item in (payload.get("included") or [])
+        for item in included
         if item.get("type") == "categories"
     ]
-    data["_categories"] = [c for c in categories if c]
+    genres = [g for g in genres if g]
+    categories = [c for c in categories if c]
+    # Prefer the clean list; fall back to the tag cloud when it is empty.
+    data["_genres"] = genres or categories
     return data
 
 
@@ -424,7 +449,7 @@ def _normalise_kitsu(data: dict) -> tuple:
         except (TypeError, ValueError):
             pass
 
-    genre_ids = _map_genres(data.get("_categories") or [])
+    genre_ids = _map_genres(data.get("_genres") or [])
     return genre_ids, release_year, title, poster_url, tmdb_data
 
 
