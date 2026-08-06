@@ -135,7 +135,7 @@ class NormaliseTests(unittest.TestCase):
                 "episodeCount": 25,
                 "posterImage": {"original": "https://cdn/o.jpg", "large": "https://cdn/l.jpg"},
             },
-            "_categories": ["Action", "Fantasy"],
+            "_genres": ["Action", "Fantasy"],
         }
         genre_ids, year, title, poster, td = anime._normalise_kitsu(data)
 
@@ -212,7 +212,7 @@ class FetchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(poster, "https://c/x.jpg")
         self.assertEqual(td["tmdb_status"], "Returning Series")
 
-    async def test_kitsu_requests_categories_inline(self):
+    async def test_kitsu_sideloads_both_vocabularies_inline(self):
         client = _FakeClient(_FakeResponse(200, {
             "data": {"attributes": {"titles": {"en": "T"}, "posterImage": {"original": "u"}}},
             "included": [
@@ -223,7 +223,7 @@ class FetchTests(unittest.IsolatedAsyncioTestCase):
         result = await anime.fetch_anime_metadata(client, "kitsu", 1)
 
         # One request, genres sideloaded — no second round-trip.
-        self.assertEqual(client.params, {"include": "categories"})
+        self.assertEqual(client.params, {"include": "genres,categories"})
         self.assertIn(28, result[0])          # Action
         self.assertNotIn(None, result[0])
 
@@ -507,3 +507,54 @@ class AnimeSashAndLogoTests(unittest.TestCase):
     def test_logo_compositing_is_configurable_and_on_by_default(self):
         self.assertTrue(hasattr(config, "ANIME_COMPOSITE_LOGO"))
         self.assertIs(config.ANIME_COMPOSITE_LOGO, True)
+
+
+class KitsuVocabularyTests(unittest.IsolatedAsyncioTestCase):
+    """Kitsu exposes two genre vocabularies of very different quality."""
+
+    def setUp(self):
+        self._real_get = anime.get_cached_tvdb_json
+        self._real_set = anime.set_cached_tvdb_json
+        anime.get_cached_tvdb_json = lambda key: None
+        anime.set_cached_tvdb_json = lambda k, v, t: None
+
+    def tearDown(self):
+        anime.get_cached_tvdb_json = self._real_get
+        anime.set_cached_tvdb_json = self._real_set
+
+    def _payload(self, genres, categories):
+        return {
+            "data": {"attributes": {"titles": {"en": "T"},
+                                    "posterImage": {"original": "u"}}},
+            "included": (
+                [{"type": "genres", "attributes": {"name": g}} for g in genres]
+                + [{"type": "categories", "attributes": {"title": c}} for c in categories]
+            ),
+        }
+
+    async def test_prefers_genres_over_the_category_tag_cloud(self):
+        # Real Attack on Titan data: `categories` carries a Horror tag the show
+        # doesn't warrant, and it outranks Action in the priority order.
+        client = _FakeClient(_FakeResponse(200, self._payload(
+            genres=["Action", "Drama", "Mystery", "Fantasy", "Super Power", "Military"],
+            categories=["Post Apocalypse", "Violence", "Action", "Adventure",
+                        "Fantasy", "Angst", "Horror", "Drama", "Military", "Shounen"],
+        )))
+        genre_ids = (await anime.fetch_anime_metadata(client, "kitsu", 7442))[0]
+        self.assertNotIn(27, genre_ids)   # Horror — categories-only, dropped
+        self.assertIn(28, genre_ids)      # Action
+
+    async def test_falls_back_to_categories_when_genres_is_empty(self):
+        # Not every title has the older relationship populated (e.g. Demon
+        # Slayer); without this fallback those drop to bare Animation.
+        client = _FakeClient(_FakeResponse(200, self._payload(
+            genres=[], categories=["Action", "Adventure", "Fantasy"],
+        )))
+        genre_ids = (await anime.fetch_anime_metadata(client, "kitsu", 41370))[0]
+        self.assertIn(12, genre_ids)      # Adventure, from categories
+        self.assertNotEqual(genre_ids, [16])
+
+    async def test_both_vocabularies_are_sideloaded_in_one_request(self):
+        client = _FakeClient(_FakeResponse(200, self._payload(["Action"], ["Horror"])))
+        await anime.fetch_anime_metadata(client, "kitsu", 1)
+        self.assertEqual(client.params, {"include": "genres,categories"})
