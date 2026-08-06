@@ -102,6 +102,34 @@ def parse_anime_id(namespace: str, raw: str) -> int | None:
     return value if 0 < value < 10_000_000 else None
 
 
+def parse_stremio_id(raw: str) -> "tuple[str | None, int | None]":
+    """Pull an anime namespace out of a raw Stremio meta id.
+
+    This is the preferred way to receive an anime id, because a client can pass
+    it with a plain, always-populated placeholder — AIOMetadata's ``{id}``,
+    present in every version — rather than an per-namespace one that is empty
+    for most titles. A placeholder that is empty for live-action titles forces
+    the client into the optional ``{name?}`` syntax, which not every build or
+    addon accepts.
+
+    Stremio ids look like ``tt0903747``, ``tmdb:1396``, ``kitsu:7442`` or
+    ``kitsu:7442:1:2`` (with season/episode). Only the anime namespaces we
+    actually support are recognised; everything else returns (None, None) so
+    the caller takes the ordinary TMDB path.
+    """
+    raw = (raw or "").strip()
+    if ":" not in raw:
+        return None, None
+    namespace, _, rest = raw.partition(":")
+    namespace = namespace.strip().lower()
+    if namespace not in NAMESPACES:
+        # tt…, tmdb:, tvdb:, and the mal:/anidb: namespaces we don't source from.
+        return None, None
+    # Drop any season/episode suffix.
+    parsed = parse_anime_id(namespace, rest.split(":", 1)[0])
+    return (namespace, parsed) if parsed is not None else (None, None)
+
+
 def namespaced_id(namespace: str, anime_id: int) -> str:
     """Canonical string id used for cache keys and scraper stream ids.
 

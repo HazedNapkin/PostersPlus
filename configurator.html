@@ -3851,16 +3851,21 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   const params = new URLSearchParams();
 
   // ── Core identity ──────────────────────────────────────────────────────────
-  // Anime-native ids: opt-in, and placeholder-only (the live preview renders one
+  // Anime ids: opt-in, and placeholder-only (the live preview renders one
   // concrete title picked from TMDB search, so there is nothing to substitute).
   //
-  // Opt-in because the optional "{name?}" syntax is not universally accepted.
-  // Bingecat rejects it at config time — "Unsupported custom artwork placeholder
-  // syntax", and the URL can't be saved at all. AIOMetadata (v2.9.0+) and
-  // tmdb-discover-plus both tolerate it, the latter only because its detection
-  // regex is \{[a-z_]+\} and the "?" falls outside that class. A looser class
-  // would reject the whole URL. Since no metadata addon other than AIOMetadata
-  // passes anime ids anyway, defaulting off costs those users nothing.
+  // Sent as AIOMetadata's "{id}" — the raw Stremio meta id, which is
+  // "kitsu:7442" for anime and "tt0903747" or "tmdb:1396" otherwise. The server
+  // reads the namespace off it and ignores anything non-anime.
+  //
+  // Deliberately NOT the per-namespace "{kitsu_id}" placeholder. That one is
+  // empty for every live-action title, and an empty required placeholder makes
+  // AIOMetadata's resolver abandon the whole URL — so it would have to be the
+  // optional "{kitsu_id?}" form, and that syntax isn't universally accepted:
+  // Bingecat rejects it outright at config time, and it has been reported
+  // failing on some AIOMetadata builds too. "{id}" is a plain placeholder,
+  // present in every AIOMetadata version, and always populated — so it can
+  // never null the URL and never needs the optional form.
   //
   // tmdb_id and imdb_id use the REQUIRED "{name}" form; the anime ids use the
   // optional "{name?}" form. That split is deliberate and load-bearing:
@@ -3887,8 +3892,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   params.set('tmdb_id', tmdbId);
   params.set('imdb_id', imdbId);
   if (usePlaceholders && c('tog-anime-ids')) {
-    params.set('anilist_id', '{anilist_id?}');
-    params.set('kitsu_id',   '{kitsu_id?}');
+    params.set('stremio_id', '{id}');
   }
   params.set('type',    type);
   params.set('primary_client', vEl('cfg-primary-client') || 'stremio_desktop_web');
@@ -4620,7 +4624,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   // Presence of either anime placeholder re-arms the toggle, so pasting a
   // previously generated URL round-trips it (and so does the localStorage
   // restore, which replays the saved params through this same importer).
-  if (p.has('anilist_id') || p.has('kitsu_id')) _setEl('tog-anime-ids', 'true');
+  if (p.has('stremio_id') || p.has('anilist_id') || p.has('kitsu_id')) _setEl('tog-anime-ids', 'true');
   updateGradientFields();
   if (p.has('fallback_to_imdb')) _setEl('tog-fallback-imdb', p.get('fallback_to_imdb'));
 

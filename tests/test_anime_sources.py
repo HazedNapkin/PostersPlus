@@ -316,12 +316,15 @@ class ConfiguratorAnimeIdTests(unittest.TestCase):
         # concrete TMDB title) never carries an unsubstitutable placeholder.
         self.assertRegex(
             self.html,
-            r"if \(usePlaceholders && c\('tog-anime-ids'\)\) \{\s*params\.set\('anilist_id'",
+            r"if \(usePlaceholders && c\('tog-anime-ids'\)\) \{\s*params\.set\('stremio_id'",
         )
 
     def test_import_round_trips_the_toggle(self):
+        # Legacy per-namespace params still re-arm it, so a URL generated before
+        # stremio_id existed round-trips too.
         self.assertIn(
-            "if (p.has('anilist_id') || p.has('kitsu_id')) _setEl('tog-anime-ids', 'true');",
+            "if (p.has('stremio_id') || p.has('anilist_id') || p.has('kitsu_id')) "
+            "_setEl('tog-anime-ids', 'true');",
             self.html,
         )
 
@@ -334,15 +337,18 @@ class ConfiguratorAnimeIdTests(unittest.TestCase):
             with self.subTest(placeholder=bad):
                 self.assertNotIn(bad, self.html)
 
-    def test_anime_ids_use_the_optional_form(self):
-        # They can't be required — the resolver nulls the whole URL as soon as a
-        # required placeholder has no value, so "{kitsu_id}" would kill every
-        # live-action poster. Optional is safe here because a build that doesn't
-        # understand it leaves the placeholder literal, and the server treats a
-        # literal placeholder as absent.
-        for placeholder in ("{anilist_id?}", "{kitsu_id?}"):
-            with self.subTest(placeholder=placeholder):
-                self.assertIn(f"'{placeholder}'", self.html)
+    def test_anime_ids_ride_on_the_raw_stremio_id(self):
+        # "{id}" is plain, present in every AIOMetadata version, and always
+        # populated, so it can never null the URL and never needs the optional
+        # form that Bingecat rejects and some builds mishandle.
+        self.assertIn("params.set('stremio_id', '{id}')", self.html)
+
+    def test_no_optional_syntax_anywhere(self):
+        # REGRESSION GUARD. The "{name?}" syntax broke Bingecat outright and was
+        # reported failing on AIOMetadata builds that nominally support it.
+        for bad in ("{tmdb_id?}", "{imdb_id?}", "{kitsu_id?}", "{anilist_id?}"):
+            with self.subTest(placeholder=bad):
+                self.assertNotIn(f"'{bad}'", self.html)
 
     def test_question_mark_survives_url_encoding(self):
         # URLSearchParams encodes "?" as %3F; the pattern only matches if it
@@ -590,3 +596,51 @@ class LiteralPlaceholderToleranceTests(unittest.TestCase):
 
     def test_a_real_id_still_wins_beside_a_literal(self):
         self.assertEqual(self.resolve("{anilist_id?}", "7442"), ("kitsu", 7442))
+
+
+class StremioIdTests(unittest.TestCase):
+    """The raw Stremio meta id is the preferred carrier for an anime id."""
+
+    def test_recognises_supported_anime_namespaces(self):
+        self.assertEqual(anime.parse_stremio_id("kitsu:7442"), ("kitsu", 7442))
+        self.assertEqual(anime.parse_stremio_id("anilist:16498"), ("anilist", 16498))
+
+    def test_strips_season_and_episode_suffix(self):
+        # Stremio appends these for series playback ids.
+        self.assertEqual(anime.parse_stremio_id("kitsu:7442:1:2"), ("kitsu", 7442))
+
+    def test_non_anime_ids_yield_the_tmdb_path(self):
+        # Never an error — an unrecognised namespace just isn't anime.
+        for raw in ("tt0903747", "tmdb:1396", "tvdb:81189", "", "   ", "garbage"):
+            with self.subTest(raw=raw):
+                self.assertEqual(anime.parse_stremio_id(raw), (None, None))
+
+    def test_unsupported_anime_namespaces_yield_the_tmdb_path(self):
+        # MAL needs auth and AniDB's API is restricted, so neither is a source.
+        for raw in ("mal:1535", "anidb:99"):
+            with self.subTest(raw=raw):
+                self.assertEqual(anime.parse_stremio_id(raw), (None, None))
+
+    def test_malformed_id_in_a_known_namespace_is_not_fatal(self):
+        self.assertEqual(anime.parse_stremio_id("kitsu:notanid"), (None, None))
+
+
+class StremioIdDispatchTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import main
+        cls.resolve = staticmethod(main._resolve_anime_request)
+
+    def test_stremio_id_drives_the_anime_path(self):
+        self.assertEqual(self.resolve("", "", "kitsu:7442"), ("kitsu", 7442))
+
+    def test_live_action_stremio_id_takes_the_tmdb_path(self):
+        self.assertEqual(self.resolve("", "", "tt0903747"), (None, None))
+
+    def test_legacy_per_namespace_params_still_work(self):
+        # URLs generated before stremio_id existed must keep working.
+        self.assertEqual(self.resolve("", "7442", ""), ("kitsu", 7442))
+        self.assertEqual(self.resolve("16498", "", ""), ("anilist", 16498))
+
+    def test_stremio_id_wins_over_the_legacy_params(self):
+        self.assertEqual(self.resolve("", "1", "kitsu:7442"), ("kitsu", 7442))
