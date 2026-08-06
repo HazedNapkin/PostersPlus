@@ -329,7 +329,7 @@ https://yourdomain.com/poster?kitsu_id={kitsu_id}&type=series
 
 No id conversion happens in either direction. If your client can't supply one of these ids, don't use these parameters — simpler providers group anime under TV series with `tmdb_id`/`imdb_id` and keep working exactly as before. Both bare (`12345`) and Stremio-prefixed (`kitsu:12345`) forms are accepted. When both params are supplied, AniList wins.
 
-**Use AIOMetadata's optional placeholder form (`{name?}`) for every id**, which is what the configurator's **Anime IDs** toggle emits:
+**Use AIOMetadata's optional placeholder form (`{name?}`) for every id.** The configurator emits this automatically — there is nothing to enable:
 
 ```
 ?tmdb_id={tmdb_id?}&imdb_id={imdb_id?}&anilist_id={anilist_id?}&kitsu_id={kitsu_id?}&type={type}
