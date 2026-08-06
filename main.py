@@ -3669,6 +3669,11 @@ async def get_poster(
     global _active_poster_renders
     _active_poster_renders += 1
     try:
+        # True only while we are actually rendering the anime provider's cover
+        # art, which is what the art-specific rules key off. Distinct from
+        # is_anime, which stays true for a request that fell back to TMDB art.
+        using_anime_art = False
+        _anime_art_missing = False
         if is_anime:
             # Neither provider ships title logos, so when a tmdb_id came with
             # the request pull TMDB's metadata alongside — purely for its logo
@@ -3687,18 +3692,37 @@ async def get_poster(
             if isinstance(_anime_meta, BaseException):
                 logger.warning(f"Anime metadata fetch failed for {anime_key}: {_anime_meta}")
                 _anime_meta = None
-            if _anime_meta is None:
-                # Provider has no usable entry — fall through to the same genre
-                # canvas path a TMDB title with no art takes.
+            # A failed logo lookup is never fatal — it just means no logo.
+            if isinstance(_logo_meta, BaseException):
+                logger.warning(f"TMDB logo lookup failed for {tmdb_id}: {_logo_meta}")
+                _logo_meta = None
+
+            using_anime_art = _anime_meta is not None
+            if _anime_meta is None and _logo_meta is not None:
+                # The provider has no entry, or was throttled or unreachable.
+                # TMDB's metadata is already in hand (fetched for the logo), so
+                # serve its art rather than dropping to a genre canvas — a
+                # strictly better poster, and it degrades gracefully if the
+                # provider has an outage. Rendering reverts to the normal TMDB
+                # rules; only the anime-specific ART behaviour is skipped.
+                logger.info(
+                    f"No {anime_namespace} entry for {anime_key} — falling back to TMDB art"
+                )
+                _anime_meta = _logo_meta
+                _anime_art_missing = True
+            elif _anime_meta is None:
+                # Nothing from either source — same genre canvas path a TMDB
+                # title with no art takes.
                 _anime_meta = anime.empty_metadata(anime_namespace)
+                _anime_art_missing = True
+            else:
+                _anime_art_missing = False
+
             (
                 genre_ids, is_textless, logos, release_year, title,
                 poster_path, backdrop_path, tmdb_data,
             ) = _anime_meta
-            # A failed logo lookup is never fatal — it just means no logo.
-            if isinstance(_logo_meta, BaseException):
-                logger.warning(f"TMDB logo lookup failed for {tmdb_id}: {_logo_meta}")
-            elif _logo_meta is not None:
+            if using_anime_art and _logo_meta is not None:
                 logos = _logo_meta[2]
         else:
             genre_ids, is_textless, logos, release_year, title, poster_path, backdrop_path, tmdb_data = (
@@ -3795,7 +3819,11 @@ async def get_poster(
         # doing unconditionally. Text detection stays off either way: it would
         # flag that Japanese corner text on most titles and suppress the logo
         # inconsistently, which reads worse than always printing it.
-        if is_anime and poster_path:
+        # Gated on using_anime_art, not is_anime: when the provider missed and we
+        # fell back to TMDB art, that art follows the ordinary TMDB rules
+        # (textless selection, backdrop rescue, text detection) as it would for
+        # any other title.
+        if using_anime_art and poster_path:
             _use_original_art = True
             _use_backdrop     = False
             is_textless       = bool(_cfg.ANIME_COMPOSITE_LOGO)
@@ -4045,7 +4073,8 @@ async def get_poster(
             # Anime art is deliberately composited with a logo regardless of any
             # Japanese corner text, so the scan would only burn an OCR pass to
             # produce an inconsistent result. See the is_textless assignment.
-            and not is_anime
+            # TMDB fallback art is scanned normally.
+            and not using_anime_art
         )
         if _scan_selected_image:
             from text_detect import DETECT_RES_SIG
@@ -4602,8 +4631,13 @@ async def get_poster(
         #   _rating_backoff_active — a previous failure is still in its cool-down window;
         #                            backoff nullifies effective_mdblist_key so rating_failed
         #                            would evaluate False without this separate flag
+        #   _anime_art_missing     — the provider had nothing this time, usually a
+        #                            throttle or a blip rather than a real absence.
+        #                            Caching the fallback would pin TMDB art for
+        #                            the whole composite TTL, so let it re-render.
         if (final_cache_key is not None and not quality_pending and not _detection_deferred
-                and not rating_failed and not _rating_backoff_active):
+                and not rating_failed and not _rating_backoff_active
+                and not _anime_art_missing):
             _ttl_override = None
             if discovery_meta is not None:
                 _sash_result = pick_sash(discovery_meta, _sash_priority)
