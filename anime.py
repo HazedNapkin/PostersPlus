@@ -38,7 +38,8 @@ from cache import (
     set_cached_tvdb_json,
 )
 from config import (
-    ANIME_CONCURRENCY,
+    ANILIST_CONCURRENCY,
+    KITSU_CONCURRENCY,
     ANIME_METADATA_CACHE_DURATION,
     ANIME_NEG_CACHE_DURATION,
     ANILIST_API_URL,
@@ -64,14 +65,18 @@ class _TransientError(Exception):
 
 
 # Lazily-created asyncio primitives (bind to the running loop on first use).
-_semaphore: "asyncio.Semaphore | None" = None
+# One per provider: sharing a semaphore would make Kitsu queue behind AniList's
+# much tighter budget for no reason.
+_CONCURRENCY = {"anilist": ANILIST_CONCURRENCY, "kitsu": KITSU_CONCURRENCY}
+_semaphores: "dict[str, asyncio.Semaphore]" = {}
 
 
-def _get_semaphore() -> "asyncio.Semaphore":
-    global _semaphore
-    if _semaphore is None:
-        _semaphore = asyncio.Semaphore(ANIME_CONCURRENCY)
-    return _semaphore
+def _get_semaphore(namespace: str) -> "asyncio.Semaphore":
+    sem = _semaphores.get(namespace)
+    if sem is None:
+        sem = asyncio.Semaphore(_CONCURRENCY.get(namespace, 3))
+        _semaphores[namespace] = sem
+    return sem
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +496,7 @@ async def fetch_anime_metadata(
         )
 
     try:
-        async with _get_semaphore():
+        async with _get_semaphore(namespace):
             if namespace == "anilist":
                 raw = await _fetch_anilist(client, anime_id)
             else:
