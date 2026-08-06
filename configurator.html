@@ -1836,17 +1836,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <div class="field-hint" id="mdblist-key-hint" style="display:none"></div>
             </div>
 
-            <div class="toggle-row cfg-sep" id="anime-ids-row">
-              <div>
-                <div class="toggle-label">Anime IDs</div>
-                <div class="field-hint" style="margin-top:2px;">Adds <code>{anilist_id}</code> and <code>{kitsu_id}</code> to the copied URL. When your provider fills one in, art, title, genres and score come from that source instead of TMDB. Titles without one are unaffected.</div>
-              </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="tog-anime-ids" onchange="build()">
-                <div class="toggle-track"><div class="toggle-thumb"></div></div>
-              </label>
-            </div>
-
             <div class="field" id="trending-schedule-field" style="display:none; margin-top: 12px; padding: 10px; background: rgba(255,255,255,0.03); border-radius: 6px; border: 1px solid rgba(255,255,255,0.08);">
               <label class="field-label" style="display:flex; align-items:center; gap:6px;">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
@@ -3838,8 +3827,11 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   const params = new URLSearchParams();
 
   // ── Core identity ──────────────────────────────────────────────────────────
-  // Anime-native ids, opt-in and placeholder-only (the live preview renders one
-  // concrete title picked from TMDB search, so there is nothing to substitute).
+  // Anime-native ids, always emitted but placeholder-only (the live preview
+  // renders one concrete title picked from TMDB search, so there is nothing to
+  // substitute). They cost nothing when unused: a metadata provider that has no
+  // anime id for a title substitutes empty, and the server treats an empty id as
+  // absent and takes the ordinary TMDB path.
   //
   // Every id here uses AIOMetadata's OPTIONAL placeholder form, "{name?}". Its
   // resolver bails out entirely — returning null and falling back to plain TMDB
@@ -3853,7 +3845,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   // AIOMetadata also offers {mal_id} and {anidb_id}; neither is emitted because
   // neither is wired as an art source (MAL needs auth, AniDB's API is heavily
   // restricted). The server ignores them if you add them by hand.
-  const animeIds = usePlaceholders && c('tog-anime-ids');
+  const animeIds = usePlaceholders;
   params.set('tmdb_id', animeIds ? '{tmdb_id?}' : tmdbId);
   params.set('imdb_id', animeIds ? '{imdb_id?}' : imdbId);
   if (animeIds) {
@@ -4587,10 +4579,6 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   }
   if (p.has('top_vignette_sash_only')) _setEl('tog-top-vignette-sash-only', p.get('top_vignette_sash_only'));
   if (p.has('hide_genre')) _setEl('tog-hide-genre', p.get('hide_genre'));
-  // Presence of either anime placeholder re-arms the toggle, so pasting a
-  // previously generated URL round-trips it (and so does the localStorage
-  // restore, which replays the saved params through this same importer).
-  if (p.has('anilist_id') || p.has('kitsu_id')) _setEl('tog-anime-ids', 'true');
   updateGradientFields();
   if (p.has('fallback_to_imdb')) _setEl('tog-fallback-imdb', p.get('fallback_to_imdb'));
 

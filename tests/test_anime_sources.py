@@ -301,18 +301,15 @@ class ConfiguratorAnimeIdTests(unittest.TestCase):
         from pathlib import Path
         cls.html = Path("configurator.html").read_text(encoding="utf-8")
 
-    def test_toggle_exists_and_is_off_by_default(self):
-        self.assertIn('id="tog-anime-ids"', self.html)
-        # No `checked` attribute — existing users' URLs are unchanged.
-        self.assertNotRegex(self.html, r'id="tog-anime-ids"[^>]*\bchecked\b')
+    def test_no_toggle_anime_ids_are_always_emitted(self):
+        # There is nothing to configure: a provider with no anime id for a title
+        # substitutes empty, and the server treats an empty id as absent.
+        self.assertNotIn("tog-anime-ids", self.html)
 
     def test_placeholders_are_template_only(self):
         # Emitted under usePlaceholders, so the live preview (which renders one
         # concrete TMDB title) never carries an unsubstitutable placeholder.
-        self.assertRegex(
-            self.html,
-            r"const animeIds = usePlaceholders && c\('tog-anime-ids'\);",
-        )
+        self.assertRegex(self.html, r"const animeIds = usePlaceholders;")
 
     def test_every_id_uses_the_optional_placeholder_form(self):
         # AIOMetadata's resolver returns null — falling back to plain TMDB art
@@ -335,12 +332,6 @@ class ConfiguratorAnimeIdTests(unittest.TestCase):
         # wired as a source. Emitting their placeholders would imply otherwise.
         self.assertNotIn("'{mal_id}'", self.html)
         self.assertNotIn("'{anidb_id}'", self.html)
-
-    def test_import_round_trips_the_toggle(self):
-        self.assertIn(
-            "if (p.has('anilist_id') || p.has('kitsu_id')) _setEl('tog-anime-ids', 'true');",
-            self.html,
-        )
 
     def test_new_rating_sources_are_selectable(self):
         for source in ("'anilist'", "'kitsu'"):
