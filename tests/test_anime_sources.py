@@ -309,15 +309,27 @@ class ConfiguratorAnimeIdTests(unittest.TestCase):
     def test_placeholders_are_template_only(self):
         # Emitted under usePlaceholders, so the live preview (which renders one
         # concrete TMDB title) never carries an unsubstitutable placeholder.
-        self.assertRegex(self.html, r"const animeIds = usePlaceholders;")
+        self.assertRegex(
+            self.html,
+            r"if \(usePlaceholders\) \{\s*params\.set\('anilist_id'",
+        )
 
-    def test_every_id_uses_the_optional_placeholder_form(self):
-        # AIOMetadata's resolver returns null — falling back to plain TMDB art
-        # without ever calling us — the moment any REQUIRED "{name}" placeholder
-        # has no value. The required form breaks both directions: {anilist_id}
-        # kills every live-action title, {tmdb_id}/{imdb_id} kill every
-        # anime-only one. Only "{name?}" substitutes empty instead.
-        for placeholder in ("{tmdb_id?}", "{imdb_id?}", "{anilist_id?}", "{kitsu_id?}"):
+    def test_core_ids_never_use_the_optional_placeholder_form(self):
+        # REGRESSION GUARD. Older AIOMetadata builds don't understand "{name?}"
+        # and leave it in the URL verbatim; a literal placeholder where the core
+        # id belongs fails validation server-side and 400s the poster. This
+        # shipped once and broke every freshly generated URL.
+        for bad in ("{tmdb_id?}", "{imdb_id?}"):
+            with self.subTest(placeholder=bad):
+                self.assertNotIn(bad, self.html)
+
+    def test_anime_ids_use_the_optional_form(self):
+        # They can't be required — the resolver nulls the whole URL as soon as a
+        # required placeholder has no value, so "{kitsu_id}" would kill every
+        # live-action poster. Optional is safe here because a build that doesn't
+        # understand it leaves the placeholder literal, and the server treats a
+        # literal placeholder as absent.
+        for placeholder in ("{anilist_id?}", "{kitsu_id?}"):
             with self.subTest(placeholder=placeholder):
                 self.assertIn(f"'{placeholder}'", self.html)
 
@@ -549,3 +561,21 @@ class KitsuVocabularyTests(unittest.IsolatedAsyncioTestCase):
         client = _FakeClient(_FakeResponse(200, self._payload(["Action"], ["Horror"])))
         await anime.fetch_anime_metadata(client, "kitsu", 1)
         self.assertEqual(client.params, {"include": "genres,categories"})
+
+
+class LiteralPlaceholderToleranceTests(unittest.TestCase):
+    """An AIOMetadata build that doesn't understand "{name?}" sends it verbatim."""
+
+    @classmethod
+    def setUpClass(cls):
+        import main
+        cls.resolve = staticmethod(main._resolve_anime_request)
+
+    def test_literal_optional_placeholder_is_treated_as_absent(self):
+        self.assertEqual(self.resolve("{anilist_id?}", "{kitsu_id?}"), (None, None))
+
+    def test_literal_required_placeholder_is_treated_as_absent(self):
+        self.assertEqual(self.resolve("{anilist_id}", "{kitsu_id}"), (None, None))
+
+    def test_a_real_id_still_wins_beside_a_literal(self):
+        self.assertEqual(self.resolve("{anilist_id?}", "7442"), ("kitsu", 7442))

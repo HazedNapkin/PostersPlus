@@ -329,13 +329,15 @@ https://yourdomain.com/poster?kitsu_id={kitsu_id}&type=series
 
 No id conversion happens in either direction. If your client can't supply one of these ids, don't use these parameters — simpler providers group anime under TV series with `tmdb_id`/`imdb_id` and keep working exactly as before. Both bare (`12345`) and Stremio-prefixed (`kitsu:12345`) forms are accepted. When both params are supplied, AniList wins.
 
-**Use AIOMetadata's optional placeholder form (`{name?}`) for every id.** The configurator emits this automatically — there is nothing to enable:
+The configurator emits the right template automatically — there is nothing to enable:
 
 ```
-?tmdb_id={tmdb_id?}&imdb_id={imdb_id?}&anilist_id={anilist_id?}&kitsu_id={kitsu_id?}&type={type}
+?tmdb_id={tmdb_id}&imdb_id={imdb_id}&anilist_id={anilist_id?}&kitsu_id={kitsu_id?}&type={type}
 ```
 
-AIOMetadata's resolver abandons the whole URL — falling back to plain TMDB art without ever calling PostersPlus — as soon as any *required* `{name}` placeholder has no value for a title. With the required form, `{anilist_id}` silently kills every live-action poster, and `{tmdb_id}`/`{imdb_id}` kill every anime-only title. The `{name?}` form substitutes an empty string instead, and PostersPlus treats an empty id as absent.
+Note the mixed placeholder forms. **The core ids must use the plain `{name}` form** — the optional `{name?}` form isn't understood by every AIOMetadata build, and older ones pass it through verbatim, which fails validation and returns a 400 for every poster. The anime ids must use `{name?}`, because AIOMetadata's resolver abandons the whole URL as soon as a plain `{name}` placeholder has no value, so `{kitsu_id}` would silently kill every live-action poster. `{name?}` is safe for them either way: a build that understands it substitutes the id or an empty string, and one that doesn't leaves the placeholder literal — which PostersPlus also treats as absent.
+
+The trade-off is that a title with an anime id but no `tmdb_id`/`imdb_id` never reaches PostersPlus; AIOMetadata serves its own art instead. In practice AIOMetadata sends all three.
 
 What changes on this path:
 
