@@ -3102,6 +3102,17 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
 
 </div>
 
+<!-- Anchored to the preview header's link button, but parked at the end of the
+     body: .preview-panel is overflow:hidden and would clip it. -->
+<div class="menu" id="external-menu" role="menu" hidden>
+  <a class="menu-item" id="ext-imdb" href="#" target="_blank" rel="noopener" role="menuitem">IMDB</a>
+  <a class="menu-item" id="ext-tmdb" href="#" target="_blank" rel="noopener" role="menuitem">TMDB</a>
+  <a class="menu-item" id="ext-tmdb-posters" href="#" target="_blank" rel="noopener" role="menuitem">TMDB — Posters</a>
+  <a class="menu-item" id="ext-tmdb-logos" href="#" target="_blank" rel="noopener" role="menuitem">TMDB — Logos</a>
+  <a class="menu-item" id="ext-mdblist" href="#" target="_blank" rel="noopener" role="menuitem">MDBList</a>
+  <a class="menu-item" id="ext-simkl" href="#" target="_blank" rel="noopener" role="menuitem">SIMKL</a>
+</div>
+
 <script>
 // ── THEME TOGGLE ─────────────────────────────────────────────────────────────
 function applyTheme(mode) {
@@ -4131,6 +4142,12 @@ function updateExternalLink() {
   // wrong one 404s rather than redirecting, so it follows cfg-media-type.
   set('ext-mdblist', imdb
     ? `https://mdblist.com/${type === 'tv' ? 'show' : 'movie'}/${encodeURIComponent(imdb)}`
+    : '');
+  // SIMKL has no public id-to-item route, but searching the IMDB id lands on
+  // the item itself.  Being a search, it also resolves SIMKL's separate /anime/
+  // section on its own, which a path built from cfg-media-type could not.
+  set('ext-simkl', imdb
+    ? `https://simkl.com/search/?q=${encodeURIComponent(imdb)}`
     : '');
 
   btn.hidden = !(imdb || tmdb);
@@ -5518,16 +5535,6 @@ initCustomMobileSliders();
     .observe(document.getElementById(id), { childList: true, subtree: true });
 });
 </script>
-
-<!-- Anchored to the preview header's link button, but parked at the end of the
-     body: .preview-panel is overflow:hidden and would clip it. -->
-<div class="menu" id="external-menu" role="menu" hidden>
-  <a class="menu-item" id="ext-imdb" href="#" target="_blank" rel="noopener" role="menuitem">IMDB</a>
-  <a class="menu-item" id="ext-tmdb" href="#" target="_blank" rel="noopener" role="menuitem">TMDB</a>
-  <a class="menu-item" id="ext-tmdb-posters" href="#" target="_blank" rel="noopener" role="menuitem">TMDB — Posters</a>
-  <a class="menu-item" id="ext-tmdb-logos" href="#" target="_blank" rel="noopener" role="menuitem">TMDB — Logos</a>
-  <a class="menu-item" id="ext-mdblist" href="#" target="_blank" rel="noopener" role="menuitem">MDBList</a>
-</div>
 
 <div class="preset-modal" id="preset-modal" onclick="if(event.target===this)closePresetModal()">
   <div class="preset-modal-box">
