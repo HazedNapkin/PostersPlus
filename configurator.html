@@ -1766,6 +1766,22 @@
     .tab-bar::-webkit-scrollbar { display: none; }
     .tab-btn { flex: 0 0 auto; }
     #tooltip { max-width: min(280px, calc(100vw - 24px)); font-size: 11px; }
+    /* Touch has no hover, so a tooltip label has to be tapped — and a 14px-tall
+       line is far below a usable target.  Padding grows the hit area; the
+       negative margins cancel it again so nothing moves.  (Adjacent margins
+       collapse to positive + negative, so the text lands where it did.) */
+    .field-label[data-tip] {
+      padding-block: 11px;
+      margin-top: -11px;
+      margin-bottom: calc(var(--gap-label) - 11px);
+    }
+    .group-title[data-tip] {
+      padding-block: 8px;
+      margin-top: -8px;
+      margin-bottom: calc(var(--gap-field) - 8px);
+    }
+    /* A flex item in a centred row, so its padding just makes the row taller. */
+    .toggle-label[data-tip] { padding-block: 10px; }
     .segmented { gap: 5px; }
     .segmented-opt { min-height: 40px; display: flex; align-items: center; justify-content: center; }
     .preview-actions { grid-template-columns: 1fr; padding: 0 12px 12px; }
@@ -4634,10 +4650,11 @@ function initSegmented() {
   // only route in, since labels aren't focusable. Gated on the focus actually
   // coming from the keyboard: clicking a select also focuses it, and firing
   // there is what made dropdowns unusable.
-  let viaKeyboard = false;
+  let viaKeyboard = false, touchMoved = false;
   document.addEventListener('keydown',    ev => { if (ev.key === 'Tab') viaKeyboard = true; }, true);
   document.addEventListener('mousedown',  () => { viaKeyboard = false; }, true);
-  document.addEventListener('touchstart', () => { viaKeyboard = false; }, true);
+  document.addEventListener('touchstart', () => { viaKeyboard = false; touchMoved = false; }, true);
+  document.addEventListener('touchmove',  () => { touchMoved = true; }, { passive: true });
 
   document.addEventListener('focusin', ev => {
     if (!viaKeyboard) return;
@@ -4661,6 +4678,19 @@ function initSegmented() {
     if (ev.target.closest('.label-action, a, button')) { hide(); return; }
     if (a === anchor) hide(); else show(a, true);
   });
+
+  // Touch gets its own path rather than relying on the delegated click above:
+  // iOS Safari only bubbles click to document from elements it considers
+  // interactive, and a cursor:help label is not one of them.
+  document.addEventListener('touchend', ev => {
+    if (touchMoved) return;                 // a scroll that happened to end on a label
+    const a = target(ev);
+    if (!a) { hide(); return; }
+    // Labels that also run an action keep their default behaviour.
+    if (ev.target.closest('.label-action, a, button')) { hide(); return; }
+    ev.preventDefault();                    // suppress the synthetic click, which would re-toggle
+    if (a === anchor) hide(); else show(a, true);
+  }, { passive: false });
 
   document.addEventListener('keydown', ev => { if (ev.key === 'Escape') hide(); });
   // Capture phase: the panel scrolls, not the window.
