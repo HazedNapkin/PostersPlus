@@ -43,6 +43,12 @@
     /* Corner rounding: panels use --radius, controls --radius-sm. */
     --radius:    10px;
     --radius-sm: 6px;
+
+    /* The panel's vertical rhythm.  Every gap inside a tab is one of these
+       three — anything else is a bug, not a tweak. */
+    --gap-label: 8px;    /* a label down to the control it names */
+    --gap-field: 18px;   /* one control down to the next label */
+    --gap-group: 24px;   /* across a .cfg-sep rule, and the body's own padding */
   }
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -304,7 +310,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 18px 18px 14px;
+    padding: 18px 18px 16px;
     background: transparent;
     position: relative;
   }
@@ -354,7 +360,7 @@
     display: flex;
     justify-content: space-between;
     gap: 4px;
-    padding: 2px 18px 0;
+    padding: 0 18px;
     background: var(--black1);
     position: sticky;
     top: 0;
@@ -448,31 +454,35 @@
      that separates it from the group before. */
   .group-title {
     display: block;
-    margin-bottom: 16px;
+    margin-bottom: var(--gap-field);
   }
 
   .section-body {
-    padding: 20px 18px 24px;
+    padding: var(--gap-group) 18px;
     background: transparent;
   }
 
   /* ── FORM ELEMENTS ── */
-  .field { margin-bottom: 18px; }
+  .field { margin-bottom: var(--gap-field); }
   .field:last-child { margin-bottom: 0; }
 
+  /* line-height is pinned to the hint button's height so a label with a button
+     beside it is exactly as tall as one without — otherwise every field
+     carrying a tooltip sat 4px lower than its neighbours. */
   .field-label {
     display: block;
     font-size: 8.5px;
+    line-height: 14px;
     color: var(--silver-dim);
     letter-spacing: 0.22em;
-    margin-bottom: 8px;
+    margin-bottom: var(--gap-label);
     text-transform: uppercase;
   }
 
   .field-hint {
     font-size: 9.5px;
     color: var(--text-muted);
-    margin-top: 7px;
+    margin-top: var(--gap-label);
     line-height: 1.6;
   }
   .field-hint a {
@@ -481,24 +491,84 @@
     cursor: pointer;
   }
 
-  /* Label on the left, optional trailing note on the right, both on the line
-     above the control. */
+  /* Standing status panel (not a per-field hint), so it keeps its copy on
+     screen — boxed to read as a notice rather than another form row. */
+  .callout {
+    padding: 12px 13px;
+    background: var(--black2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+  .callout .field-label { margin-bottom: var(--gap-label); }
+  .callout .field-hint  { margin-top: 0; }
+
+  /* Conditional sub-controls revealed under a field (e.g. the custom vignette
+     sliders) — spaced on the same rhythm as a field of their own. */
+  .subfields { margin-bottom: var(--gap-field); }
+
+  /* A label with its hint button beside it.  Occupies exactly the same height
+     as a bare .field-label so both spell the same --gap-label below. */
   .field-label-row {
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 8px;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: var(--gap-label);
   }
 
   .field-label-row .field-label { margin-bottom: 0; }
 
-  .field-note {
-    font-size: 9px;
+  /* ── HINT BUTTON ── */
+  /* Explanatory copy lives in a tooltip rather than under the control: a hint
+     on every field doubled the height of some rows and broke the rhythm. */
+  .hint-btn {
+    width: 14px; height: 14px;
+    flex-shrink: 0;
+    padding: 0;
+    border: 1px solid var(--text-muted);
+    border-radius: 50%;
+    background: transparent;
     color: var(--text-muted);
-    line-height: 1.5;
-    text-align: right;
+    font-family: var(--mono);
+    font-size: 9px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: help;
+    transition: color 0.15s, border-color 0.15s;
   }
+
+  .hint-btn:hover,
+  .hint-btn:focus-visible {
+    color: var(--gold);
+    border-color: var(--gold-dim);
+    outline: none;
+  }
+
+  /* Single shared node, position:fixed so no scrolling or overflow:hidden
+     ancestor can clip it. */
+  #tooltip {
+    position: fixed;
+    z-index: 4000;
+    top: 0; left: 0;
+    max-width: 260px;
+    padding: 9px 11px;
+    background: var(--black3);
+    border: 1px solid var(--gold-dim);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: var(--mono);
+    font-size: 10px;
+    line-height: 1.65;
+    letter-spacing: 0.02em;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.55);
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.12s;
+  }
+
+  #tooltip.open { opacity: 1; visibility: visible; }
 
   /* Two controls side by side (e.g. native language + priority). */
   .field-row {
@@ -506,7 +576,7 @@
     grid-template-columns: 1fr 1fr;
     align-items: start;
     gap: 14px;
-    margin-bottom: 18px;
+    margin-bottom: var(--gap-field);
   }
   .field-row > .field { margin-bottom: 0; }
 
@@ -855,28 +925,38 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 18px;
+    gap: 16px;
+    margin-bottom: var(--gap-field);
   }
 
   .toggle-row:last-child { margin-bottom: 0; }
 
-  /* Explicit break between two groups of controls. */
-  .cfg-sep {
-    border-top: 1px solid var(--border);
-    margin-top: 24px;
-    padding-top: 24px;
+  /* The label side of a toggle row, so it reads as a peer of .field-label-row. */
+  .toggle-row-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
   }
 
-  .toggle-row.weights-fallback-toggle + .weight-grid { margin-top: 12px; }
+  /* Explicit break between two groups of controls.  The margin collapses with
+     the preceding row's --gap-field, so the rule sits --gap-group from both. */
+  .cfg-sep {
+    border-top: 1px solid var(--border);
+    margin-top: var(--gap-group);
+    padding-top: var(--gap-group);
+  }
+
+  .toggle-row.weights-fallback-toggle + .weight-grid { margin-top: var(--gap-field); }
 
   .toggle-label { font-size: 11.5px; color: var(--text-primary); letter-spacing: 0.03em; }
   .toggle-sub { font-size: 9px; color: var(--text-muted); margin-top: 2px; line-height: 1.5; }
 
+  /* No margin-left — .toggle-row's gap owns the space beside the label. */
   .toggle-switch {
     position: relative;
     width: 36px; height: 19px;
     flex-shrink: 0;
-    margin-left: 16px;
   }
 
   .toggle-switch input { display: none; }
@@ -1212,7 +1292,7 @@
   @keyframes spin { to { transform: rotate(360deg); } }
 
   .preview-meta {
-    padding: 16px 18px 14px;
+    padding: 16px 18px;
     border-top: 1px solid var(--border);
     display: flex;
     align-items: center;
@@ -1569,7 +1649,8 @@
     line-height: 1.65;
     color: var(--text-muted);
     min-height: calc(2 * 1.65em + 12px);
-    padding: 6px 14px 6px 30px;
+    /* Left inset matches the panel's 18px gutter, plus room for the ">" mark. */
+    padding: 6px 18px 6px 34px;
     letter-spacing: 0.05em;
     overflow: hidden;
     white-space: normal;
@@ -1582,7 +1663,7 @@
   .log-line::before {
     content: ">";
     position: absolute;
-    left: 14px;
+    left: 18px;
     top: 50%;
     transform: translateY(-50%);
     color: var(--gold-dim);
@@ -1639,6 +1720,9 @@
     .tab-bar::after { display: none; }
     .tab-bar::-webkit-scrollbar { display: none; }
     .tab-btn { flex: 0 0 auto; }
+    /* Bigger tap target than the 14px dot, without changing the layout box. */
+    .hint-btn { width: 18px; height: 18px; font-size: 10px; }
+    #tooltip { max-width: min(280px, calc(100vw - 24px)); font-size: 11px; }
     .segmented { gap: 5px; }
     .segmented-opt { min-height: 40px; display: flex; align-items: center; justify-content: center; }
     .preview-actions { grid-template-columns: 1fr; padding: 0 12px 12px; }
@@ -1657,7 +1741,7 @@
       margin-top: -10px;
     }
     input[type="range"]::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: var(--gold); border: 3px solid var(--black1); }
-    .section-body { padding: 16px; }
+    .section-body { padding: var(--gap-group) 16px; }
     .toggle-switch { width: 46px; height: 24px; }
     .toggle-thumb { width: 16px; height: 16px; top: 3px; left: 3px; }
     .toggle-switch input:checked ~ .toggle-track .toggle-thumb { transform: translateX(22px); }
@@ -1947,22 +2031,26 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             <div class="field">
               <div class="field-label-row">
                 <label class="field-label"><a href="https://www.themoviedb.org/settings/api" target="_blank" style="color:inherit;text-decoration:none;border-bottom:1px solid var(--text-muted);">TMDB API Key</a></label>
+                <!-- data-tip is rewritten by updateKeyBadges() once server caps load. -->
+                <button type="button" class="hint-btn" id="tmdb-key-hint" aria-label="About the TMDB API key"
+                  data-tip="Your own TMDB key. Leave blank to use the server's.">i</button>
               </div>
               <input type="text" id="cfg-tmdb-key" placeholder="Optional — server key used if blank" oninput="build(); queuePreviewReload(); saveApiKeys()">
-              <div class="field-hint" id="tmdb-key-hint" style="display:none"></div>
             </div>
             <div class="field">
               <div class="field-label-row">
                 <label class="field-label"><a href="https://mdblist.com/preferences/" target="_blank" style="color:inherit;text-decoration:none;border-bottom:1px solid var(--text-muted);">MDBList API Key</a></label>
+                <button type="button" class="hint-btn" id="mdblist-key-hint" aria-label="About the MDBList API key"
+                  data-tip="Your own MDBList key. Leave blank to use the server's.">i</button>
               </div>
               <input type="text" id="cfg-mdblist-key" placeholder="Optional — server key used if blank" oninput="build(); queuePreviewReload(); saveApiKeys()">
-              <div class="field-hint" id="mdblist-key-hint" style="display:none"></div>
             </div>
 
             <div class="toggle-row" id="anime-ids-row">
-              <div>
-                <div class="toggle-label">Anime IDs</div>
-                <div class="field-hint" style="margin-top:3px;">Support Kitsu and AniList IDs for artwork. AIOMetadata only.</div>
+              <div class="toggle-row-label">
+                <span class="toggle-label">Anime IDs</span>
+                <button type="button" class="hint-btn" aria-label="About Anime IDs"
+                  data-tip="Support Kitsu and AniList IDs for artwork. AIOMetadata only.">i</button>
               </div>
               <label class="toggle-switch">
                 <input type="checkbox" id="tog-anime-ids" onchange="build()">
@@ -1970,24 +2058,31 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </label>
             </div>
 
-            <div class="field" id="trending-schedule-field" style="display:none; margin-top: 12px; padding: 10px; background: rgba(255,255,255,0.03); border-radius: 6px; border: 1px solid rgba(255,255,255,0.08);">
+            <div class="field callout" id="trending-schedule-field" style="display:none;">
               <label class="field-label" style="display:flex; align-items:center; gap:6px;">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
                 Trending Refresh Schedule
               </label>
-              <div class="field-hint" id="trending-schedule-hint" style="margin-top:4px;"></div>
+              <div class="field-hint" id="trending-schedule-hint"></div>
             </div>
             <div class="field cfg-sep">
-              <label class="field-label">Primary Client</label>
+              <div class="field-label-row">
+                <label class="field-label">Primary Client</label>
+                <button type="button" class="hint-btn" aria-label="About Primary Client"
+                  data-tip="Sets recommended bar and notch insets for your player. Both stay adjustable.">i</button>
+              </div>
               <select id="cfg-primary-client" onchange="onPrimaryClientChange()">
                 <option value="stremio_tv_nuvio" selected>Stremio TV, Nuvio, Plex, Jellyfin</option>
                 <option value="stremio_desktop_web">Stremio Desktop/Web</option>
               </select>
-              <div class="field-hint">Sets recommended bar and notch insets. Both stay adjustable.</div>
             </div>
             <div class="field-row">
             <div class="field">
-              <label class="field-label">Native Language</label>
+              <div class="field-label-row">
+                <label class="field-label">Native Language</label>
+                <button type="button" class="hint-btn" aria-label="About Native Language"
+                  data-tip="★ marks languages whose poster text is fully translated, not just the logo.">i</button>
+              </div>
               <select id="cfg-language" oninput="build(); queuePreviewReload(); saveApiKeys()">
                 <option value="en" selected>English ★</option>
                 <option value="es">Spanish ★</option>
@@ -2035,7 +2130,11 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </select>
             </div>
             <div class="field">
-              <label class="field-label">Language Priority</label>
+              <div class="field-label-row">
+                <label class="field-label">Language Priority</label>
+                <button type="button" class="hint-btn" aria-label="About Language Priority"
+                  data-tip="Sources are tried left to right. Original is the content's own language; Custom is your secondary language.">i</button>
+              </div>
               <select id="cfg-logo-priority" onchange="syncSecondaryLangVisibility(); build(); queuePreviewReload()">
                 <option value="native_original" selected>Native → Original → Text</option>
                 <option value="original_native">Original → Native → Text</option>
@@ -2046,11 +2145,12 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </select>
             </div>
             </div><!-- /field-row -->
-            <!-- One hint for both columns: two stacked hint blocks side by side
-                 in half-width cells read as clutter. -->
-            <div class="field-hint" style="margin-top:-10px; margin-bottom:18px;">★ marks languages whose poster text is fully translated, not just the logo. Priority reads left to right — Original is the content's own language, Custom is your secondary language below.</div>
             <div class="field" id="secondary-lang-field" style="display:none;">
-              <label class="field-label">Secondary Language (Custom)</label>
+              <div class="field-label-row">
+                <label class="field-label">Secondary Language (Custom)</label>
+                <button type="button" class="hint-btn" aria-label="About Secondary Language"
+                  data-tip="Tried after your native language in the Custom priority modes. ★ marks fully translated languages.">i</button>
+              </div>
               <select id="cfg-language-secondary" oninput="build(); queuePreviewReload()">
                 <option value="" selected>None</option>
                 <option value="en">English ★</option>
@@ -2097,15 +2197,19 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="sw">Swahili</option>
                 <option value="af">Afrikaans</option>
               </select>
-              <div class="field-hint">Tried after your native language for the "Custom" priority modes above. ★ indicates the poster text is fully translated, not just the logo.</div>
             </div>
             <div class="field">
-              <label class="field-label">Fallback Poster Style</label>
+              <div class="field-label-row">
+                <label class="field-label">Fallback Poster Style</label>
+                <!-- Doubles as the gallery trigger: hover explains, click previews. -->
+                <button type="button" class="hint-btn" aria-label="Preview fallback styles"
+                  onclick="openFallbackGallery()"
+                  data-tip="Used only when no poster can be found for a title. Click to preview both styles.">i</button>
+              </div>
               <select id="cfg-fallback-bg-style" onchange="build(); queuePreviewReload()">
                 <option value="minimal">Textured Backdrop</option>
                 <option value="photoreal" selected>Photorealistic</option>
               </select>
-              <div class="field-hint"><a href="#" onclick="openFallbackGallery(); return false;">Used only when no poster can be found for a title.</a></div>
             </div>
 
             <div class="cfg-sep">
@@ -2113,7 +2217,8 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <div class="field">
                 <div class="field-label-row">
                   <label class="field-label">Top</label>
-                  <span class="field-note">Darkening applied above the logo</span>
+                  <button type="button" class="hint-btn" aria-label="About the top vignette"
+                    data-tip="How strongly the top of the poster is darkened, above the logo.">i</button>
                 </div>
                 <select class="segmented-source" id="cfg-top-gradient" onchange="updateGradientFields(); build(); queuePreviewReload()">
                   <option value="off">None</option>
@@ -2124,7 +2229,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </select>
                 <div class="segmented" data-for="cfg-top-gradient"></div>
               </div>
-              <div id="top-gradient-custom-fields" style="display:none; margin-bottom:18px;">
+              <div id="top-gradient-custom-fields" class="subfields" style="display:none;">
                 <div class="field">
                   <label class="field-label">Opacity</label>
                   <div class="range-row">
@@ -2143,7 +2248,8 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <div class="field">
                 <div class="field-label-row">
                   <label class="field-label">Bottom</label>
-                  <span class="field-note">Lowering may hurt rating legibility</span>
+                  <button type="button" class="hint-btn" aria-label="About the bottom vignette"
+                    data-tip="How strongly the bottom is darkened. Lowering this may hurt rating and logo legibility.">i</button>
                 </div>
                 <select class="segmented-source" id="cfg-bottom-gradient" onchange="updateGradientFields(); build(); queuePreviewReload()">
                   <option value="off">None</option>
@@ -2154,7 +2260,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </select>
                 <div class="segmented" data-for="cfg-bottom-gradient"></div>
               </div>
-              <div id="bottom-gradient-custom-fields" style="display:none; margin-bottom:18px;">
+              <div id="bottom-gradient-custom-fields" class="subfields" style="display:none;">
                 <div class="field">
                   <label class="field-label">Opacity</label>
                   <div class="range-row">
@@ -2171,9 +2277,10 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </div>
               </div>
               <div class="toggle-row">
-                <div>
-                  <div class="toggle-label">Vignette Only On Sash</div>
-                  <div class="field-hint" style="margin-top:3px;">Only draw the top vignette when a sash is visible.</div>
+                <div class="toggle-row-label">
+                  <span class="toggle-label">Vignette Only On Sash</span>
+                  <button type="button" class="hint-btn" aria-label="About vignette only on sash"
+                    data-tip="Only draw the top vignette when a sash is visible.">i</button>
                 </div>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-top-vignette-sash-only" onchange="build(); queuePreviewReload()">
@@ -3324,19 +3431,21 @@ function updateKeyBadges() {
   const tmdbInput = document.getElementById('cfg-tmdb-key');
   const mdbInput  = document.getElementById('cfg-mdblist-key');
 
+  // The placeholder carries the required/optional status at a glance; the
+  // tooltip carries the explanation.
   if (serverCaps.tmdb_key_set) {
-    tmdbHint.style.display = ''; tmdbHint.textContent = 'Server-side TMDB key configured. Your key (if entered) takes priority.';
+    tmdbHint.dataset.tip = 'Server-side TMDB key configured. Your key (if entered) takes priority.';
     tmdbInput.placeholder = 'Optional — server key used if blank';
   } else {
-    tmdbHint.style.display = 'none';
+    tmdbHint.dataset.tip = 'No server-side TMDB key is configured, so your own key is required.';
     tmdbInput.placeholder = 'Required — no server key configured';
   }
 
   if (serverCaps.mdblist_key_set) {
-    mdbHint.style.display = ''; mdbHint.textContent = 'Server-side MDblist key configured. Your key (if entered) takes priority.';
+    mdbHint.dataset.tip = 'Server-side MDBList key configured. Your key (if entered) takes priority.';
     mdbInput.placeholder = 'Optional — server key used if blank';
   } else {
-    mdbHint.style.display = ''; mdbHint.textContent = 'Cached titles work without a key. Uncached titles require a key.';
+    mdbHint.dataset.tip = 'Cached titles work without a key. Uncached titles require one.';
     mdbInput.placeholder = 'Required for uncached titles';
   }
 
@@ -4473,6 +4582,84 @@ function initSegmented() {
   document.querySelectorAll('.segmented[data-for]').forEach(buildSegmented);
   syncSegmented();
 }
+
+// ── TOOLTIPS ─────────────────────────────────────────────────────────────────
+// Anything carrying data-tip gets a tooltip on hover, keyboard focus or tap.
+// One shared node lives on <body> at position:fixed, because the panel chain
+// (.left-col overflow:hidden → #tab-host overflow-y:auto) would clip a tooltip
+// positioned inside a field.  Listeners are delegated from document, so
+// controls built later (weights, sash list) are covered without re-binding.
+(function initTooltips() {
+  let el = null, anchor = null;
+
+  function node() {
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'tooltip';
+      el.setAttribute('role', 'tooltip');
+      document.body.appendChild(el);
+    }
+    return el;
+  }
+
+  function show(a) {
+    const text = a.getAttribute('data-tip');
+    if (!text) return;
+    anchor = a;
+    const t = node();
+    t.textContent = text;
+    t.classList.add('open');
+
+    // Measure only after the text is in — the box is auto-sized up to max-width.
+    const r  = a.getBoundingClientRect();
+    const tr = t.getBoundingClientRect();
+    const M  = 8;   // keep this far off every viewport edge
+
+    let left = r.left + r.width / 2 - tr.width / 2;
+    left = Math.max(M, Math.min(left, window.innerWidth - tr.width - M));
+
+    // Prefer below the anchor; flip above when that would run off the bottom.
+    let top = r.bottom + 8;
+    if (top + tr.height > window.innerHeight - M) {
+      top = Math.max(M, r.top - tr.height - 8);
+    }
+
+    t.style.left = Math.round(left) + 'px';
+    t.style.top  = Math.round(top)  + 'px';
+  }
+
+  function hide() {
+    if (el) el.classList.remove('open');
+    anchor = null;
+  }
+
+  const target = ev => ev.target?.closest?.('[data-tip]') || null;
+
+  document.addEventListener('mouseover', ev => {
+    const a = target(ev);
+    if (a && a !== anchor) show(a);
+  });
+  document.addEventListener('mouseout', ev => {
+    if (target(ev) === anchor && anchor) hide();
+  });
+  document.addEventListener('focusin',  ev => { const a = target(ev); if (a) show(a); });
+  document.addEventListener('focusout', hide);
+
+  // Tap toggles, and a tap anywhere else dismisses — hover never fires on touch.
+  document.addEventListener('click', ev => {
+    const a = target(ev);
+    if (!a) { hide(); return; }
+    // Buttons that also do something (the fallback one opens the gallery) must
+    // not pin a tooltip: it outranks the modal's z-index and would sit on top.
+    if (a.hasAttribute('onclick')) { hide(); return; }
+    if (a === anchor) hide(); else show(a);
+  });
+
+  document.addEventListener('keydown', ev => { if (ev.key === 'Escape') hide(); });
+  // Capture phase: the panel scrolls, not the window.
+  window.addEventListener('scroll', hide, true);
+  window.addEventListener('resize', hide);
+})();
 
 function updateRatingFields() {
   const mode = parseInt(document.getElementById('cfg-rating-mode').value);
