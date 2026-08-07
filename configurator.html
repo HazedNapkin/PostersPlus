@@ -1489,18 +1489,27 @@
   }
 
   /* URL display box — shown instead of clipboard copy on LAN IPs */
-  #url-display-row { margin-top: 6px; display: none; }
+  /* Sits in the panel's 18px gutter like the header, error line and actions
+     above it — full-bleed, it read as a seam across the panel rather than a
+     control inside it. */
+  #url-display-row {
+    display: none;
+    padding: 0 18px 16px;
+  }
   #url-display-input {
     width: 100%; box-sizing: border-box;
-    font-size: 9px; font-family: monospace;
-    color: var(--silver-dim); background: var(--black);
+    font-size: 9.5px;
+    font-family: var(--mono);
+    letter-spacing: 0.02em;
+    color: var(--silver-dim);
+    background: var(--black2);
     border: 1px solid var(--border);
-    padding: 5px 8px; cursor: text;
+    border-radius: var(--radius-sm);
+    padding: 9px 12px;
+    cursor: text;
   }
   #url-display-input:focus { outline: none; border-color: var(--gold-dim); color: var(--text-primary); }
 
-
-  /* ── LOG LINE ── */
   /* ── PRESET MODAL ── */
   .preset-modal {
     display: none;
