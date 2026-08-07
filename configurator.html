@@ -512,6 +512,10 @@
      sliders) — spaced on the same rhythm as a field of their own. */
   .subfields { margin-bottom: var(--gap-field); }
 
+  /* A hint standing on its own as a panel row (rather than inside a field)
+     needs a row's bottom margin — Weights ends with one. */
+  .section-body > .field-hint { margin-bottom: var(--gap-field); }
+
   /* ── TOOLTIPS ── */
   /* Explanatory copy lives in a tooltip rather than under the control: a hint
      on every field doubled the height of some rows and broke the rhythm.
@@ -524,7 +528,8 @@
      The underline tracks the label's own brightness rather than the much
      darker --text-muted it used before the contrast lift. */
   .field-label[data-tip],
-  .toggle-label[data-tip] {
+  .toggle-label[data-tip],
+  .group-title[data-tip] {
     cursor: help;
     text-decoration: underline dotted var(--silver-dim);
     text-decoration-thickness: 1px;
@@ -533,10 +538,15 @@
   }
 
   .field-label[data-tip]:hover,
-  .toggle-label[data-tip]:hover {
+  .toggle-label[data-tip]:hover,
+  .group-title[data-tip]:hover {
     color: var(--platinum);
     text-decoration-color: var(--gold);
   }
+
+  /* A group title is a block, so its underline would run the panel's full
+     width; shrink-wrap it to the words. */
+  .group-title[data-tip] { width: fit-content; }
 
   /* Labels that also run an action (open the gallery, open TMDB). */
   .field-label[data-tip].label-action,
@@ -1109,7 +1119,15 @@
   .weight-sum-val.err { color: #c0443a; }
 
   /* ── SASH DRAG LIST ── */
-  .sash-list { display: flex; flex-direction: column; gap: 3px; user-select: none; }
+  /* Carries a row's bottom margin so it participates in the panel rhythm — it
+     ends the Sash tab, and .section-body's short bottom padding assumes it. */
+  .sash-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    user-select: none;
+    margin-bottom: var(--gap-field);
+  }
 
   .sash-item {
     display: flex;
@@ -2592,69 +2610,61 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
           </div>
           <div class="section-body">
             <div class="toggle-row">
-              <div>
-                <div class="toggle-label">Original Art</div>
-                <div class="field-hint">Use original poster art rather than textless with logo overlay. I highly suggest bar or minimal rating modes.</div>
-              </div>
+              <span class="toggle-label" data-tip="Use the original poster art instead of textless art with a logo overlay. Bar or minimal rating modes suit it best.">Original Art</span>
               <label class="toggle-switch">
                 <input type="checkbox" id="tog-original-art" onchange="updateOriginalArt(); build(); queuePreviewReload()">
                 <div class="toggle-track"><div class="toggle-thumb"></div></div>
               </label>
             </div>
             <!-- Original Art source (shown only in Original Art mode) -->
-            <div class="field" id="original-art-source-field" style="display:none; margin-top:12px;">
-              <label class="field-label">Art Source</label>
+            <div class="field" id="original-art-source-field" style="display:none;">
+              <label class="field-label" data-tip="Primary is TMDB's main poster; top-rated picks the highest-voted one.">Art Source</label>
               <select id="cfg-original-art-source" onchange="build(); queuePreviewReload()">
                 <option value="primary" selected>Primary (TMDB default)</option>
                 <option value="top_rated">Top-rated</option>
               </select>
-              <div class="field-hint">Primary is TMDB's main poster, while top-rated picks the highest-voted poster by users.</div>
             </div>
-            <!-- Logo overlay controls — N/A in Original Art mode (no logo drawn) -->
-            <div id="logo-controls">
-            <div class="toggle-row">
-              <div>
-                <div class="toggle-label">Textless</div>
+            <!-- Logo overlay controls — N/A in Original Art mode (no logo drawn),
+                 so the group heading and its rule hide along with them. -->
+            <div class="cfg-sep" id="logo-controls">
+              <span class="group-title">Overlay</span>
+              <div class="toggle-row">
+                <span class="toggle-label">Textless</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-textless" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
               </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="tog-textless" onchange="build(); queuePreviewReload()">
-                <div class="toggle-track"><div class="toggle-thumb"></div></div>
-              </label>
-            </div>
-            <div class="field">
-              <label class="field-label">Logo Width</label>
-              <div class="range-row">
-                <input type="range" id="cfg-logo-w" min="0.40" max="1.00" step="0.01" value="0.75" oninput="updateRange(this,'rng-lw'); build(); queuePreviewReload()">
-                <span class="range-val" id="rng-lw">0.75</span>
+              <div class="field">
+                <label class="field-label">Logo Width</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-logo-w" min="0.40" max="1.00" step="0.01" value="0.75" oninput="updateRange(this,'rng-lw'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-lw">0.75</span>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label">Logo Height</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-logo-h" min="0.05" max="0.40" step="0.01" value="0.25" oninput="updateRange(this,'rng-lh'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-lh">0.25</span>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label">Logo Position</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-logo-bottom" min="0.05" max="0.60" step="0.01" value="0.28" oninput="updateRange(this,'rng-lb'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-lb">0.28</span>
+                </div>
+              </div>
+              <div class="toggle-row">
+                <span class="toggle-label" data-tip="Logos expand upwards only, ideal for bottom placement. By default they share a midline and expand both ways. Set this using a wide logo.">Bottom Anchor</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-logo-bottom-anchor" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
               </div>
             </div>
-            <div class="field">
-              <label class="field-label">Logo Height</label>
-              <div class="range-row">
-                <input type="range" id="cfg-logo-h" min="0.05" max="0.40" step="0.01" value="0.25" oninput="updateRange(this,'rng-lh'); build(); queuePreviewReload()">
-                <span class="range-val" id="rng-lh">0.25</span>
-              </div>
-            </div>
-            <div class="field">
-              <label class="field-label">Logo Position</label>
-              <div class="range-row">
-                <input type="range" id="cfg-logo-bottom" min="0.05" max="0.60" step="0.01" value="0.28" oninput="updateRange(this,'rng-lb'); build(); queuePreviewReload()">
-                <span class="range-val" id="rng-lb">0.28</span>
-              </div>
-            </div>
-            <div class="toggle-row" style="border-bottom:none;">
-              <div>
-                <div class="toggle-label">Bottom Anchor</div>
-                <div class="field-hint">Logos only expand upwards, ideal for bottom logo placement. By default logos share a midline, expanding in both directions vertically. Configure this using a horizontal logo, for example 2022 "Let the Right one in". </div>
-              </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="tog-logo-bottom-anchor" onchange="build(); queuePreviewReload()">
-                <div class="toggle-track"><div class="toggle-thumb"></div></div>
-              </label>
-            </div>
-            </div>
-          </div>
-        </div>
+          </div>        </div>
 
         <!-- 4. INFO SASH -->
         <div class="section" data-tab="sash">
@@ -2666,11 +2676,12 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
           <div class="section-body">
             <div class="field">
               <label class="field-label">Info Sash Mode</label>
-              <select id="cfg-sash-mode" onchange="onSashModeChange()">
+              <select class="segmented-source" id="cfg-sash-mode" onchange="onSashModeChange()">
                 <option value="hidden">Hidden</option>
                 <option value="sash" selected>Diagonal Sash</option>
                 <option value="notch">Notch</option>
               </select>
+              <div class="segmented" data-for="cfg-sash-mode"></div>
             </div>
             <div class="field" id="sash-style-field" style="display:none;">
               <label class="field-label">Style</label>
@@ -2681,69 +2692,58 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="gold">Black, Gold Trim</option>
               </select>
             </div>
-            <div class="field" id="sash-text-color-field" style="display:none; border-top:none; padding-top:0; margin-top:6px;">
-              <label class="field-label">Text Colour</label>
+            <div class="field" id="sash-text-color-field" style="display:none;">
+              <label class="field-label" data-tip="Hex colour for the sash/notch text. Leave blank for the mode default.">Text Colour</label>
               <div class="color-field">
                 <input type="text" id="cfg-sash-text-color" placeholder="Default" maxlength="6"
                        oninput="_syncSashColorPicker(); build(); queuePreviewReload()">
                 <input type="color" id="cfg-sash-text-color-picker" value="#e1e1e1"
                        oninput="document.getElementById('cfg-sash-text-color').value=this.value.slice(1).toUpperCase(); build(); queuePreviewReload()">
               </div>
-              <div class="field-hint">Hex colour for the sash/notch text. Leave blank for the mode default.</div>
-            </div>
-            <div class="toggle-row">
-              <div>
-                <div class="toggle-label">Greyscale Poster if Unavailable</div>
-                <div class="field-hint">Applies to "cinema" and "production." Requires the Release Status sash to be enabled.</div>
-              </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="tog-cinema-greyscale" checked onchange="build(); queuePreviewReload()">
-                <div class="toggle-track"><div class="toggle-thumb"></div></div>
-              </label>
-            </div>
-            <div class="toggle-row" id="sash-release-cinema-only-row">
-              <div>
-                <div class="toggle-label">Release Status: Unavailable Only</div>
-                <div class="field-hint">Only show the release status sash when a title is in cinemas or in production. Leave off to also show Streaming / Physical / Airing / Ended / Cancelled — enabling this suppresses those regardless of their position in the sash order.</div>
-              </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="tog-release-cinema-only" onchange="build(); queuePreviewReload()">
-                <div class="toggle-track"><div class="toggle-thumb"></div></div>
-              </label>
             </div>
 
-            <div class="toggle-row">
-              <div>
-                <div class="toggle-label">Winner Star</div>
-                <div class="field-hint">Prefix a ★ before award winners.</div>
+            <div class="cfg-sep">
+              <span class="group-title">Behaviour</span>
+              <div class="toggle-row">
+                <span class="toggle-label" data-tip="Applies to cinema and production. Requires the Release Status sash to be enabled.">Greyscale Poster if Unavailable</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-cinema-greyscale" checked onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
               </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="tog-sash-winner-star" onchange="build(); queuePreviewReload()">
-                <div class="toggle-track"><div class="toggle-thumb"></div></div>
-              </label>
-            </div>
-            <div class="toggle-row" id="sash-muted-row">
-              <div>
-                <div class="toggle-label">Muted Sashes</div>
-                <div class="field-hint">Reduce sash opacity slightly.</div>
+              <div class="toggle-row" id="sash-release-cinema-only-row">
+                <span class="toggle-label" data-tip="Only show the release status sash for titles in cinemas or in production. Leaving it off also shows Streaming / Physical / Airing / Ended / Cancelled; enabling it suppresses those whatever their sash order.">Release Status: Unavailable Only</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-release-cinema-only" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
               </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="tog-muted" onchange="build(); queuePreviewReload()">
-                <div class="toggle-track"><div class="toggle-thumb"></div></div>
-              </label>
-            </div>
-            <div class="toggle-row" id="sash-poster-color-row">
-              <div>
-                <div class="toggle-label">Sash Colour from Poster</div>
-                <div class="field-hint">Tints the sash from the poster art instead of the category colour.</div>
+              <div class="toggle-row">
+                <span class="toggle-label" data-tip="Prefix a ★ before award winners.">Winner Star</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-sash-winner-star" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
               </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="tog-sash-poster-color" onchange="build(); queuePreviewReload()">
-                <div class="toggle-track"><div class="toggle-thumb"></div></div>
-              </label>
+              <div class="toggle-row" id="sash-muted-row">
+                <span class="toggle-label" data-tip="Reduce sash opacity slightly.">Muted Sashes</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-muted" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
+              <div class="toggle-row" id="sash-poster-color-row">
+                <span class="toggle-label" data-tip="Tints the sash from the poster art instead of the category colour.">Sash Colour from Poster</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-sash-poster-color" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
             </div>
+
             <!-- Notch sizing/offset options — only shown in Notch mode -->
-            <div id="sash-badge-offsets" style="display:none; margin-top:14px;">
+            <div class="cfg-sep" id="sash-badge-offsets" style="display:none;">
+              <span class="group-title">Notch Size</span>
               <div class="field">
                 <label class="field-label">Width</label>
                 <div class="range-row">
@@ -2759,8 +2759,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </div>
               </div>
               <div class="field">
-                <label class="field-label">Inset</label>
-                <div class="field-hint" style="margin-bottom:4px;">Adjust as required for your client, won't match preview.</div>
+                <label class="field-label" data-tip="Adjust as required for your client — this won't match the preview.">Inset</label>
                 <div class="range-row">
                   <input type="range" id="cfg-sash-badge-inset" min="-0.020" max="0.020" step="0.001" value="0.000" oninput="updateRange(this,'rng-sbi'); build(); queuePreviewReload()">
                   <span class="range-val" id="rng-sbi">0.000</span>
@@ -2781,10 +2780,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </div>
               </div>
               <div class="toggle-row" id="sash-reference-row" style="display:none;">
-                <div>
-                  <div class="toggle-label">Reference Colour</div>
-                  <div class="field-hint" style="margin-top:2px;">Match the poster's true colour instead of the saturation tint.</div>
-                </div>
+                <span class="toggle-label" data-tip="Match the poster's true colour instead of the saturation tint.">Reference Colour</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-sash-frost-reference" onchange="onFrostReferenceChange(this)">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
@@ -2798,7 +2794,9 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </div>
               </div>
             </div>
-            <div id="sash-size-fields" style="margin-top:14px; margin-bottom:10px; display:none;">
+
+            <div class="cfg-sep" id="sash-size-fields" style="display:none;">
+              <span class="group-title">Sash Size</span>
               <div class="field">
                 <label class="field-label">Sash Size</label>
                 <div class="range-row">
@@ -2814,10 +2812,12 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </div>
               </div>
             </div>
-            <div class="field-hint" style="margin-bottom:10px;">Drag to reorder. Click ✕ to disable a sash — the first matching sash wins.</div>
-            <div class="sash-list" id="sash-priority-list"></div>
-          </div>
-        </div>
+
+            <div class="cfg-sep">
+              <span class="group-title" data-tip="Drag to reorder. Click ✕ to disable a sash — the first matching sash wins.">Priority</span>
+              <div class="sash-list" id="sash-priority-list"></div>
+            </div>
+          </div>        </div>
 
         <!-- 5. QUALITY BADGES -->
         <div class="section" data-tab="quality">
