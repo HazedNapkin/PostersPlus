@@ -419,41 +419,23 @@
   #tab-host::-webkit-scrollbar { display: none; }
 
   /* ── SECTIONS ── */
-  /* The tab label already names the section, so its in-panel header is
-     redundant — except on Weights, the one tab holding two sections. */
+  /* One section per tab, and the tab label already names it — so there is no
+     in-panel section header at all now.  Weights was the last holdout with two
+     of them; it became one section with two .group-title groups. */
   .section {
     background: transparent;
   }
-  .section[data-tab="weights"] + .section[data-tab="weights"] {
-    border-top: 1px solid var(--border);
-  }
 
-  .section-header { display: none; }
-
-  .section[data-tab="weights"] .section-header {
-    display: flex;
-    align-items: baseline;
-    padding: 18px 18px 0;
-    user-select: none;
-  }
-
-  .section-accent,
-  .section-chevron { display: none; }
-
-  .section-tag,
+  /* Sub-group heading inside a tab (Vignette, Style, Behaviour, …), with the
+     whitespace below that separates it from the group's first control. */
   .group-title {
+    display: block;
     font-family: var(--serif);
     font-size: 15px;
     font-weight: 400;
     letter-spacing: 0.03em;
     color: var(--cream);
     text-transform: none;
-  }
-
-  /* Sub-group heading inside a tab (e.g. Vignette), with the whitespace above
-     that separates it from the group before. */
-  .group-title {
-    display: block;
     margin-bottom: var(--gap-field);
   }
 
@@ -962,8 +944,6 @@
     padding-top: var(--gap-group);
   }
 
-  .toggle-row.weights-fallback-toggle + .weight-grid { margin-top: var(--gap-field); }
-
   .toggle-label { font-size: 11.5px; color: var(--text-primary); letter-spacing: 0.03em; }
   .toggle-sub { font-size: 9px; color: var(--text-muted); margin-top: 2px; line-height: 1.5; }
 
@@ -1095,16 +1075,20 @@
     text-transform: uppercase;
   }
 
+  /* margin-bottom so it carries a row's gap — it closes each weights group,
+     and the last one closes the panel. */
   .weight-total {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-top: 12px;
+    margin-top: var(--gap-field);
+    margin-bottom: var(--gap-field);
     padding-top: 10px;
     border-top: 1px solid var(--border);
     font-size: 9px;
-    color: var(--text-muted);
+    color: var(--silver-dim);
     letter-spacing: 0.12em;
+    text-transform: uppercase;
   }
 
   .weight-sum-val {
@@ -1132,71 +1116,107 @@
   .sash-item {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 7px 9px;
+    gap: 10px;
+    padding: 8px 10px;
     background: var(--black2);
-    border: 1px solid var(--border);
-    transition: background 0.12s, border-color 0.12s, opacity 0.12s;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    transition: background 0.12s, border-color 0.12s, opacity 0.12s, box-shadow 0.12s;
   }
 
+  /* Borderless at rest: twenty-odd outlined boxes read as a grid of controls
+     rather than an ordered list.  The row lifts on hover instead. */
+  .sash-item:hover { background: var(--black3); border-color: var(--black5); }
   .sash-item:active { cursor: grabbing; }
-  .sash-item.dragging { opacity: 0.35; border-color: var(--gold-dim); }
-  .sash-item.drag-over { border-color: var(--gold); background: var(--gold-faint); }
+  .sash-item.dragging { opacity: 0.4; }
+  /* An insertion bar rather than a filled row — it reads as "lands here". */
+  .sash-item.drag-over {
+    border-color: transparent;
+    box-shadow: inset 0 2px 0 var(--gold);
+    background: var(--black3);
+  }
 
   .sash-drag-handle {
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 11px;
     flex-shrink: 0;
     letter-spacing: -1px;
     line-height: 1;
     cursor: grab;
     touch-action: none;
+    transition: color 0.12s;
   }
+  .sash-item:hover .sash-drag-handle { color: var(--silver-dim); }
 
+  /* Mono, tabular: the serif face rendered these as old-style figures, so the
+     ranks sat at different heights and didn't line up down the column. */
   .sash-rank {
-    font-family: var(--serif);
-    font-size: 11px;
-    color: var(--gold-dim);
-    min-width: 14px;
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 9.5px;
+    color: var(--text-muted);
+    min-width: 15px;
+    text-align: right;
     flex-shrink: 0;
   }
 
-  .sash-label { font-size: 10px; color: var(--text-primary); flex: 1; letter-spacing: 0.02em; }
-  .sash-type-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+  .sash-label {
+    font-size: 10.5px;
+    color: var(--text-primary);
+    flex: 1;
+    min-width: 0;
+    letter-spacing: 0.02em;
+  }
+
+  /* currentColor is set inline per slot, so the halo tracks the dot's hue.
+     The neutral shadow first is the fallback wherever color-mix is unsupported. */
+  .sash-type-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: currentColor;
+    box-shadow: 0 0 0 3px rgba(255,255,255,0.05);
+    box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 22%, transparent);
+  }
 
   .sash-disable-btn, .sash-enable-btn {
     flex-shrink: 0;
     background: none;
-    border: 1px solid var(--border);
+    border: none;
     color: var(--text-muted);
-    font-size: 11px;
-    width: 18px;
-    height: 18px;
-    border-radius: 3px;
+    font-size: 12px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     line-height: 1;
     padding: 0;
-    transition: color 0.12s, border-color 0.12s;
+    opacity: 0.5;
+    transition: color 0.12s, background 0.12s, opacity 0.12s;
   }
-  .sash-disable-btn:hover { color: #c0443a; border-color: #c0443a; }
-  .sash-enable-btn:hover  { color: var(--gold); border-color: var(--gold); }
+  /* Kept visible rather than hover-revealed — there is no hover on touch. */
+  .sash-item:hover .sash-disable-btn,
+  .sash-item:hover .sash-enable-btn { opacity: 1; }
+  .sash-disable-btn:hover { color: #c0443a; background: rgba(192,68,58,0.12); opacity: 1; }
+  .sash-enable-btn:hover  { color: var(--gold); background: var(--gold-faint); opacity: 1; }
 
-  .sash-disabled-section { margin-top: 8px; }
+  .sash-disabled-section { margin-top: 14px; }
   .sash-disabled-header {
-    font-size: 9px;
-    color: var(--text-muted);
-    letter-spacing: 0.08em;
+    font-size: 8.5px;
+    color: var(--silver-dim);
+    letter-spacing: 0.22em;
     text-transform: uppercase;
-    margin-bottom: 4px;
-    padding: 0 2px;
+    margin-bottom: 8px;
   }
   .sash-item.sash-item-disabled {
-    opacity: 0.45;
-    border-style: dashed;
+    opacity: 0.4;
+    background: transparent;
+    border: 1px dashed var(--border);
   }
+  .sash-item.sash-item-disabled:hover { opacity: 0.7; background: var(--black2); }
 
   /* ── RIGHT COLUMN ── */
   .right-col {
@@ -2031,11 +2051,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
 
         <!-- 1. CORE CONFIG -->
         <div class="section" data-tab="core">
-          <div class="section-header">
-            <div class="section-accent"></div>
-            <span class="section-tag">Core Config</span>
-            <span class="section-chevron">▼</span>
-          </div>
           <div class="section-body">
 
             <div class="field">
@@ -2300,11 +2315,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
 
         <!-- 2. RATING / GENRE LABEL -->
         <div class="section" data-tab="rating">
-          <div class="section-header">
-            <div class="section-accent"></div>
-            <span class="section-tag">Rating / Genre Label</span>
-            <span class="section-chevron">▼</span>
-          </div>
           <div class="section-body">
             <div class="field">
               <label class="field-label">Display Mode</label>
@@ -2603,11 +2613,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
 
         <!-- 3. LOGO -->
         <div class="section" data-tab="logo">
-          <div class="section-header">
-            <div class="section-accent"></div>
-            <span class="section-tag">Logo</span>
-            <span class="section-chevron">▼</span>
-          </div>
           <div class="section-body">
             <div class="toggle-row">
               <span class="toggle-label" data-tip="Use the original poster art instead of textless art with a logo overlay. Bar or minimal rating modes suit it best.">Original Art</span>
@@ -2668,11 +2673,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
 
         <!-- 4. INFO SASH -->
         <div class="section" data-tab="sash">
-          <div class="section-header">
-            <div class="section-accent"></div>
-            <span class="section-tag">Info Sash</span>
-            <span class="section-chevron">▼</span>
-          </div>
           <div class="section-body">
             <div class="field">
               <label class="field-label">Info Sash Mode</label>
@@ -2739,6 +2739,15 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
+              <!-- Frosted-notch only. Its dependent slider (Colour Saturation)
+                   stays in the Notch Size group with the other sliders. -->
+              <div class="toggle-row" id="sash-reference-row" style="display:none;">
+                <span class="toggle-label" data-tip="Match the poster's true colour instead of the saturation tint. Frosted notch only.">Reference Colour</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-sash-frost-reference" onchange="onFrostReferenceChange(this)">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
             </div>
 
             <!-- Notch sizing/offset options — only shown in Notch mode -->
@@ -2779,13 +2788,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <span class="range-val" id="rng-sbfo">0.75</span>
                 </div>
               </div>
-              <div class="toggle-row" id="sash-reference-row" style="display:none;">
-                <span class="toggle-label" data-tip="Match the poster's true colour instead of the saturation tint.">Reference Colour</span>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="tog-sash-frost-reference" onchange="onFrostReferenceChange(this)">
-                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
-                </label>
-              </div>
               <div class="field" id="sash-badge-saturation-field" style="display:none;">
                 <label class="field-label">Colour Saturation</label>
                 <div class="range-row">
@@ -2821,16 +2823,10 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
 
         <!-- 5. QUALITY BADGES -->
         <div class="section" data-tab="quality">
-          <div class="section-header">
-            <div class="section-accent"></div>
-            <span class="section-tag">Quality Badges</span>
-            <span class="section-chevron">▼</span>
-          </div>
           <div class="section-body">
-
-            <!-- Dropdowns -->
             <div class="field">
-              <label class="field-label">Display Mode</label>
+              <!-- data-tip is rewritten per mode by updateBadgeModeHint(). -->
+              <label class="field-label" id="badge-mode-label">Display Mode</label>
               <select id="cfg-badge-display-mode" onchange="updateBadgeModeHint(); build(); queuePreviewReload()">
                 <option value="0">Hidden</option>
                 <option value="4" selected>Quality Notch</option>
@@ -2839,18 +2835,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="1">Quality Age Rating</option>
                 <option value="3">Age Rating Only</option>
               </select>
-              <div class="field-hint" id="badge-mode1-hint">
-                The color of the font reflects stream quality, following medal tiers.
-              </div>
-              <div class="field-hint" id="badge-mode4-hint" style="display:none">
-                Medal colored marker based on stream quality.
-              </div>
-              <div class="field-hint" id="badge-mode5-hint" style="display:none">
-                Minimalist text badge: resolution · visual tag, pip coloured by source. Requires both resolution and source; visual tag defaults to SDR if absent.
-              </div>
-              <div class="field-hint" id="aiostreams-hint" style="display:none">
-                No quality source is configured on this instance. The operator can set up AIOStreams or a Stremio scraper via environment variables.
-              </div>
             </div>
             <div class="field" id="badge-min-score-field" style="display:none">
               <label class="field-label">Minimum Quality to Display</label>
@@ -2862,53 +2846,48 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="6">4K Remux DV</option>
               </select>
             </div>
+            <!-- Standing warning, not a per-field hint, so it keeps its copy. -->
+            <div class="field callout" id="aiostreams-hint" style="display:none">
+              <div class="field-hint">No quality source is configured on this instance. The operator can set up AIOStreams or a Stremio scraper via environment variables.</div>
+            </div>
 
-            <!-- Toggles -->
-            <div class="toggle-row" id="badge-stacked-field" style="display:none; margin-top:8px;">
-              <div>
-                <div class="toggle-label">Stacked Layout</div>
-                <div class="field-hint">Renders resolution above visual tag separated by a horizontal rule — useful for the notch where horizontal space is limited.</div>
-              </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="tog-badge-stacked" onchange="build(); queuePreviewReload()">
-                <div class="toggle-track"><div class="toggle-thumb"></div></div>
-              </label>
-            </div>
-            <div id="wait-quality-field" style="display:none;">
-              <div class="toggle-row" style="margin-top:8px;">
-                <div>
-                  <div class="toggle-label">Wait for Quality</div>
-                  <div class="field-hint">By default quality is fetched in the background if uncached, this will prevent the poster rendering until it's ready.</div>
-                </div>
+            <div class="cfg-sep" id="quality-behaviour-group">
+              <span class="group-title">Behaviour</span>
+              <div class="toggle-row" id="badge-stacked-field" style="display:none">
+                <span class="toggle-label" data-tip="Renders resolution above visual tag, separated by a horizontal rule — useful for the notch where horizontal space is tight.">Stacked Layout</span>
                 <label class="toggle-switch">
-                  <input type="checkbox" id="tog-wait-quality" onchange="updateWaitQualityRows(); build(); queuePreviewReload()">
+                  <input type="checkbox" id="tog-badge-stacked" onchange="build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
-              <div class="toggle-row" id="greyscale-noquality-row" style="display:none; margin-top:8px;">
-                <div>
-                  <div class="toggle-label">Greyscale if No Quality</div>
+              <div id="wait-quality-field" style="display:none;">
+                <div class="toggle-row">
+                  <span class="toggle-label" data-tip="Quality is fetched in the background when uncached. This holds the poster back until it is ready.">Wait for Quality</span>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tog-wait-quality" onchange="updateWaitQualityRows(); build(); queuePreviewReload()">
+                    <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                  </label>
                 </div>
+                <div class="toggle-row" id="greyscale-noquality-row" style="display:none">
+                  <span class="toggle-label" data-tip="Desaturates the poster when no stream quality is found.">Greyscale if No Quality</span>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tog-greyscale-noquality" onchange="build(); queuePreviewReload()">
+                    <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                  </label>
+                </div>
+              </div>
+              <div class="toggle-row" id="consider-available-field" style="display:none">
+                <span class="toggle-label" data-tip="Overrides Greyscale Poster if Unavailable in the Sash panel when WebDL or Remux is found in quality.">Consider Available if Source Found</span>
                 <label class="toggle-switch">
-                  <input type="checkbox" id="tog-greyscale-noquality" onchange="build(); queuePreviewReload()">
+                  <input type="checkbox" id="tog-cinema-greyscale-skip" onchange="build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
-              <div class="field-hint" id="greyscale-noquality-hint" style="display:none; margin-top:4px;">Desaturates the poster when no stream quality is found.</div>
-            </div>
-            <div class="toggle-row" id="consider-available-field" style="display:none; margin-top:8px; border-bottom:none;">
-              <div>
-                <div class="toggle-label">Consider Available if Source Found</div>
-                <div class="field-hint" style="margin-top:4px;">Overrides the "Greyscale Poster if unavaiable" option in info sash if WebDL or Remux is found in quality.</div>
-              </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="tog-cinema-greyscale-skip" onchange="build(); queuePreviewReload()">
-                <div class="toggle-track"><div class="toggle-thumb"></div></div>
-              </label>
             </div>
 
             <!-- Sliders (hidden entirely when Display Mode = Hidden) -->
             <div id="badge-layout-fields" class="cfg-sep">
+              <span class="group-title">Layout</span>
               <div class="field">
                 <label class="field-label">Badge Size</label>
                 <div class="range-row">
@@ -2938,51 +2917,37 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </div>
               </div>
             </div>
+          </div>        </div>
 
-          </div>
-        </div>
-
-        <!-- 6. RATING WEIGHTS — MOVIES -->
+        <!-- 6. RATING WEIGHTS -->
         <div class="section" data-tab="weights">
-          <div class="section-header">
-            <div class="section-accent"></div>
-            <span class="section-tag">Rating Weights — Movies</span>
-            <span class="section-chevron">▼</span>
-          </div>
           <div class="section-body">
+            <!-- Above the per-media groups because it governs both of them. -->
             <div class="toggle-row weights-fallback-toggle">
-              <div>
-                <div class="toggle-label">Fallback to IMDB</div>
-                <div class="field-hint">Use IMDB only when the selected weighted sources have no score.</div>
-              </div>
+              <span class="toggle-label" data-tip="Use IMDB only when the selected weighted sources have no score. Applies to both movies and TV.">Fallback to IMDB</span>
               <label class="toggle-switch">
                 <input type="checkbox" id="tog-fallback-imdb" checked onchange="build(); queuePreviewReload()">
                 <div class="toggle-track"><div class="toggle-thumb"></div></div>
               </label>
             </div>
-            <div class="weight-grid" id="movie-weights"></div>
-            <div class="weight-total">
-              <span>Total</span>
-              <span class="weight-sum-val" id="movie-sum">100%</span>
-            </div>
-            <div class="field-hint" style="margin-top:8px;">Normalization is applied to always reach 100%. 99% Letterboxd, 1% Trakt becomes 100% Trakt if Letterboxd is missing.</div>
-          </div>
-        </div>
 
-        <!-- 7. RATING WEIGHTS — TV -->
-        <div class="section" data-tab="weights">
-          <div class="section-header">
-            <div class="section-accent"></div>
-            <span class="section-tag">Rating Weights — TV</span>
-            <span class="section-chevron">▼</span>
-          </div>
-          <div class="section-body">
-            <div class="weight-grid" id="tv-weights"></div>
-            <div class="weight-total">
-              <span>Total</span>
-              <span class="weight-sum-val" id="tv-sum">100%</span>
+            <div class="cfg-sep">
+              <span class="group-title" data-tip="Normalization always reaches 100%. 99% Letterboxd + 1% Trakt becomes 100% Trakt if Letterboxd is missing.">Movies</span>
+              <div class="weight-grid" id="movie-weights"></div>
+              <div class="weight-total">
+                <span>Total</span>
+                <span class="weight-sum-val" id="movie-sum">100%</span>
+              </div>
             </div>
-            <div class="field-hint" style="margin-top:8px;">Normalization is applied to always reach 100%. 100% Trakt, 100% RT becomes 50% of each if both are available.</div>
+
+            <div class="cfg-sep">
+              <span class="group-title" data-tip="Normalization always reaches 100%. 100% Trakt + 100% RT becomes 50% of each if both are available.">TV</span>
+              <div class="weight-grid" id="tv-weights"></div>
+              <div class="weight-total">
+                <span>Total</span>
+                <span class="weight-sum-val" id="tv-sum">100%</span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -3450,6 +3415,9 @@ function updateScraperHint() {
   // "Consider Available if Source Found" needs quality data, so show it with
   // the quality-mode controls.
   document.getElementById('consider-available-field').style.display = qualityMode ? '' : 'none';
+  // Every row in the Behaviour group is quality-mode-only, so the group heading
+  // and its rule would otherwise stand alone in Hidden / Age Rating Only.
+  document.getElementById('quality-behaviour-group').style.display = qualityMode ? '' : 'none';
   updateWaitQualityRows();
 }
 
@@ -3458,15 +3426,23 @@ function updateScraperHint() {
 function updateWaitQualityRows() {
   const on = c('tog-wait-quality');
   document.getElementById('greyscale-noquality-row').style.display = on ? '' : 'none';
-  document.getElementById('greyscale-noquality-hint').style.display = on ? '' : 'none';
 }
+
+// Only the modes that had something to explain get a tooltip; the rest clear
+// the attribute so the label drops its dotted underline rather than promising
+// an explanation that isn't there.
+const BADGE_MODE_TIPS = {
+  1: 'The font colour reflects stream quality, following medal tiers.',
+  4: 'A medal-coloured marker based on stream quality.',
+  5: 'Minimalist text badge: resolution · visual tag, pip coloured by source. Needs both resolution and source; visual tag defaults to SDR if absent.',
+};
 
 function updateBadgeModeHint() {
   const mode = parseInt(document.getElementById('cfg-badge-display-mode').value);
   const hidden = mode === 0;
-  document.getElementById('badge-mode1-hint').style.display        = mode === 1 ? '' : 'none';
-  document.getElementById('badge-mode4-hint').style.display        = mode === 4 ? '' : 'none';
-  document.getElementById('badge-mode5-hint').style.display        = mode === 5 ? '' : 'none';
+  const modeLabel = document.getElementById('badge-mode-label');
+  if (BADGE_MODE_TIPS[mode]) modeLabel.dataset.tip = BADGE_MODE_TIPS[mode];
+  else modeLabel.removeAttribute('data-tip');
   document.getElementById('badge-gap-field').style.display         = mode === 2 ? '' : 'none';
   document.getElementById('badge-min-score-field').style.display   = [1,2,4,5].includes(mode) ? '' : 'none';
   document.getElementById('badge-stacked-field').style.display     = mode === 5 ? '' : 'none';
@@ -3534,7 +3510,7 @@ function buildSashList() {
     item.innerHTML = `
       <span class="sash-drag-handle" title="Drag to reorder">⠿</span>
       <span class="sash-rank">${idx + 1}</span>
-      <span class="sash-type-dot" style="background:${slot.color}"></span>
+      <span class="sash-type-dot" style="color:${slot.color}"></span>
       <span class="sash-label">${slot.label}</span>
       <button class="sash-disable-btn" title="Disable this sash" onclick="disableSash('${slotId}')">✕</button>
     `;
@@ -3561,7 +3537,7 @@ function buildSashList() {
       item.className = 'sash-item sash-item-disabled';
       item.dataset.id = slot.id;
       item.innerHTML = `
-        <span class="sash-type-dot" style="background:${slot.color}"></span>
+        <span class="sash-type-dot" style="color:${slot.color}"></span>
         <span class="sash-label">${slot.label}</span>
         <button class="sash-enable-btn" title="Re-enable this sash" onclick="enableSash('${slot.id}')">+</button>
       `;
@@ -4415,7 +4391,10 @@ function updateSashBadgeFields() {
   document.getElementById('sash-poster-color-row').style.display = isBand ? '' : 'none';
   document.getElementById('sash-badge-offsets').style.display    = isNotch ? '' : 'none';
   document.getElementById('sash-size-fields').style.display      = isBand ? '' : 'none';
-  if (isNotch) { initCustomMobileSliders(); updateBadgeStyleFields(); }
+  if (isNotch) initCustomMobileSliders();
+  // Unconditional: the reference toggle is outside #sash-badge-offsets now, so
+  // leaving notch mode has to actively hide it rather than rely on its wrapper.
+  updateBadgeStyleFields();
 }
 
 function _syncSashColorPicker() {
@@ -4443,7 +4422,11 @@ function onSashModeChange() {
 }
 
 function updateBadgeStyleFields() {
-  const isFrosted = vEl('cfg-sash-badge-style') === 'frosted';
+  // Test the mode as well as the style: there is no frosted surface in
+  // diagonal-sash or hidden mode, whatever the style select still says.  This
+  // used to be safe because the reference toggle sat inside #sash-badge-offsets
+  // and was hidden with it; it now lives in the Behaviour group, which stays.
+  const isFrosted = vEl('cfg-sash-mode') === 'notch' && vEl('cfg-sash-badge-style') === 'frosted';
   const ref = c('tog-sash-frost-reference');
   document.getElementById('sash-badge-opacity-field').style.display = isFrosted ? '' : 'none';
   document.getElementById('sash-reference-row').style.display = isFrosted ? '' : 'none';
