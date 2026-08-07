@@ -426,15 +426,17 @@
     background: transparent;
   }
 
-  /* Sub-group heading inside a tab (Vignette, Style, Behaviour, …), with the
-     whitespace below that separates it from the group's first control. */
+  /* Group heading inside a tab (Sources, Vignette, Behaviour, …).  Gold and a
+     size up from the field labels: those are bright silver and often carry a
+     tooltip underline, so a cream 15px heading was carrying less visual weight
+     than the rows beneath it. */
   .group-title {
     display: block;
     font-family: var(--serif);
-    font-size: 15px;
+    font-size: 18px;
     font-weight: 400;
     letter-spacing: 0.03em;
-    color: var(--cream);
+    color: var(--gold);
     text-transform: none;
     margin-bottom: var(--gap-field);
   }
@@ -527,8 +529,14 @@
   }
 
   /* A group title is a block, so its underline would run the panel's full
-     width; shrink-wrap it to the words. */
-  .group-title[data-tip] { width: fit-content; }
+     width; shrink-wrap it to the words.  Its underline is gold-keyed to sit
+     under gold text rather than fighting it. */
+  .group-title[data-tip] {
+    width: fit-content;
+    text-decoration-color: var(--gold-dim);
+    text-underline-offset: 5px;
+  }
+  .group-title[data-tip]:hover { color: var(--gold-bright); }
 
   /* Labels that also run an action (open the gallery, open TMDB). */
   .field-label[data-tip].label-action,
@@ -944,6 +952,14 @@
     padding-top: var(--gap-group);
   }
 
+  /* Same break, no rule — for groups whose preceding row already draws one
+     (the weights total), where a second line 24px below the first read as a
+     stray band rather than a boundary. */
+  .cfg-gap {
+    margin-top: var(--gap-group);
+    padding-top: var(--gap-group);
+  }
+
   .toggle-label { font-size: 11.5px; color: var(--text-primary); letter-spacing: 0.03em; }
   .toggle-sub { font-size: 9px; color: var(--text-muted); margin-top: 2px; line-height: 1.5; }
 
@@ -1334,44 +1350,20 @@
 
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  .preview-meta {
-    padding: 16px 18px;
-    border-top: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    background: transparent;
-  }
-  .preview-meta-items {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 14px;
-    width: 100%;
-    min-width: 0;
-  }
 
-  /* Label stacked above its value, so long ids don't crowd the caption. */
-  .meta-item {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    min-width: 0;
-    font-size: 8.5px;
-    letter-spacing: 0.22em;
-    text-transform: uppercase;
-    color: var(--silver-bright);
-  }
 
-  /* One step brighter than its label, so the pair still reads value-over-caption
-     now that the caption itself is bright. */
-  .meta-item span {
-    font-size: 11.5px;
-    letter-spacing: 0.03em;
-    text-transform: none;
-    color: var(--platinum);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+
+  /* Plain-text failure notice, directly under where the poster renders.  Only
+     errors appear here — progress and success used to print to a console strip
+     below, which is gone; the action buttons carry their own tooltips now. */
+  .preview-error {
+    padding: 0 18px 14px;
+    font-size: 10px;
+    line-height: 1.6;
+    letter-spacing: 0.02em;
+    color: #c0443a;
   }
+  .preview-error[hidden] { display: none; }
 
   /* ── PREVIEW ACTIONS ── */
   /* Equal thirds — the labels are within a character of each other, so an
@@ -1698,37 +1690,6 @@
     background: transparent;
   }
 
-  .preview-console {
-    border-top: 1px solid var(--border);
-    background: var(--black);
-  }
-  .log-line {
-    font-size: 9px;
-    line-height: 1.65;
-    color: var(--text-muted);
-    min-height: calc(2 * 1.65em + 12px);
-    /* Left inset matches the panel's 18px gutter, plus room for the ">" mark. */
-    padding: 6px 18px 6px 34px;
-    letter-spacing: 0.05em;
-    overflow: hidden;
-    white-space: normal;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-box-pack: center;
-    -webkit-line-clamp: 2;
-    position: relative;
-  }
-  .log-line::before {
-    content: ">";
-    position: absolute;
-    left: 18px;
-    top: 50%;
-    transform: translateY(-50%);
-    color: var(--gold-dim);
-  }
-  .log-line.ok  { color: var(--gold-dim); }
-  .log-line.err { color: #b04a44; }
-  .log-line.info{ color: var(--silver-dim); }
 
   /* ── MISC ── */
   .inline-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -1818,8 +1779,8 @@
       top: 12px;
     }
     .preview-panel .panel-header,
-    .preview-panel .preview-meta,
     .preview-panel .preview-actions,
+    .preview-panel .preview-error,
     .preview-panel .preview-controls { display: none; }
     .preview-frame { min-height: unset; height: auto; padding: 5px; }
     .preview-poster { width: 100%; height: auto; max-height: none; border: none; }
@@ -1840,9 +1801,10 @@
       overflow: hidden;
     }
     .preview-panel.expanded .panel-header,
-    .preview-panel.expanded .preview-meta,
     .preview-panel.expanded .preview-controls { display: flex; }
     .preview-panel.expanded .preview-actions { display: grid; }
+    /* :not([hidden]) so expanding never reveals an error that isn't set. */
+    .preview-panel.expanded .preview-error:not([hidden]) { display: block; }
     .preview-panel.expanded .preview-frame {
       flex: none;
       height: 54vh;
@@ -1857,7 +1819,7 @@
       display: flex;
       flex-direction: column;
     }
-    /* Expanded preview panel — button + log tweaks */
+    /* Expanded preview panel — button tweaks */
     .preview-panel.expanded .btn-row {
       padding: 8px 12px;
       gap: 6px;
@@ -1865,10 +1827,6 @@
     .preview-panel.expanded .btn {
       font-size: 11px;
       letter-spacing: 0.14em;
-    }
-    .preview-panel.expanded .log-line {
-      font-size: 11px;
-      padding: 5px 12px 8px;
     }
     /* Import modal — top-biased so keyboard doesn't obscure it */
     .import-modal { align-items: flex-start; padding: 14vh 24px 24px; }
@@ -2053,6 +2011,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
         <div class="section" data-tab="core">
           <div class="section-body">
 
+            <span class="group-title">Sources</span>
             <div class="field">
               <label class="field-label">Content Search</label>
               <div class="search-wrap">
@@ -2119,7 +2078,9 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </label>
               <div class="field-hint" id="trending-schedule-hint"></div>
             </div>
-            <div class="field cfg-sep">
+            <div class="cfg-sep">
+            <span class="group-title">Presentation</span>
+            <div class="field">
               <label class="field-label" data-tip="Sets recommended bar and notch insets for your player. Both stay adjustable.">Primary Client</label>
               <select id="cfg-primary-client" onchange="onPrimaryClientChange()">
                 <option value="stremio_tv_nuvio" selected>Stremio TV, Nuvio, Plex, Jellyfin</option>
@@ -2245,6 +2206,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="photoreal" selected>Photorealistic</option>
               </select>
             </div>
+            </div><!-- /presentation group -->
 
             <div class="cfg-sep">
               <span class="group-title">Vignette</span>
@@ -2316,6 +2278,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
         <!-- 2. RATING / GENRE LABEL -->
         <div class="section" data-tab="rating">
           <div class="section-body">
+            <span class="group-title">Mode</span>
             <div class="field">
               <label class="field-label">Display Mode</label>
               <select id="cfg-rating-mode" onchange="updateRatingFields(); build(); queuePreviewReload()">
@@ -2577,6 +2540,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             </div>
 
             <div class="cfg-sep">
+              <span class="group-title">Labels</span>
               <div class="toggle-row" id="hide-genre-row">
                 <span class="toggle-label" data-tip="Removes the genre text and its associated spacers.">Hide Genre</span>
                 <label class="toggle-switch">
@@ -2614,6 +2578,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
         <!-- 3. LOGO -->
         <div class="section" data-tab="logo">
           <div class="section-body">
+            <span class="group-title">Artwork</span>
             <div class="toggle-row">
               <span class="toggle-label" data-tip="Use the original poster art instead of textless art with a logo overlay. Bar or minimal rating modes suit it best.">Original Art</span>
               <label class="toggle-switch">
@@ -2674,6 +2639,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
         <!-- 4. INFO SASH -->
         <div class="section" data-tab="sash">
           <div class="section-body">
+            <span class="group-title">Mode</span>
             <div class="field">
               <label class="field-label">Info Sash Mode</label>
               <select class="segmented-source" id="cfg-sash-mode" onchange="onSashModeChange()">
@@ -2824,6 +2790,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
         <!-- 5. QUALITY BADGES -->
         <div class="section" data-tab="quality">
           <div class="section-body">
+            <span class="group-title">Mode</span>
             <div class="field">
               <!-- data-tip is rewritten per mode by updateBadgeModeHint(). -->
               <label class="field-label" id="badge-mode-label">Display Mode</label>
@@ -2922,6 +2889,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
         <!-- 6. RATING WEIGHTS -->
         <div class="section" data-tab="weights">
           <div class="section-body">
+            <span class="group-title">Fallback</span>
             <!-- Above the per-media groups because it governs both of them. -->
             <div class="toggle-row weights-fallback-toggle">
               <span class="toggle-label" data-tip="Use IMDB only when the selected weighted sources have no score. Applies to both movies and TV.">Fallback to IMDB</span>
@@ -2940,7 +2908,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </div>
             </div>
 
-            <div class="cfg-sep">
+            <div class="cfg-gap">
               <span class="group-title" data-tip="Normalization always reaches 100%. 100% Trakt + 100% RT becomes 50% of each if both are available.">TV</span>
               <div class="weight-grid" id="tv-weights"></div>
               <div class="weight-total">
@@ -2970,26 +2938,21 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             <span class="preview-placeholder-dim">1000 &times; 1500</span>
           </div>
         </div>
-        <div class="preview-meta">
-          <div class="preview-meta-items">
-            <span class="meta-item">IMDB<span id="meta-imdb">—</span></span>
-            <span class="meta-item">TMDB<span id="meta-tmdb">—</span></span>
-            <span class="meta-item">Type<span id="meta-type">—</span></span>
-          </div>
-        </div>
+        <!-- Errors surface here, directly under where the poster renders. -->
+        <div class="preview-error" id="preview-error" hidden></div>
         <div class="preview-actions">
-          <button class="btn btn-preview" onclick="copyUrl()" title="Copy config URL">Copy config</button>
-          <button class="btn btn-primary" onclick="openPresetModal()" title="Load a saved preset">Load preset</button>
-          <button class="btn btn-reset" onclick="resetDefaults(); build(); queuePreviewReload(); saveApiKeys()" title="Reset config to defaults">Reset config</button>
+          <button class="btn btn-preview" onclick="copyUrl()"
+            data-tip="Copies the poster URL. Paste it into AIOMetadata → Art Providers → Custom Art URLs → Poster URL Pattern.">Copy config</button>
+          <button class="btn btn-primary" onclick="openPresetModal()"
+            data-tip="Replace the current settings with a saved preset.">Load preset</button>
+          <button class="btn btn-reset" onclick="resetDefaults(); build(); queuePreviewReload(); saveApiKeys()"
+            data-tip="Return every setting to its default. Your API keys, language and selected title are kept.">Reset config</button>
         </div>
         <div class="preview-controls">
           <div id="url-display-row">
             <input type="text" id="url-display-input" readonly
                    onclick="this.select()"
                    title="Click to select all, then Ctrl+C to copy">
-          </div>
-          <div class="preview-console">
-            <div class="log-line" id="preview-log">ready.</div>
           </div>
         </div>
       </div>
@@ -3000,13 +2963,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
 
 <script>
 // ── THEME TOGGLE ─────────────────────────────────────────────────────────────
-/** Returns the copy/preset/reset hint line with colour names matching the
- *  current theme (gold in dark mode, blue in light mode). */
-function previewReadyHint() {
-  return document.documentElement.classList.contains('light-mode')
-    ? 'Click the blue button to copy URL, silver to load a preset, red to reset.'
-    : 'Click the gold button to copy URL, silver to load a preset, red to reset.';
-}
 function applyTheme(mode) {
   const isLight = mode === 'light';
   document.documentElement.classList.toggle('light-mode', isLight);
@@ -3729,13 +3685,10 @@ function hydrateFromLocalStorage() {
     const badge = document.getElementById('selected-type-badge');
     badge.textContent = (data.type || 'movie').toUpperCase(); badge.className = 'result-type-badge ' + (data.type || 'movie');
     document.getElementById('selected-tmdb-id').textContent = data.tmdbId;
-    document.getElementById('meta-tmdb').textContent = data.tmdbId;
-    document.getElementById('meta-type').textContent = data.type || 'movie';
     if (data.imdbId) {
       resolvedImdbId = data.imdbId;
       document.getElementById('cfg-imdb').value = data.imdbId;
       document.getElementById('selected-imdb-id').textContent = data.imdbId;
-      document.getElementById('meta-imdb').textContent = data.imdbId;
       document.getElementById('selected-resolving').style.display = 'none';
     } else {
       document.getElementById('selected-imdb-id').textContent = '…';
@@ -3748,7 +3701,6 @@ function hydrateFromLocalStorage() {
           resolvedImdbId = id;
           document.getElementById('cfg-imdb').value = id;
           document.getElementById('selected-imdb-id').textContent = id;
-          document.getElementById('meta-imdb').textContent = id;
           persistImdbId(id); queuePreviewReload();
         }
       });
@@ -3772,9 +3724,6 @@ function applyDefaultSelection() {
   document.getElementById('selected-tmdb-id').textContent = '1064213';
   document.getElementById('selected-imdb-id').textContent = 'tt28607951';
   document.getElementById('selected-resolving').style.display = 'none';
-  document.getElementById('meta-imdb').textContent = 'tt28607951';
-  document.getElementById('meta-tmdb').textContent = '1064213';
-  document.getElementById('meta-type').textContent = 'movie';
   saveSelection({ tmdbId:'1064213', type:'movie', title:'Anora', year:'2024', thumb:'', imdbId:'tt28607951' });
 }
 
@@ -3807,7 +3756,7 @@ async function doSearch() {
 
   const userTmdbKey = vEl('cfg-tmdb-key');
   if (!userTmdbKey && !serverCaps.tmdb_key_set) {
-    setLog('preview-log', 'Enter your TMDB API key above to search', 'err');
+    setStatus('Enter your TMDB API key above to search', 'err');
     return;
   }
 
@@ -3832,7 +3781,7 @@ async function doSearch() {
       .slice(0, 10);
     renderResults(items);
   } catch (e) {
-    setLog('preview-log', `Search error: ${e.message}`, 'err');
+    setStatus(`Search error: ${e.message}`, 'err');
     renderResults(null);
   } finally {
     setSearchBusy(false);
@@ -3898,7 +3847,6 @@ async function selectResult(dataset) {
   document.getElementById('cfg-media-type').value = type;
   document.getElementById('cfg-search-query').value = title;
   saveSelection({ tmdbId, type, title, year, thumb });
-  document.getElementById('meta-type').textContent = type;
   const card = document.getElementById('selected-card');
   card.classList.add('visible');
   if (thumb) { document.getElementById('selected-thumb').src = thumb; document.getElementById('selected-thumb').style.display = ''; }
@@ -3910,7 +3858,7 @@ async function selectResult(dataset) {
   document.getElementById('selected-tmdb-id').textContent = tmdbId;
   document.getElementById('selected-imdb-id').textContent = '…';
   document.getElementById('selected-resolving').style.display = 'flex';
-  setLog('preview-log', `Selected: ${title} (TMDB ${tmdbId}) — resolving IMDB ID…`, 'info');
+  setStatus(`Selected: ${title} (TMDB ${tmdbId}) — resolving IMDB ID…`, 'info');
   imdbResolvePending = true;
   const imdbId = await fetchImdbId(tmdbId, type);
   imdbResolvePending = false;
@@ -3919,16 +3867,12 @@ async function selectResult(dataset) {
     resolvedImdbId = imdbId;
     document.getElementById('cfg-imdb').value = imdbId;
     document.getElementById('selected-imdb-id').textContent = imdbId;
-    document.getElementById('meta-imdb').textContent = imdbId;
     persistImdbId(imdbId);
-    setLog('preview-log', `IMDB ID resolved: ${imdbId}`, 'ok');
+    setStatus(`IMDB ID resolved: ${imdbId}`, 'ok');
   } else {
     document.getElementById('selected-imdb-id').textContent = 'N/A';
-    document.getElementById('meta-imdb').textContent = '—';
-    setLog('preview-log', 'Could not resolve IMDB ID — preview may fail', 'err');
+    setStatus('Could not resolve IMDB ID — preview may fail', 'err');
   }
-  document.getElementById('meta-tmdb').textContent = tmdbId;
-  document.getElementById('meta-type').textContent = type;
   build(); queuePreviewReload();
 }
 
@@ -3940,10 +3884,7 @@ function clearSelection() {
   document.getElementById('cfg-search-query').value = '';
   localStorage.removeItem('postersplus_selection');
   document.getElementById('selected-card').classList.remove('visible');
-  document.getElementById('meta-imdb').textContent = '—';
-  document.getElementById('meta-tmdb').textContent = '—';
-  document.getElementById('meta-type').textContent = '—';
-  build(); setLog('preview-log', 'Selection cleared.', 'info');
+  build(); setStatus('Selection cleared.', 'info');
 }
 
 async function fetchImdbId(tmdbId, type) {
@@ -4261,16 +4202,30 @@ async function copyUrl() {
     const inp = document.getElementById('url-display-input');
     inp.focus();
     inp.select();
-    setLog('preview-log', 'URL selected — press Ctrl+C to copy, then paste into AIOMetadata → Art Providers → Custom Art URLs → Poster URL Pattern.', 'info');
+    setStatus('URL selected — press Ctrl+C to copy, then paste into AIOMetadata → Art Providers → Custom Art URLs → Poster URL Pattern.', 'info');
     return;
   }
   const url = buildTemplateUrl();
   try {
     await navigator.clipboard.writeText(url);
-    setLog('preview-log', 'Template URL successfully copied. Paste into AIOMetadata → Art Providers → Custom Art URLs → Poster URL Pattern.', 'ok');
+    setStatus('');
+    // The console strip used to confirm this; the button says so itself now.
+    flashButton(document.querySelector('.preview-actions .btn-preview'), 'Copied');
   } catch {
-    setLog('preview-log', 'Clipboard copy failed — check browser permissions.', 'err');
+    setStatus('Clipboard copy failed — check browser permissions.', 'err');
   }
+}
+
+/** Briefly swaps a button's label to confirm an action, then restores it. */
+function flashButton(btn, text, ms = 1600) {
+  if (!btn || btn.dataset.flashing) return;
+  btn.dataset.flashing = '1';
+  const original = btn.textContent;
+  btn.textContent = text;
+  setTimeout(() => {
+    btn.textContent = original;
+    delete btn.dataset.flashing;
+  }, ms);
 }
 
 function resetDefaults() {
@@ -4313,7 +4268,7 @@ function resetDefaults() {
   updateSashBadgeFields();
   build();
   collapsePreview();
-  setLog('preview-log', 'Reset to defaults. API keys preserved.', 'info');
+  setStatus('Reset to defaults. API keys preserved.', 'info');
 }
 
 function queuePreviewReload() {
@@ -4323,17 +4278,21 @@ function queuePreviewReload() {
   }, 350);
 }
 
-function setLog(id, msg, cls='') {
-  const el = document.getElementById(id);
-  el.textContent = msg;
-  el.className = 'log-line' + (cls ? ' ' + cls : '');
+/** Failures print under the poster; anything else clears whatever was there.
+ *  Progress and success no longer have a home — the console strip is gone, and
+ *  the action buttons explain themselves via their own tooltips. */
+function setStatus(msg, cls='') {
+  const el = document.getElementById('preview-error');
+  if (!el) return;
+  if (cls === 'err') { el.textContent = msg; el.hidden = false; }
+  else               { el.textContent = '';  el.hidden = true;  }
 }
 
 async function loadPreview() {
   if (previewLoading) { clearTimeout(previewDebounce); return; }
   if (imdbResolvePending) return;
-  if (!resolvedImdbId || !resolvedTmdbId) { setLog('preview-log', 'Search and select a title first', 'err'); return; }
-  if (!vEl('cfg-tmdb-key') && !serverCaps.tmdb_key_set) { setLog('preview-log', 'This instance has no server side TMDB key. You must provide your own or ask the operator to add one.', 'err'); return; }
+  if (!resolvedImdbId || !resolvedTmdbId) { setStatus('Search and select a title first', 'err'); return; }
+  if (!vEl('cfg-tmdb-key') && !serverCaps.tmdb_key_set) { setStatus('This instance has no server side TMDB key. You must provide your own or ask the operator to add one.', 'err'); return; }
   previewLoading = true;
   document.getElementById('preview-status').textContent = 'LOADING';
   const frame = document.getElementById('preview-frame');
@@ -4341,7 +4300,7 @@ async function loadPreview() {
   if (!hasExisting) {
     frame.innerHTML = `<div class="preview-empty"><div class="preview-spinner"></div>Fetching poster…</div>`;
   }
-  setLog('preview-log', 'fetching poster…', 'info');
+  setStatus('fetching poster…', 'info');
   const previewUrl = buildPreviewUrl() + '&_ts=' + Date.now();
   const existingImg = frame.querySelector('.preview-poster');
   if (existingImg) {
@@ -4349,13 +4308,13 @@ async function loadPreview() {
     const img = new Image();
     img.onload = () => {
       existingImg.src = img.src; existingImg.style.opacity = '1';
-      setLog('preview-log', previewReadyHint(), 'ok');
+      setStatus('');   // success: clear any previous failure
       document.getElementById('preview-status').textContent = 'OK';
       previewLoading = false;
     };
     img.onerror = () => {
       existingImg.style.opacity = '1';
-      setLog('preview-log', 'Error: poster endpoint returned an error — check access key / instance URL', 'err');
+      setStatus('Error: poster endpoint returned an error — check access key / instance URL', 'err');
       document.getElementById('preview-status').textContent = 'ERROR';
       previewLoading = false;
     };
@@ -4364,13 +4323,13 @@ async function loadPreview() {
     const img = new Image();
     img.onload = () => {
       frame.innerHTML = ''; img.className = 'preview-poster'; frame.appendChild(img);
-      setLog('preview-log', previewReadyHint(), 'ok');
+      setStatus('');   // success: clear any previous failure
       document.getElementById('preview-status').textContent = 'OK';
       previewLoading = false;
     };
     img.onerror = () => {
       frame.innerHTML = `<div class="preview-empty"><span class="preview-empty-icon" style="font-size:28px">✕</span>Poster fetch failed<br><span style="margin-top:8px;display:block;font-size:9px;">check access key / instance URL</span></div>`;
-      setLog('preview-log', 'Error: check access key / instance URL', 'err');
+      setStatus('Error: check access key / instance URL', 'err');
       document.getElementById('preview-status').textContent = 'ERROR';
       previewLoading = false;
     };
@@ -4663,9 +4622,10 @@ function initSegmented() {
   document.addEventListener('click', ev => {
     const a = target(ev);
     if (!a) { hide(); return; }
-    // Labels that also run an action (open the gallery, open TMDB) must not pin
-    // a tooltip: it outranks a modal's z-index and would sit on top of it.
-    if (ev.target.closest('.label-action, a')) { hide(); return; }
+    // Anything that also runs an action (the gallery label, a link, the preview
+    // buttons) must not pin a tooltip: it outranks a modal's z-index and would
+    // sit on top of it.
+    if (ev.target.closest('.label-action, a, button')) { hide(); return; }
     if (a === anchor) hide(); else show(a, true);
   });
 
@@ -4859,7 +4819,7 @@ function loadPreset(id) {
   const url = `${domain}/poster?tmdb_id=%7Btmdb_id%7D&imdb_id=%7Bimdb_id%7D&type=%7Btype%7D&${preset.params}`;
   importUrl(url, { settingsOnly: true, preserveClientInsets: true });
   closePresetModal();
-  setLog('preview-log', `Preset "${preset.name}" loaded.`, 'ok');
+  setStatus(`Preset "${preset.name}" loaded.`, 'ok');
 }
 
 function toggleImportBar() {
@@ -4925,13 +4885,13 @@ function _setEl(id, value) {
 function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClientInsets = false } = {}) {
   let parsed;
   try { parsed = new URL(urlStr); } catch {
-    if (!silent) setLog('preview-log', 'Import failed — not a valid URL.', 'err');
+    if (!silent) setStatus('Import failed — not a valid URL.', 'err');
     return false;
   }
 
   // Only accept /poster paths
   if (!parsed.pathname.endsWith('/poster') && !parsed.pathname.endsWith('/poster/')) {
-    if (!silent) setLog('preview-log', 'Import failed — URL does not look like a poster endpoint (/poster).', 'err');
+    if (!silent) setStatus('Import failed — URL does not look like a poster endpoint (/poster).', 'err');
     return false;
   }
 
@@ -5152,7 +5112,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (!settingsOnly) saveApiKeys();
   build();
   queuePreviewReload();
-  if (!silent) setLog('preview-log', 'Settings imported from URL.', 'ok');
+  if (!silent) setStatus('Settings imported from URL.', 'ok');
   return true;
 }
 
