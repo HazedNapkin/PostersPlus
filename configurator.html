@@ -329,7 +329,7 @@
 
   .panel-index {
     font-size: 8.5px;
-    color: var(--text-secondary);
+    color: var(--silver);
     letter-spacing: 0.18em;
     text-transform: uppercase;
   }
@@ -380,11 +380,11 @@
     cursor: pointer;
     border: none;
     background: transparent;
-    color: var(--text-secondary);
+    color: var(--silver);
     transition: color 0.15s;
     user-select: none;
   }
-  .tab-btn:hover { color: var(--silver); }
+  .tab-btn:hover { color: var(--silver-bright); }
   .tab-btn.active { color: var(--gold-bright); }
   /* Sits on top of the bar hairline (z-index), not beside it. */
   .tab-btn.active::after {
@@ -473,15 +473,17 @@
     display: block;
     font-size: 8.5px;
     line-height: 14px;
-    color: var(--silver-dim);
+    color: var(--silver-bright);
     letter-spacing: 0.22em;
     margin-bottom: var(--gap-label);
     text-transform: uppercase;
   }
 
+  /* --text-muted sits near 2:1 on the panel fill — unreadable at this size.
+     Still used by the other tabs and the callout until they are converted. */
   .field-hint {
     font-size: 9.5px;
-    color: var(--text-muted);
+    color: var(--silver-dim);
     margin-top: var(--gap-label);
     line-height: 1.6;
   }
@@ -513,10 +515,12 @@
      on the label, which is quieter than an icon per field. */
   /* Cursor goes on the label, not the row — a row-wide `help` cursor would
      override the caret over its own text input. */
+  /* The underline reads against the label, so it tracks the label's own
+     brightness rather than the much darker --text-muted. */
   [data-tip] > .field-label,
   [data-tip] .toggle-label {
     cursor: help;
-    text-decoration: underline dotted var(--text-muted);
+    text-decoration: underline dotted var(--silver-dim);
     text-decoration-thickness: 1px;
     text-underline-offset: 4px;
     transition: color 0.15s, text-decoration-color 0.15s;
@@ -524,8 +528,8 @@
 
   [data-tip]:hover > .field-label,
   [data-tip]:hover .toggle-label {
-    color: var(--silver);
-    text-decoration-color: var(--gold-dim);
+    color: var(--platinum);
+    text-decoration-color: var(--gold);
   }
 
   /* Labels that also run an action (open the gallery, open TMDB).  Specificity
@@ -698,7 +702,7 @@
     font-family: var(--mono);
     font-size: 10.5px;
     letter-spacing: 0.03em;
-    color: var(--text-secondary);
+    color: var(--silver);
     background: var(--black2);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
@@ -708,7 +712,7 @@
     transition: color 0.15s, border-color 0.15s, background 0.15s;
   }
 
-  .segmented-opt:hover { color: var(--silver); border-color: var(--black5); }
+  .segmented-opt:hover { color: var(--silver-bright); border-color: var(--black5); }
   .segmented-opt:focus-visible { outline: none; border-color: var(--gold-dim); }
 
   .segmented-opt.active {
@@ -1295,14 +1299,16 @@
     font-size: 8.5px;
     letter-spacing: 0.22em;
     text-transform: uppercase;
-    color: var(--text-secondary);
+    color: var(--silver-bright);
   }
 
+  /* One step brighter than its label, so the pair still reads value-over-caption
+     now that the caption itself is bright. */
   .meta-item span {
     font-size: 11.5px;
     letter-spacing: 0.03em;
     text-transform: none;
-    color: var(--silver-bright);
+    color: var(--platinum);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1383,15 +1389,18 @@
     white-space: nowrap;
   }
 
+  /* Every button carries a fill in its own hue — an outline-only one next to a
+     filled one reads as unfinished rather than secondary. */
   .btn-primary {
-    color: var(--silver);
+    background: linear-gradient(180deg, rgba(184,190,201,0.16), rgba(184,190,201,0.05));
+    color: var(--silver-bright);
     border-color: var(--silver-dim);
   }
 
   .btn-primary:hover {
-    background: var(--silver-faint);
+    background: linear-gradient(180deg, rgba(184,190,201,0.26), rgba(184,190,201,0.09));
     border-color: var(--silver);
-    color: var(--silver-bright);
+    color: var(--platinum);
   }
 
   .btn-preview {
@@ -1415,8 +1424,16 @@
   .btn-preview:disabled { opacity: 0.3; cursor: not-allowed; }
   .btn-preview:disabled:hover { background: transparent; border-color: var(--gold-dim); color: var(--gold); }
 
-  .btn-reset { color: #b04a44; border-color: #5c2824; }
-  .btn-reset:hover { background: #1d0f0e; border-color: #b04a44; color: #d4736b; }
+  .btn-reset {
+    background: linear-gradient(180deg, rgba(176,74,68,0.20), rgba(176,74,68,0.06));
+    color: #c8635c;
+    border-color: #5c2824;
+  }
+  .btn-reset:hover {
+    background: linear-gradient(180deg, rgba(176,74,68,0.32), rgba(176,74,68,0.12));
+    border-color: #b04a44;
+    color: #dd7d75;
+  }
 
   /* URL display box — shown instead of clipboard copy on LAN IPs */
   #url-display-row { margin-top: 6px; display: none; }
@@ -1870,8 +1887,23 @@
     background: repeating-linear-gradient(135deg,
       rgba(0,0,0,0.035) 0 1px, transparent 1px 9px), var(--black2);
   }
-  html.light-mode .btn-reset                   { border-color: #8a2a26; color: #b04a44; }
-  html.light-mode .btn-reset:hover             { background: #f5e8e6; border-color: #b04a44; color: #c05050; }
+  /* Button fills again — the dark-mode rgba washes out to nothing on cream. */
+  html.light-mode .btn-primary {
+    background: linear-gradient(180deg, rgba(74,82,98,0.13), rgba(74,82,98,0.04));
+  }
+  html.light-mode .btn-primary:hover {
+    background: linear-gradient(180deg, rgba(74,82,98,0.22), rgba(74,82,98,0.08));
+  }
+  html.light-mode .btn-reset {
+    background: linear-gradient(180deg, rgba(138,42,38,0.13), rgba(138,42,38,0.04));
+    border-color: #8a2a26;
+    color: #98302c;
+  }
+  html.light-mode .btn-reset:hover {
+    background: linear-gradient(180deg, rgba(138,42,38,0.22), rgba(138,42,38,0.08));
+    border-color: #b04a44;
+    color: #8a2a26;
+  }
   html.light-mode .sash-disable-btn:hover      { color: #b04a44; border-color: #b04a44; }
 </style>
 <script>/* apply saved theme before first paint to avoid flash */
