@@ -370,6 +370,53 @@
   }
 
   .icon-btn svg { width: 14px; height: 14px; display: block; }
+  .icon-btn[aria-expanded="true"] {
+    color: var(--gold-bright);
+    border-color: var(--gold-dim);
+    background: var(--gold-faint);
+  }
+
+  /* ── POPUP MENU ── */
+  /* position:fixed and parked on <body>, so neither .preview-panel's
+     overflow:hidden nor #tab-host's scroll box can clip it. */
+  .menu {
+    position: fixed;
+    top: 0; left: 0;
+    z-index: 3000;
+    min-width: 172px;
+    padding: 5px;
+    background: var(--black2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 14px 36px rgba(0,0,0,0.55);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .menu[hidden] { display: none; }
+
+  .menu-item {
+    display: block;
+    padding: 8px 10px;
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--silver);
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: color 0.12s, background 0.12s;
+  }
+
+  .menu-item[hidden] { display: none; }
+  .menu-item:hover,
+  .menu-item:focus-visible {
+    color: var(--gold-bright);
+    background: var(--gold-faint);
+    outline: none;
+  }
 
   /* Status readout sits bare next to the preview title — a state dot, not a
      chip, so it doesn't compete with the version pill opposite it.  Qualified
@@ -3010,12 +3057,14 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
         <div class="panel-header">
           <span class="panel-title">Live preview</span>
           <div class="panel-header-actions">
-            <!-- href / tooltip set by updateExternalLink(); hidden until a
-                 title is selected. -->
-            <a class="icon-btn" id="external-link" href="#" target="_blank" rel="noopener"
-               aria-label="Open this title externally" hidden>
+            <!-- Opens #external-menu; hidden until a title is selected. -->
+            <button type="button" class="icon-btn" id="external-link" hidden
+                    aria-haspopup="true" aria-expanded="false"
+                    aria-label="Open this title on IMDB or TMDB"
+                    data-tip="Open this title on IMDB or TMDB."
+                    onclick="toggleExternalMenu(event)">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-8.5 8.5"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>
-            </a>
+            </button>
             <span class="panel-index" id="preview-status" hidden>IDLE</span>
           </div>
         </div>
@@ -4048,29 +4097,80 @@ function build() {
   return url;
 }
 
-/** Points the preview header's link at the selected title — IMDB when an id has
- *  been resolved for it, TMDB otherwise — and hides it when nothing is picked.
- *  Called from build() for the usual paths, and from persistImdbId() for the
- *  async resolve, which lands after the build() that started it. */
+/** Refreshes the preview header's external-link menu for the current selection:
+ *  fills in each destination, hides the ones whose id isn't known yet, and
+ *  hides the button entirely when nothing is picked.  Called from build() for
+ *  the usual paths, and from persistImdbId() for the async IMDB resolve, which
+ *  lands after the build() that started it. */
 function updateExternalLink() {
-  const el = document.getElementById('external-link');
-  if (!el) return;
+  const btn = document.getElementById('external-link');
+  if (!btn) return;
   const imdb = vEl('cfg-imdb');
   const tmdb = vEl('cfg-tmdb-resolved');
   const type = vEl('cfg-media-type') === 'tv' ? 'tv' : 'movie';
+  const base = tmdb ? `https://www.themoviedb.org/${type}/${encodeURIComponent(tmdb)}` : '';
 
-  if (imdb) {
-    el.href = `https://www.imdb.com/title/${encodeURIComponent(imdb)}/`;
-    el.dataset.tip = 'Open this title on IMDB.';
-  } else if (tmdb) {
-    el.href = `https://www.themoviedb.org/${type}/${encodeURIComponent(tmdb)}`;
-    el.dataset.tip = 'Open this title on TMDB.';
-  } else {
-    el.hidden = true;
-    return;
-  }
-  el.hidden = false;
+  const set = (id, href) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.hidden = !href;
+    if (href) el.href = href;
+  };
+  set('ext-imdb', imdb ? `https://www.imdb.com/title/${encodeURIComponent(imdb)}/` : '');
+  set('ext-tmdb', base);
+  // Deep links to the artwork tabs — the usual reason to open TMDB from here is
+  // to check what posters and logos actually exist for a title.
+  set('ext-tmdb-posters', base && `${base}/images/posters`);
+  set('ext-tmdb-logos',   base && `${base}/images/logos`);
+
+  btn.hidden = !(imdb || tmdb);
+  if (btn.hidden) closeExternalMenu();
 }
+
+function closeExternalMenu() {
+  const menu = document.getElementById('external-menu');
+  const btn  = document.getElementById('external-link');
+  if (menu) menu.hidden = true;
+  if (btn)  btn.setAttribute('aria-expanded', 'false');
+}
+
+function toggleExternalMenu(ev) {
+  ev?.stopPropagation();
+  const menu = document.getElementById('external-menu');
+  const btn  = document.getElementById('external-link');
+  if (!menu || !btn) return;
+  if (!menu.hidden) { closeExternalMenu(); return; }
+
+  menu.hidden = false;
+  btn.setAttribute('aria-expanded', 'true');
+
+  // Park at the origin before measuring: a fixed, width:auto box shrinks
+  // against the viewport edge, so measuring it in place under-reports it.
+  menu.style.left = '0px';
+  menu.style.top  = '0px';
+  const b = btn.getBoundingClientRect();
+  const m = menu.getBoundingClientRect();
+  const M = 8;
+
+  // Right-aligned to the button: it sits at the panel's right edge, so a
+  // left-aligned menu would hang off the side.
+  let left = Math.max(M, Math.min(b.right - m.width, window.innerWidth - m.width - M));
+  let top  = b.bottom + 6;
+  if (top + m.height > window.innerHeight - M) top = Math.max(M, b.top - m.height - 6);
+  menu.style.left = Math.round(left) + 'px';
+  menu.style.top  = Math.round(top)  + 'px';
+}
+
+// Dismiss on an outside click, Escape, or anything that moves the anchor.
+// Picking an item closes it too — the destination opens in a new tab, so
+// without this the menu would still be sitting there on return.
+document.addEventListener('click', ev => {
+  if (ev.target.closest?.('.menu-item')) { closeExternalMenu(); return; }
+  if (!ev.target.closest?.('#external-menu, #external-link')) closeExternalMenu();
+});
+document.addEventListener('keydown', ev => { if (ev.key === 'Escape') closeExternalMenu(); });
+window.addEventListener('scroll', closeExternalMenu, true);
+window.addEventListener('resize', closeExternalMenu);
 
 function decodePlaceholders(url) {
   return url.replace(/%7B/g, '{').replace(/%7D/g, '}')
@@ -5408,6 +5508,15 @@ initCustomMobileSliders();
     .observe(document.getElementById(id), { childList: true, subtree: true });
 });
 </script>
+
+<!-- Anchored to the preview header's link button, but parked at the end of the
+     body: .preview-panel is overflow:hidden and would clip it. -->
+<div class="menu" id="external-menu" role="menu" hidden>
+  <a class="menu-item" id="ext-imdb" href="#" target="_blank" rel="noopener" role="menuitem">IMDB</a>
+  <a class="menu-item" id="ext-tmdb" href="#" target="_blank" rel="noopener" role="menuitem">TMDB</a>
+  <a class="menu-item" id="ext-tmdb-posters" href="#" target="_blank" rel="noopener" role="menuitem">TMDB — Posters</a>
+  <a class="menu-item" id="ext-tmdb-logos" href="#" target="_blank" rel="noopener" role="menuitem">TMDB — Logos</a>
+</div>
 
 <div class="preset-modal" id="preset-modal" onclick="if(event.target===this)closePresetModal()">
   <div class="preset-modal-box">
