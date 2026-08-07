@@ -457,14 +457,18 @@
     margin-bottom: var(--gap-field);
   }
 
+  /* Bottom padding is short by one --gap-field because every row keeps its own
+     bottom margin — the two add up to --gap-group.  Trimming the last row's
+     margin instead needed :last-child, which fires on the last child of any
+     wrapper, not the last row of the panel, and so collapsed the gap wherever
+     a wrapper ended (a mode block, the custom-palette reveal). */
   .section-body {
-    padding: var(--gap-group) 18px;
+    padding: var(--gap-group) 18px calc(var(--gap-group) - var(--gap-field));
     background: transparent;
   }
 
   /* ── FORM ELEMENTS ── */
   .field { margin-bottom: var(--gap-field); }
-  .field:last-child { margin-bottom: 0; }
 
   /* line-height is pinned to the hint button's height so a label with a button
      beside it is exactly as tall as one without — otherwise every field
@@ -608,32 +612,49 @@
   .color-field { position: relative; width: 100%; }
   .color-field input[type="text"] {
     width: 100%;
-    padding-right: 42px;
+    padding-right: 38px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
   /* Keep the typed hex uppercase, but show the "Default" hint in normal case. */
   .color-field input[type="text"]::placeholder { text-transform: none; letter-spacing: normal; }
+
+  /* A round chip rather than a bordered rectangle: the swatch reads as a colour
+     sample instead of a second, smaller input sitting inside the first.  The
+     ring is a box-shadow so it hugs the circle — a real border would be clipped
+     square by the native swatch on some engines. */
   .color-field input[type="color"] {
     position: absolute;
     top: 50%;
-    right: 5px;
+    right: 9px;
     transform: translateY(-50%);
-    width: 28px;
-    height: 22px;
-    padding: 2px;
-    border: 1px solid var(--border);
-    background: var(--black3);
+    width: 19px;
+    height: 19px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
     cursor: pointer;
+    overflow: hidden;
+    box-shadow: 0 0 0 1px var(--black5), inset 0 0 0 1px rgba(0,0,0,0.4);
+    transition: box-shadow 0.15s, transform 0.15s;
     appearance: none;
     -webkit-appearance: none;
   }
-  .color-field input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
-  .color-field input[type="color"]::-webkit-color-swatch { border: none; }
-  .color-field input[type="color"]::-moz-color-swatch { border: none; }
 
+  .color-field input[type="color"]:hover {
+    box-shadow: 0 0 0 1px var(--gold-dim), inset 0 0 0 1px rgba(0,0,0,0.4);
+    transform: translateY(-50%) scale(1.08);
+  }
+
+  .color-field input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; border-radius: 50%; }
+  .color-field input[type="color"]::-webkit-color-swatch { border: none; border-radius: 50%; }
+  .color-field input[type="color"]::-moz-color-swatch { border: none; border-radius: 50%; }
+
+  /* Tall enough for the full 7-line placeholder (2 lines of rule, a blank, and
+     4 example rows) — placeholder text can't scroll, so a short box clips it. */
   textarea {
-    min-height: 94px;
+    min-height: 136px;
     line-height: 1.45;
     resize: vertical;
   }
@@ -922,12 +943,6 @@
     margin-bottom: var(--gap-field);
   }
 
-  .toggle-row:last-child { margin-bottom: 0; }
-
-  /* Exactly one score-out-of-10 row is ever visible and they always close the
-     panel, but :last-child lands on a hidden sibling — so the visible one
-     would keep a trailing gap on top of the body's own padding. */
-  .toggle-row.score10-row { margin-bottom: 0; }
 
   /* Explicit break between two groups of controls.  The margin collapses with
      the preceding row's --gap-field, so the rule sits --gap-group from both. */
@@ -1321,9 +1336,11 @@
   }
 
   /* ── PREVIEW ACTIONS ── */
+  /* Equal thirds — the labels are within a character of each other, so an
+     uneven split would be the only thing making them look mismatched. */
   .preview-actions {
     display: grid;
-    grid-template-columns: 1fr 1fr 0.45fr;
+    grid-template-columns: repeat(3, 1fr);
     gap: 10px;
     padding: 0 18px 16px;
   }
@@ -1742,7 +1759,7 @@
       margin-top: -10px;
     }
     input[type="range"]::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: var(--gold); border: 3px solid var(--black1); }
-    .section-body { padding: var(--gap-group) 16px; }
+    .section-body { padding: var(--gap-group) 16px calc(var(--gap-group) - var(--gap-field)); }
     .toggle-switch { width: 46px; height: 24px; }
     .toggle-thumb { width: 16px; height: 16px; top: 3px; left: 3px; }
     .toggle-switch input:checked ~ .toggle-track .toggle-thumb { transform: translateX(22px); }
@@ -2293,9 +2310,12 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <div class="segmented" data-for="cfg-score-color-mode"></div>
               </div>
             </div>
+            <!-- No label: the field only ever appears directly under the
+                 Custom palette option, and the placeholder carries both the
+                 rule and the example. -->
             <div class="field" id="score-custom-palette-field" style="display:none;">
-              <label class="field-label" data-tip="Use score:hex entries. The highest threshold below the rating wins.">Custom Palette</label>
-              <textarea id="cfg-score-custom-palette" placeholder="0:#FF5050&#10;50:#FFD25A&#10;70:#78FFA0&#10;85:#BE8CFF" spellcheck="false"
+              <textarea id="cfg-score-custom-palette" spellcheck="false"
+                        placeholder="One score:hex per line.&#10;The highest threshold below the rating wins.&#10;&#10;0:#FF5050&#10;50:#FFD25A&#10;70:#78FFA0&#10;85:#BE8CFF"
                         oninput="build(); queuePreviewReload()"></textarea>
             </div>
 
@@ -2993,9 +3013,9 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
           </div>
         </div>
         <div class="preview-actions">
-          <button class="btn btn-preview" onclick="copyUrl()" title="Copy config URL">Copy config URL</button>
-          <button class="btn btn-primary" onclick="openPresetModal()" title="Load preset">Load preset</button>
-          <button class="btn btn-reset" onclick="resetDefaults(); build(); queuePreviewReload(); saveApiKeys()" title="Reset">Reset</button>
+          <button class="btn btn-preview" onclick="copyUrl()" title="Copy config URL">Copy config</button>
+          <button class="btn btn-primary" onclick="openPresetModal()" title="Load a saved preset">Load preset</button>
+          <button class="btn btn-reset" onclick="resetDefaults(); build(); queuePreviewReload(); saveApiKeys()" title="Reset config to defaults">Reset config</button>
         </div>
         <div class="preview-controls">
           <div id="url-display-row">
