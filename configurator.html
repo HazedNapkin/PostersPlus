@@ -334,6 +334,43 @@
     text-transform: uppercase;
   }
 
+  .panel-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  /* Circular icon action sitting on the title's baseline row. */
+  .icon-btn {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: transparent;
+    color: var(--silver-dim);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+
+  /* Needed explicitly: the display above would otherwise outrank [hidden]. */
+  .icon-btn[hidden] { display: none; }
+
+  .icon-btn:hover,
+  .icon-btn:focus-visible {
+    color: var(--gold-bright);
+    border-color: var(--gold-dim);
+    background: var(--gold-faint);
+    outline: none;
+  }
+
+  .icon-btn svg { width: 14px; height: 14px; display: block; }
+
   /* Status readout sits bare next to the preview title — a state dot, not a
      chip, so it doesn't compete with the version pill opposite it.  Qualified
      with :not([hidden]) so this display rule can't outrank the hidden
@@ -2972,7 +3009,15 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
         <div class="notch"></div>
         <div class="panel-header">
           <span class="panel-title">Live preview</span>
-          <span class="panel-index" id="preview-status" hidden>IDLE</span>
+          <div class="panel-header-actions">
+            <!-- href / tooltip set by updateExternalLink(); hidden until a
+                 title is selected. -->
+            <a class="icon-btn" id="external-link" href="#" target="_blank" rel="noopener"
+               aria-label="Open this title externally" hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-8.5 8.5"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>
+            </a>
+            <span class="panel-index" id="preview-status" hidden>IDLE</span>
+          </div>
         </div>
         <div class="preview-frame" id="preview-frame">
           <div class="preview-empty preview-placeholder" id="preview-empty">
@@ -3698,6 +3743,8 @@ function saveApiKeys() {
 function saveSelection(data) { localStorage.setItem('postersplus_selection', JSON.stringify(data)); }
 
 function persistImdbId(imdbId) {
+  // The resolve is async, so this can land after build() has already run.
+  updateExternalLink();
   try {
     const raw = localStorage.getItem('postersplus_selection');
     if (!raw) return;
@@ -3996,8 +4043,33 @@ function build() {
   if (_SHOW_URL_BOX) {
     document.getElementById('url-display-input').value = buildTemplateUrl();
   }
+  updateExternalLink();
   saveSettings();
   return url;
+}
+
+/** Points the preview header's link at the selected title — IMDB when an id has
+ *  been resolved for it, TMDB otherwise — and hides it when nothing is picked.
+ *  Called from build() for the usual paths, and from persistImdbId() for the
+ *  async resolve, which lands after the build() that started it. */
+function updateExternalLink() {
+  const el = document.getElementById('external-link');
+  if (!el) return;
+  const imdb = vEl('cfg-imdb');
+  const tmdb = vEl('cfg-tmdb-resolved');
+  const type = vEl('cfg-media-type') === 'tv' ? 'tv' : 'movie';
+
+  if (imdb) {
+    el.href = `https://www.imdb.com/title/${encodeURIComponent(imdb)}/`;
+    el.dataset.tip = 'Open this title on IMDB.';
+  } else if (tmdb) {
+    el.href = `https://www.themoviedb.org/${type}/${encodeURIComponent(tmdb)}`;
+    el.dataset.tip = 'Open this title on TMDB.';
+  } else {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
 }
 
 function decodePlaceholders(url) {
