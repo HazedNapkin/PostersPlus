@@ -1643,8 +1643,7 @@
     align-items: center;
     gap: 6px;
   }
-  .preset-modal-close,
-  .preset-modal-icon {
+  .preset-modal-close {
     width: 28px;
     height: 28px;
     padding: 0;
@@ -1657,12 +1656,10 @@
     align-items: center;
     justify-content: center;
     line-height: 1;
+    font-size: 15px;
     transition: color 0.15s, background 0.15s;
   }
-  .preset-modal-close { font-size: 15px; }
   .preset-modal-close:hover { color: var(--silver-bright); background: var(--black3); }
-  .preset-modal-icon svg { width: 15px; height: 15px; }
-  .preset-modal-icon:hover { color: var(--gold-bright); background: var(--gold-faint); }
   .preset-grid {
     display: flex;
     flex-direction: column;
@@ -3065,6 +3062,14 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                     onclick="toggleExternalMenu(event)">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-8.5 8.5"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>
             </button>
+            <!-- Last, so it keeps a fixed spot at the panel edge while the
+                 external-link button appears and disappears to its left. -->
+            <button type="button" class="icon-btn" id="import-url-btn"
+                    aria-label="Import settings from a config URL"
+                    data-tip="Import settings from a config URL."
+                    onclick="toggleImportBar()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>
+            </button>
             <span class="panel-index" id="preview-status" hidden>IDLE</span>
           </div>
         </div>
@@ -4122,6 +4127,11 @@ function updateExternalLink() {
   // to check what posters and logos actually exist for a title.
   set('ext-tmdb-posters', base && `${base}/images/posters`);
   set('ext-tmdb-logos',   base && `${base}/images/logos`);
+  // MDBList keys off the IMDB id but splits movie / show in the path — the
+  // wrong one 404s rather than redirecting, so it follows cfg-media-type.
+  set('ext-mdblist', imdb
+    ? `https://mdblist.com/${type === 'tv' ? 'show' : 'movie'}/${encodeURIComponent(imdb)}`
+    : '');
 
   btn.hidden = !(imdb || tmdb);
   if (btn.hidden) closeExternalMenu();
@@ -5516,6 +5526,7 @@ initCustomMobileSliders();
   <a class="menu-item" id="ext-tmdb" href="#" target="_blank" rel="noopener" role="menuitem">TMDB</a>
   <a class="menu-item" id="ext-tmdb-posters" href="#" target="_blank" rel="noopener" role="menuitem">TMDB — Posters</a>
   <a class="menu-item" id="ext-tmdb-logos" href="#" target="_blank" rel="noopener" role="menuitem">TMDB — Logos</a>
+  <a class="menu-item" id="ext-mdblist" href="#" target="_blank" rel="noopener" role="menuitem">MDBList</a>
 </div>
 
 <div class="preset-modal" id="preset-modal" onclick="if(event.target===this)closePresetModal()">
@@ -5523,9 +5534,6 @@ initCustomMobileSliders();
     <div class="preset-modal-header">
       <span class="preset-modal-title">Load preset</span>
       <div class="preset-modal-actions">
-        <button class="preset-modal-icon" onclick="closePresetModal(); toggleImportBar();" title="Import from URL">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>
-        </button>
         <button class="preset-modal-close" onclick="closePresetModal()">✕</button>
       </div>
     </div>
