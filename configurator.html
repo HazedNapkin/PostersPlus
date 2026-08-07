@@ -1513,56 +1513,63 @@
     padding: 24px;
   }
   .preset-modal.open { display: flex; }
+  /* Panel-matched: same fill, radius and header treatment as .left-col, so the
+     modal reads as another surface of the configurator rather than a dialog
+     from an older version of it. */
   .preset-modal-box {
-    background: var(--black2);
+    background: var(--black1);
     border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 24px;
+    border-radius: var(--radius);
+    padding: 22px;
     width: 100%;
-    max-width: 420px;
+    max-width: 460px;
     max-height: 82vh;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 18px;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.55);
   }
   .preset-modal-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 14px;
   }
+  /* Serif sentence case, matching the panel titles. */
   .preset-modal-title {
-    font-family: var(--mono);
-    font-size: 10px;
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    color: var(--silver);
+    font-family: var(--serif);
+    font-size: 21px;
+    font-weight: 400;
+    letter-spacing: 0.015em;
+    text-transform: none;
+    color: var(--cream);
+    line-height: 1.1;
   }
   .preset-modal-actions {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 6px;
   }
-  .preset-modal-close {
-    background: none;
-    border: none;
-    color: var(--silver-dim);
-    cursor: pointer;
-    font-size: 18px;
-    line-height: 1;
-    padding: 0 4px;
-  }
-  .preset-modal-close:hover { color: var(--silver); }
+  .preset-modal-close,
   .preset-modal-icon {
+    width: 28px;
+    height: 28px;
+    padding: 0;
     background: none;
     border: none;
+    border-radius: var(--radius-sm);
     color: var(--silver-dim);
     cursor: pointer;
-    padding: 0;
     display: flex;
     align-items: center;
+    justify-content: center;
+    line-height: 1;
+    transition: color 0.15s, background 0.15s;
   }
-  .preset-modal-icon svg { width: 16px; height: 16px; }
-  .preset-modal-icon:hover { color: var(--gold-bright); }
+  .preset-modal-close { font-size: 15px; }
+  .preset-modal-close:hover { color: var(--silver-bright); background: var(--black3); }
+  .preset-modal-icon svg { width: 15px; height: 15px; }
+  .preset-modal-icon:hover { color: var(--gold-bright); background: var(--gold-faint); }
   .preset-grid {
     display: flex;
     flex-direction: column;
@@ -1574,17 +1581,18 @@
   }
   .preset-grid::-webkit-scrollbar { display: none; }
   .preset-card {
-    background: var(--black3);
+    background: var(--black2);
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     overflow: hidden;
     display: flex;
     flex-direction: row;
     flex-shrink: 0;
     height: 220px;
-    transition: border-color 0.15s;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
   }
-  .preset-card:hover { border-color: var(--silver-dim); }
+  .preset-card:hover { border-color: var(--gold-dim); background: var(--black3); }
   .preset-card-img {
     width: 147px;  /* 2:3 ratio at 220px height */
     height: 220px;
@@ -1607,27 +1615,30 @@
     letter-spacing: 0.15em;
   }
   .preset-card-body {
-    padding: 14px 16px;
+    padding: 16px 18px;
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    width: 200px;
-    flex-shrink: 0;
+    gap: 10px;
+    flex: 1;
     min-width: 0;
   }
+  /* Serif gold, like a .group-title — a preset name heads its card the way a
+     group heading heads its rows. */
   .preset-card-name {
-    font-family: var(--mono);
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--gold-bright);
-    text-align: center;
+    font-family: var(--serif);
+    font-size: 17px;
+    font-weight: 400;
+    letter-spacing: 0.03em;
+    text-transform: none;
+    color: var(--gold);
+    line-height: 1.15;
   }
+  .preset-card:hover .preset-card-name { color: var(--gold-bright); }
   .preset-card-desc {
     font-size: 10px;
-    color: var(--text-secondary);
-    line-height: 1.5;
+    color: var(--silver-dim);
+    line-height: 1.65;
+    letter-spacing: 0.01em;
     flex: 1;
     overflow: hidden;
   }
@@ -1644,32 +1655,38 @@
     padding: 24px;
   }
   .import-modal.open { display: flex; }
+  /* Shares the preset modal's surface — same fill, radius, shadow and title. */
   .import-modal-box {
-    background: var(--black2);
+    background: var(--black1);
     border: 1px solid var(--border);
-    padding: 24px;
+    border-radius: var(--radius);
+    padding: 22px;
     width: 100%;
     max-width: 480px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 18px;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.55);
   }
   .import-modal-title {
-    font-family: var(--mono);
-    font-size: 10px;
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    color: var(--silver);
+    font-family: var(--serif);
+    font-size: 21px;
+    font-weight: 400;
+    letter-spacing: 0.015em;
+    text-transform: none;
+    color: var(--cream);
+    line-height: 1.1;
   }
   .import-input {
     width: 100%;
     box-sizing: border-box;
-    background: var(--black);
+    background: var(--black2);
     border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
     color: var(--text-primary);
     font-family: var(--mono);
     font-size: 11px;
-    padding: 8px 10px;
+    padding: 10px 13px;
     outline: none;
     transition: border-color 0.15s;
   }
@@ -2993,7 +3010,14 @@ const qs = new URLSearchParams(window.location.search);
 // ---------------------------------------------------------------------------
 const _LAN_IP        = /^192\.168\.\d+\.\d+$/.test(window.location.hostname);
 const _REWRITE_DOMAIN = _LAN_IP || window.location.hostname === '127.0.0.1';
-const _SHOW_URL_BOX   = _LAN_IP;   // 127.0.0.1 supports clipboard; LAN IPs don't
+// navigator.clipboard exists only in a secure context — HTTPS, localhost or
+// 127.0.0.1.  Feature-test rather than matching 192.168.x: a plain-HTTP 10.x,
+// 172.16-31.x, Tailscale address or bare hostname is equally insecure, and
+// those used to fall through to the clipboard call and fail with a misleading
+// "check browser permissions".  ?urlbox=1 forces the fallback on so the path
+// can be exercised from a secure origin.
+const _NO_CLIPBOARD   = !window.isSecureContext || !navigator.clipboard;
+const _SHOW_URL_BOX   = _NO_CLIPBOARD || qs.get('urlbox') === '1';
 
 (function deriveAuthFromUrl() {
   // Rewrite the service domain to http://postersplus:<port> when accessed from
@@ -5277,7 +5301,7 @@ initCustomMobileSliders();
 <div class="preset-modal" id="preset-modal" onclick="if(event.target===this)closePresetModal()">
   <div class="preset-modal-box">
     <div class="preset-modal-header">
-      <span class="preset-modal-title">Load Preset</span>
+      <span class="preset-modal-title">Load preset</span>
       <div class="preset-modal-actions">
         <button class="preset-modal-icon" onclick="closePresetModal(); toggleImportBar();" title="Import from URL">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>
