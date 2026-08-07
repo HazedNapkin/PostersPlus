@@ -28,6 +28,8 @@
     --silver-faint:#161820;
 
     --platinum:    #e8eaf0;
+    /* Warm off-white used for the serif panel / group headings. */
+    --cream:       #e7e1d4;
 
     --text-primary:   #dde0e8;
     --text-secondary: #7d838f;
@@ -37,6 +39,10 @@
 
     --serif: 'Cormorant Garamond', Georgia, serif;
     --mono:  'DM Mono', 'Courier New', monospace;
+
+    /* Corner rounding: panels use --radius, controls --radius-sm. */
+    --radius:    10px;
+    --radius-sm: 6px;
   }
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -165,15 +171,17 @@
   .whatsnew-version {
     font-family: var(--mono);
     background: transparent;
-    border: none;
-    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 5px 9px;
     cursor: pointer;
     color: var(--silver-dim);
-    transition: color 0.15s, text-shadow 0.15s;
+    transition: color 0.15s, border-color 0.15s, text-shadow 0.15s;
   }
-  .whatsnew-version:hover { color: var(--silver); }
+  .whatsnew-version:hover { color: var(--silver); border-color: var(--black5); }
   .whatsnew-version[data-acked="false"] {
     color: var(--gold-bright);
+    border-color: var(--gold-dim);
     text-shadow: 0 0 8px var(--gold-glow), 0 0 4px var(--gold);
     animation: whatsnew-pulse 2s ease-in-out infinite;
   }
@@ -274,6 +282,7 @@
     flex-direction: column;
     border: 1px solid var(--border);
     background: var(--black1);
+    border-radius: var(--radius);
   }
 
   .left-col .panel-body {
@@ -295,75 +304,99 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-    background: var(--black2);
+    padding: 18px 18px 14px;
+    background: transparent;
     position: relative;
-    overflow: hidden;
   }
 
-  .panel-header::after {
-    content: '';
-    position: absolute;
-    bottom: 0; left: 0; right: 0;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, var(--gold-dim), transparent);
-  }
-
+  /* The panel title carries the heading weight now, so the header needs no rule
+     of its own — the tab bar's own hairline divides it from the fields below. */
   .panel-title {
     font-family: var(--serif);
-    font-size: 10px;
+    font-size: 21px;
     font-weight: 400;
-    letter-spacing: 0.4em;
-    color: var(--gold);
-    text-transform: uppercase;
+    letter-spacing: 0.015em;
+    color: var(--cream);
+    text-transform: none;
+    line-height: 1.1;
   }
 
   .panel-index {
-    font-size: 9px;
-    color: var(--text-muted);
-    letter-spacing: 0.12em;
+    font-size: 8.5px;
+    color: var(--text-secondary);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+
+  /* Status readout sits bare next to the preview title — a state dot, not a
+     chip, so it doesn't compete with the version pill opposite it.  Qualified
+     with :not([hidden]) so this display rule can't outrank the hidden
+     attribute the status starts (and normally stays) in. */
+  #preview-status:not([hidden]) {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  #preview-status::before {
+    content: '';
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--gold);
+    flex-shrink: 0;
   }
 
   /* ── CATEGORY TAB BAR ── */
+  /* Text-only tabs marked by an underline.  The bar's own hairline is drawn by
+     a pseudo-element inset to the panel padding, so it reads as a rule under
+     the labels rather than a full-bleed panel divider. */
   .tab-bar {
     display: flex;
-    gap: 3px;
-    padding: 8px 6px;
+    justify-content: space-between;
+    gap: 4px;
+    padding: 2px 18px 0;
     background: var(--black1);
-    border-bottom: 1px solid var(--border);
     position: sticky;
     top: 0;
     z-index: 6;
   }
+  .tab-bar::after {
+    content: '';
+    position: absolute;
+    left: 18px; right: 18px; bottom: 0;
+    height: 1px;
+    background: var(--border);
+  }
   .tab-btn {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 5px;
-    padding: 8px 2px;
+    flex: 0 1 auto;
+    position: relative;
+    padding: 9px 2px 12px;
     cursor: pointer;
-    border: 1px solid transparent;
-    border-radius: 4px;
+    border: none;
     background: transparent;
-    color: var(--text-muted);
-    transition: all 0.15s;
+    color: var(--text-secondary);
+    transition: color 0.15s;
     user-select: none;
   }
-  .tab-btn:hover { color: var(--silver); background: var(--black2); }
-  .tab-btn.active {
-    color: var(--gold-bright);
-    border-color: var(--gold-dim);
-    background: var(--gold-faint);
+  .tab-btn:hover { color: var(--silver); }
+  .tab-btn.active { color: var(--gold-bright); }
+  /* Sits on top of the bar hairline (z-index), not beside it. */
+  .tab-btn.active::after {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 2px;
+    background: var(--gold);
+    z-index: 1;
   }
-  .tab-btn svg { width: 17px; height: 17px; flex-shrink: 0; }
+  .tab-btn svg { display: none; }
   .tab-btn-label {
     font-family: var(--mono);
-    font-size: 7px;
+    font-size: 9px;
     font-weight: 500;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.15em;
     text-transform: uppercase;
+    white-space: nowrap;
   }
 
   /* The host fills the fixed-height panel. Each tab scrolls inside this same
@@ -373,81 +406,73 @@
     min-height: 0;
     overflow-y: auto;
     scrollbar-width: none;
-    /* Match the section-body fill so short tabs don't reveal a lighter strip
-       below their content — the field background spans the whole panel. */
-    background: var(--black);
+    /* Fields sit directly on the panel fill — only the controls themselves are
+       raised (--black2), so a short tab leaves no lighter strip behind it. */
+    background: var(--black1);
   }
   #tab-host::-webkit-scrollbar { display: none; }
 
   /* ── SECTIONS ── */
-  /* No inter-section border: each tab shows a single section, so a bottom
-     border would render as a stray trailing line.  The only multi-section tab
-     (Weights) keeps a divider between its two sections via the rule below. */
+  /* The tab label already names the section, so its in-panel header is
+     redundant — except on Weights, the one tab holding two sections. */
   .section {
-    background: var(--black1);
+    background: transparent;
   }
   .section[data-tab="weights"] + .section[data-tab="weights"] {
     border-top: 1px solid var(--border);
   }
 
-  .section-header {
+  .section-header { display: none; }
+
+  .section[data-tab="weights"] .section-header {
     display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 14px;
+    align-items: baseline;
+    padding: 18px 18px 0;
     user-select: none;
   }
 
+  .section-accent,
   .section-chevron { display: none; }
 
-  .section-accent {
-    width: 2px;
-    height: 14px;
-    background: linear-gradient(180deg, var(--gold), var(--gold-dim));
-    flex-shrink: 0;
-    opacity: 0.6;
-  }
-
-  .section-tag {
-    font-family: var(--mono);
-    font-size: 9px;
+  .section-tag,
+  .group-title {
+    font-family: var(--serif);
+    font-size: 15px;
     font-weight: 400;
-    letter-spacing: 0.25em;
-    color: var(--silver);
-    text-transform: uppercase;
-    flex: 1;
+    letter-spacing: 0.03em;
+    color: var(--cream);
+    text-transform: none;
   }
 
-  .section-chevron {
-    font-size: 8px;
-    color: var(--text-muted);
-    transition: transform 0.2s;
+  /* Sub-group heading inside a tab (e.g. Vignette), with the whitespace above
+     that separates it from the group before. */
+  .group-title {
+    display: block;
+    margin-bottom: 16px;
   }
-
 
   .section-body {
-    padding: 14px;
-    border-top: 1px solid var(--border);
-    background: var(--black);
+    padding: 20px 18px 24px;
+    background: transparent;
   }
 
   /* ── FORM ELEMENTS ── */
-  .field { margin-bottom: 12px; }
+  .field { margin-bottom: 18px; }
   .field:last-child { margin-bottom: 0; }
 
   .field-label {
     display: block;
-    font-size: 9px;
+    font-size: 8.5px;
     color: var(--silver-dim);
-    letter-spacing: 0.2em;
-    margin-bottom: 6px;
+    letter-spacing: 0.22em;
+    margin-bottom: 8px;
     text-transform: uppercase;
   }
 
   .field-hint {
-    font-size: 9px;
+    font-size: 9.5px;
     color: var(--text-muted);
-    margin-top: 4px;
+    margin-top: 7px;
     line-height: 1.6;
   }
   .field-hint a {
@@ -456,14 +481,34 @@
     cursor: pointer;
   }
 
+  /* Label on the left, optional trailing note on the right, both on the line
+     above the control. */
   .field-label-row {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 6px;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
   }
 
-  .field-label-row .field-label { margin-bottom: 0; flex: 1; }
+  .field-label-row .field-label { margin-bottom: 0; }
+
+  .field-note {
+    font-size: 9px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    text-align: right;
+  }
+
+  /* Two controls side by side (e.g. native language + priority). */
+  .field-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+    gap: 14px;
+    margin-bottom: 18px;
+  }
+  .field-row > .field { margin-bottom: 0; }
 
   input[type="text"],
   input[type="number"],
@@ -472,11 +517,11 @@
     width: 100%;
     background: var(--black2);
     border: 1px solid var(--border);
-    border-radius: 0;
+    border-radius: var(--radius-sm);
     color: var(--text-primary);
     font-family: var(--mono);
     font-size: 12px;
-    padding: 8px 11px;
+    padding: 10px 13px;
     outline: none;
     transition: border-color 0.15s, background-color 0.15s;
     appearance: none;
@@ -533,9 +578,12 @@
   select {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238a6e2e'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
-    background-position: right 11px center;
-    padding-right: 30px;
+    background-position: right 13px center;
+    padding-right: 32px;
     cursor: pointer;
+    /* Long option labels (e.g. the language list) must clip, not widen the
+       control, now that these can sit in a half-width column. */
+    text-overflow: ellipsis;
   }
 
   select option { background: var(--black2); color: var(--text-primary); }
@@ -543,23 +591,24 @@
   /* ── TMDB SEARCH ── */
   .search-wrap { position: relative; }
 
-  .search-input-row { display: flex; gap: 6px; }
-  .search-input-row input[type="text"] { flex: 1; }
+  .search-input-row { display: flex; gap: 8px; }
+  .search-input-row input[type="text"] { flex: 1; min-width: 0; }
 
   .btn-search {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 6px;
-    padding: 8px 14px;
+    padding: 8px 20px;
     font-family: var(--mono);
-    font-size: 8px;
+    font-size: 8.5px;
     font-weight: 500;
-    letter-spacing: 0.22em;
+    letter-spacing: 0.2em;
     cursor: pointer;
     border: 1px solid var(--gold-dim);
-    background: transparent;
-    color: var(--gold);
+    border-radius: var(--radius-sm);
+    background: linear-gradient(180deg, rgba(201,168,76,0.16), rgba(201,168,76,0.05));
+    color: var(--gold-bright);
     white-space: nowrap;
     transition: all 0.15s;
     text-transform: uppercase;
@@ -567,13 +616,51 @@
   }
 
   .btn-search:hover {
-    background: var(--gold-faint);
+    background: linear-gradient(180deg, rgba(201,168,76,0.26), rgba(201,168,76,0.10));
     border-color: var(--gold);
-    color: var(--gold-bright);
   }
 
   .btn-search:disabled { opacity: 0.35; cursor: not-allowed; }
-  .btn-search:disabled:hover { background: transparent; border-color: var(--gold-dim); color: var(--gold); }
+  .btn-search:disabled:hover { border-color: var(--gold-dim); }
+
+  /* ── SEGMENTED CONTROL ── */
+  /* A row of equal-width options standing in for a short <select>.  The select
+     itself stays in the DOM (hidden) as the value's source of truth — see
+     buildSegmented() — so build / import / reset need no special casing. */
+  .segmented {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    gap: 6px;
+  }
+
+  .segmented-opt {
+    padding: 8px 4px;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.03em;
+    color: var(--text-secondary);
+    background: var(--black2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+
+  .segmented-opt:hover { color: var(--silver); border-color: var(--black5); }
+  .segmented-opt:focus-visible { outline: none; border-color: var(--gold-dim); }
+
+  .segmented-opt.active {
+    color: var(--gold-bright);
+    border-color: var(--gold-dim);
+    background: linear-gradient(180deg, rgba(201,168,76,0.16), rgba(201,168,76,0.05));
+  }
+
+  /* Hidden because the .segmented buttons are its visible face. */
+  select.segmented-source { display: none; }
 
   .search-spinner {
     width: 9px; height: 9px;
@@ -593,6 +680,7 @@
     left: 0; right: 0;
     background: var(--black2);
     border: 1px solid var(--gold-dim);
+    border-radius: var(--radius-sm);
     z-index: 200;
     max-height: 320px;
     overflow-y: auto;
@@ -684,6 +772,7 @@
     background: var(--black2);
     border: 1px solid var(--border);
     border-top: 1px solid var(--gold-dim);
+    border-radius: var(--radius-sm);
     padding: 9px 11px;
     margin-top: 8px;
     gap: 10px;
@@ -759,93 +848,35 @@
   }
 
   /* ── TOGGLE ── */
+  /* Rows are separated by whitespace on a single rhythm shared with .field —
+     no hairlines.  The only rules left inside a tab are the explicit group
+     breaks marked with .cfg-sep. */
   .toggle-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 0;
-    border-bottom: 1px solid var(--border);
+    margin-bottom: 18px;
   }
 
-  .toggle-row:last-child { border-bottom: none; padding-bottom: 0; }
-  .toggle-row:first-child { padding-top: 0; }
-  /* #logo-controls is a wrapper, so its first toggle (Textless) sits right under
-     the Original Art separator — give it normal top padding so it isn't flush,
-     and breathing room for the slider group that follows it. */
-  #logo-controls > .toggle-row:first-child { padding-top: 8px; }
-  #logo-controls .toggle-row + .field { margin-top: 12px; }
-  /* Separator whenever the input type changes between adjacent stacked rows
-     (dropdown ↔ slider ↔ text ↔ toggle).  margin-top lifts the divider off the
-     preceding field's own border so it reads as a separator, not a merge. */
-  .field + .field,
-  .field + .toggle-row {
-    border-top: 1px solid var(--border);
-    margin-top: 12px;
-    padding-top: 14px;
-  }
-  /* Breathing room after a toggle-row's separator before a following field
-     (e.g. the Reference Colour toggle above the Colour Saturation slider). */
-  .toggle-row + .field { margin-top: 14px; }
-  /* Explicit separator for spots the adjacency rule can't reach (same-type
-     dropdowns, or rows nested in a wrapper div).  !important so it wins over the
-     same-type "no divider" rule which has higher specificity. */
+  .toggle-row:last-child { margin-bottom: 0; }
+
+  /* Explicit break between two groups of controls. */
   .cfg-sep {
-    border-top: 1px solid var(--border) !important;
-    margin-top: 12px !important;
-    padding-top: 14px !important;
-  }
-  /* A separated toggle centres its content, so match bottom padding to the top
-     so it sits evenly between its separator and its own bottom border. */
-  .toggle-row.cfg-sep { padding-bottom: 14px !important; }
-  /* Anime IDs belongs to the Core Config block above it, not to a section of
-     its own, so it drops both dividers: the .field + .toggle-row rule would
-     draw one above, and .toggle-row's own border-bottom another below, right
-     on top of the next field's .field + .field border. Tight spacing keeps it
-     reading as the last row of the API-key group. Id specificity beats the
-     adjacency rules without !important. */
-  #anime-ids-row {
-    border-top: none;
-    border-bottom: none;
-    margin-top: 14px;
-    padding-top: 0;
-    padding-bottom: 0;
-  }
-  /* Hide Genre + the per-mode score-out-of-10 toggles close out the rating
-     section as one group: no divider between them, and no trailing border
-     under the last one (:last-child can't do it — the hidden rows for the
-     other modes are still in the DOM). */
-  #hide-genre-row { border-bottom: none; padding-bottom: 8px !important; }
-  .toggle-row.score10-row { border-top: none; border-bottom: none; padding-bottom: 0; }
-  .toggle-row.weights-fallback-toggle {
-    padding-bottom: 14px;
-  }
-  .toggle-row.weights-fallback-toggle + .weight-grid {
-    margin-top: 12px;
-  }
-  /* A toggle centres its label/switch with align-items, so match the bottom
-     padding to the top so the content stays centred between this separator and
-     the row's own bottom border (otherwise it sits high). */
-  .field + .toggle-row { padding-bottom: 14px; }
-  /* ...but NOT between two fields that are the same kind of input. */
-  .field:has(select) + .field:has(select),
-  .field:has(.range-row) + .field:has(.range-row),
-  .field:has(input[type="text"]) + .field:has(input[type="text"]),
-  .field:has(input[type="number"]) + .field:has(input[type="number"]),
-  .field:has(input[type="text"]) + .field:has(input[type="number"]),
-  .field:has(input[type="number"]) + .field:has(input[type="text"]) {
-    border-top: none;
-    margin-top: 0;
-    padding-top: 0;
+    border-top: 1px solid var(--border);
+    margin-top: 24px;
+    padding-top: 24px;
   }
 
-  .toggle-label { font-size: 11px; color: var(--text-primary); letter-spacing: 0.04em; }
+  .toggle-row.weights-fallback-toggle + .weight-grid { margin-top: 12px; }
+
+  .toggle-label { font-size: 11.5px; color: var(--text-primary); letter-spacing: 0.03em; }
   .toggle-sub { font-size: 9px; color: var(--text-muted); margin-top: 2px; line-height: 1.5; }
 
   .toggle-switch {
     position: relative;
-    width: 38px; height: 20px;
+    width: 36px; height: 19px;
     flex-shrink: 0;
-    margin-left: 14px;
+    margin-left: 16px;
   }
 
   .toggle-switch input { display: none; }
@@ -855,25 +886,27 @@
     inset: 0;
     background: var(--black4);
     border: 1px solid var(--border);
+    border-radius: 999px;
     cursor: pointer;
     transition: all 0.2s;
   }
 
   .toggle-thumb {
     position: absolute;
-    top: 3px; left: 3px;
-    width: 12px; height: 12px;
+    top: 2px; left: 2px;
+    width: 13px; height: 13px;
+    border-radius: 50%;
     background: var(--text-muted);
     transition: transform 0.2s, background 0.2s;
   }
 
   .toggle-switch input:checked ~ .toggle-track {
-    background: var(--gold-faint);
+    background: rgba(201,168,76,0.28);
     border-color: var(--gold-dim);
   }
 
   .toggle-switch input:checked ~ .toggle-track .toggle-thumb {
-    transform: translateX(18px);
+    transform: translateX(17px);
     background: var(--gold);
   }
 
@@ -1074,11 +1107,11 @@
   }
 
   .preview-panel {
-    /* Match the controls/log section colour (black2) so the empty tail below
-       the controls reads as a continuation of that section rather than a
-       separate strip, while the panel still stretches to the config height. */
-    background: var(--black2);
+    /* Same fill as the config panel, so the two read as a matched pair and the
+       empty tail below the controls doesn't show up as a separate strip. */
+    background: var(--black1);
     border: 1px solid var(--border);
+    border-radius: var(--radius);
     position: relative;
     display: flex;
     flex-direction: column;
@@ -1086,6 +1119,10 @@
     min-height: 0;
     overflow: hidden;
   }
+
+  /* The config panel gets its header divider from the tab bar below it; the
+     preview panel has nothing there, so it draws its own. */
+  .preview-panel .panel-header { border-bottom: 1px solid var(--border); }
 
   .preview-frame {
     display: flex;
@@ -1095,19 +1132,7 @@
     flex: 1;
     min-height: 420px;
     position: relative;
-    background: var(--black);
-  }
-
-  /* subtle crosshatch */
-  .preview-frame::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background-image:
-      linear-gradient(rgba(201,168,76,0.025) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(201,168,76,0.025) 1px, transparent 1px);
-    background-size: 28px 28px;
-    pointer-events: none;
+    background: transparent;
   }
 
   .preview-poster,
@@ -1141,6 +1166,40 @@
     color: var(--gold);
   }
 
+  /* Idle state only — a poster-shaped frame standing in for the artwork.  The
+     spinner and error states reuse plain .preview-empty, so they stay centred
+     text rather than inheriting this box. */
+  .preview-placeholder {
+    width: 100%;
+    max-width: 296px;
+    aspect-ratio: 2 / 3;
+    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background:
+      repeating-linear-gradient(135deg,
+        rgba(255,255,255,0.022) 0 1px, transparent 1px 9px),
+      var(--black2);
+  }
+
+  .preview-placeholder-title {
+    font-size: 9.5px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--silver-dim);
+  }
+
+  .preview-placeholder-dim {
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    color: var(--text-muted);
+  }
+
   .preview-spinner {
     width: 28px; height: 28px;
     border: 1.5px solid var(--border);
@@ -1153,26 +1212,68 @@
   @keyframes spin { to { transform: rotate(360deg); } }
 
   .preview-meta {
-    padding: 10px 16px;
+    padding: 16px 18px 14px;
     border-top: 1px solid var(--border);
     display: flex;
-    gap: 20px;
-    font-size: 9px;
-    color: var(--text-muted);
-    letter-spacing: 0.12em;
-    flex-wrap: nowrap;
     align-items: center;
-    justify-content: space-between;
-    background: var(--black2);
+    background: transparent;
   }
   .preview-meta-items {
-    display: flex;
-    align-items: center;
-    gap: 20px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    width: 100%;
     min-width: 0;
   }
 
-  .meta-item span { color: var(--silver-dim); }
+  /* Label stacked above its value, so long ids don't crowd the caption. */
+  .meta-item {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    font-size: 8.5px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+  }
+
+  .meta-item span {
+    font-size: 11.5px;
+    letter-spacing: 0.03em;
+    text-transform: none;
+    color: var(--silver-bright);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ── PREVIEW ACTIONS ── */
+  .preview-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr 0.45fr;
+    gap: 10px;
+    padding: 0 18px 16px;
+  }
+
+  .preview-actions .btn {
+    justify-content: center;
+    padding: 11px 6px;
+    border-radius: var(--radius-sm);
+    font-size: 8.5px;
+    letter-spacing: 0.18em;
+  }
+
+  /* Copy is the primary action, so it carries a fill rather than an outline. */
+  .preview-actions .btn-preview {
+    background: linear-gradient(180deg, rgba(201,168,76,0.20), rgba(201,168,76,0.06));
+    border-color: var(--gold-dim);
+    color: var(--gold-bright);
+  }
+  .preview-actions .btn-preview:hover {
+    background: linear-gradient(180deg, rgba(201,168,76,0.30), rgba(201,168,76,0.11));
+    border-color: var(--gold);
+  }
 
   .url-display {
     font-size: 10px;
@@ -1216,6 +1317,7 @@
     text-transform: uppercase;
     cursor: pointer;
     border: 1px solid;
+    border-radius: var(--radius-sm);
     background: transparent;
     transition: all 0.15s;
     white-space: nowrap;
@@ -1455,41 +1557,13 @@
     display: flex;
     flex-direction: column;
     flex: 0 0 auto;
-    background: var(--black2);
+    background: transparent;
   }
 
   .preview-console {
     border-top: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
-    background: var(--black2);
+    background: var(--black);
   }
-  .console-actions {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .console-action {
-    width: 27px;
-    height: 27px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    border: 1px solid currentColor;
-    border-radius: 3px;
-    background: transparent;
-    cursor: pointer;
-    opacity: 0.72;
-    transition: opacity 0.15s, background 0.15s, box-shadow 0.15s;
-  }
-  .console-action:hover { opacity: 1; }
-  .console-action svg { width: 13px; height: 13px; }
-  .console-action-copy { color: var(--gold); }
-  .console-action-copy:hover { background: var(--gold-faint); box-shadow: 0 0 10px var(--gold-glow); }
-  .console-action-load { color: var(--silver); }
-  .console-action-load:hover { background: var(--silver-faint); }
-  .console-action-reset { color: #b04a44; }
-  .console-action-reset:hover { background: #1d0f0e; }
   .log-line {
     font-size: 9px;
     line-height: 1.65;
@@ -1521,15 +1595,8 @@
   .inline-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .two-col     { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
-  .notch {
-    position: absolute;
-    top: 0; right: 0;
-    width: 0; height: 0;
-    border-style: solid;
-    border-width: 0 20px 20px 0;
-    border-color: transparent var(--black) transparent transparent;
-    z-index: 2;
-  }
+  /* The cut corner was the panels' old motif; rounded corners replace it. */
+  .notch { display: none; }
 
   input[type="number"]::-webkit-outer-spin-button,
   input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; }
@@ -1558,8 +1625,24 @@
     .discord-label,
     .theme-label { display: none; }
 
-    .two-col, .inline-grid { grid-template-columns: 1fr; }
+    .two-col, .inline-grid, .field-row { grid-template-columns: 1fr; }
     .weight-item { grid-template-columns: 96px 1fr 38px; column-gap: 8px; }
+    /* Tabs no longer fit on one line at phone widths — let the row scroll.  The
+       inset pseudo-rule would scroll away with it, so use a real border here. */
+    .tab-bar {
+      justify-content: flex-start;
+      gap: 20px;
+      overflow-x: auto;
+      scrollbar-width: none;
+      border-bottom: 1px solid var(--border);
+    }
+    .tab-bar::after { display: none; }
+    .tab-bar::-webkit-scrollbar { display: none; }
+    .tab-btn { flex: 0 0 auto; }
+    .segmented { gap: 5px; }
+    .segmented-opt { min-height: 40px; display: flex; align-items: center; justify-content: center; }
+    .preview-actions { grid-template-columns: 1fr; padding: 0 12px 12px; }
+    .preview-actions .btn { min-height: 44px; }
     .btn-row { flex-wrap: wrap; }
     .btn { flex: 1 1 100%; justify-content: center; min-height: 44px; }
     input[type="text"], input[type="number"], select { min-height: 44px; font-size: 16px; }
@@ -1596,10 +1679,16 @@
     }
     .preview-panel .panel-header,
     .preview-panel .preview-meta,
+    .preview-panel .preview-actions,
     .preview-panel .preview-controls { display: none; }
     .preview-frame { min-height: unset; height: auto; padding: 5px; }
     .preview-poster { width: 100%; height: auto; max-height: none; border: none; }
     .preview-empty { padding: 16px 6px; font-size: 8px; }
+    /* The collapsed preview is already poster-shaped, so the placeholder just
+       needs its typography scaled down to fit. */
+    .preview-placeholder { padding: 0; border-radius: 8px; gap: 6px; }
+    .preview-placeholder-title { font-size: 7px; letter-spacing: 0.16em; }
+    .preview-placeholder-dim { font-size: 8px; }
     .preview-panel.expanded {
       width: 100vw;
       height: 100vh;
@@ -1613,6 +1702,7 @@
     .preview-panel.expanded .panel-header,
     .preview-panel.expanded .preview-meta,
     .preview-panel.expanded .preview-controls { display: flex; }
+    .preview-panel.expanded .preview-actions { display: grid; }
     .preview-panel.expanded .preview-frame {
       flex: none;
       height: 54vh;
@@ -1693,13 +1783,33 @@
     /* Borders */
     --border:        #a0998e;  /* visibly distinct from cream surfaces */
     --border-active: #103578;  /* matches --gold (blue) */
+
+    /* Warm cream headings go dark navy on a light surface. */
+    --cream:         #1e2432;
   }
 
   /* Hardcoded-colour overrides that can't be reached via variables alone */
   html.light-mode .range-val-edit              { color: var(--text-primary); }
+  /* The gold-tinted fills are literal rgba (gradients can't read a variable
+     mid-stop), so the blue accent needs its own set. */
+  html.light-mode .btn-search,
+  html.light-mode .segmented-opt.active,
+  html.light-mode .preview-actions .btn-preview {
+    background: linear-gradient(180deg, rgba(16,53,120,0.13), rgba(16,53,120,0.04));
+  }
+  html.light-mode .btn-search:hover,
+  html.light-mode .preview-actions .btn-preview:hover {
+    background: linear-gradient(180deg, rgba(16,53,120,0.22), rgba(16,53,120,0.09));
+  }
+  html.light-mode .toggle-switch input:checked ~ .toggle-track {
+    background: rgba(16,53,120,0.30);
+  }
+  html.light-mode .preview-placeholder {
+    background: repeating-linear-gradient(135deg,
+      rgba(0,0,0,0.035) 0 1px, transparent 1px 9px), var(--black2);
+  }
   html.light-mode .btn-reset                   { border-color: #8a2a26; color: #b04a44; }
   html.light-mode .btn-reset:hover             { background: #f5e8e6; border-color: #b04a44; color: #c05050; }
-  html.light-mode .console-action-reset:hover  { background: #f5e8e6; }
   html.light-mode .sash-disable-btn:hover      { color: #b04a44; border-color: #b04a44; }
 </style>
 <script>/* apply saved theme before first paint to avoid flash */
@@ -1838,21 +1948,21 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <div class="field-label-row">
                 <label class="field-label"><a href="https://www.themoviedb.org/settings/api" target="_blank" style="color:inherit;text-decoration:none;border-bottom:1px solid var(--text-muted);">TMDB API Key</a></label>
               </div>
-              <input type="text" id="cfg-tmdb-key" placeholder="If blank uses server key." oninput="build(); queuePreviewReload(); saveApiKeys()">
+              <input type="text" id="cfg-tmdb-key" placeholder="Optional — server key used if blank" oninput="build(); queuePreviewReload(); saveApiKeys()">
               <div class="field-hint" id="tmdb-key-hint" style="display:none"></div>
             </div>
             <div class="field">
               <div class="field-label-row">
                 <label class="field-label"><a href="https://mdblist.com/preferences/" target="_blank" style="color:inherit;text-decoration:none;border-bottom:1px solid var(--text-muted);">MDBList API Key</a></label>
               </div>
-              <input type="text" id="cfg-mdblist-key" placeholder="If blank uses server key." oninput="build(); queuePreviewReload(); saveApiKeys()">
+              <input type="text" id="cfg-mdblist-key" placeholder="Optional — server key used if blank" oninput="build(); queuePreviewReload(); saveApiKeys()">
               <div class="field-hint" id="mdblist-key-hint" style="display:none"></div>
             </div>
 
             <div class="toggle-row" id="anime-ids-row">
               <div>
-                <div class="toggle-label">Anime IDs — AIOMetadata only</div>
-                <div class="field-hint" style="margin-top:2px;">Support Kitsu/AniList IDs for artwork.</div>
+                <div class="toggle-label">Anime IDs</div>
+                <div class="field-hint" style="margin-top:3px;">Support Kitsu and AniList IDs for artwork. AIOMetadata only.</div>
               </div>
               <label class="toggle-switch">
                 <input type="checkbox" id="tog-anime-ids" onchange="build()">
@@ -1867,16 +1977,17 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </label>
               <div class="field-hint" id="trending-schedule-hint" style="margin-top:4px;"></div>
             </div>
-            <div class="field">
+            <div class="field cfg-sep">
               <label class="field-label">Primary Client</label>
               <select id="cfg-primary-client" onchange="onPrimaryClientChange()">
                 <option value="stremio_tv_nuvio" selected>Stremio TV, Nuvio, Plex, Jellyfin</option>
                 <option value="stremio_desktop_web">Stremio Desktop/Web</option>
               </select>
-              <div class="field-hint">Sets recommended bar and notch insets. Both remain manually adjustable.</div>
+              <div class="field-hint">Sets recommended bar and notch insets. Both stay adjustable.</div>
             </div>
+            <div class="field-row">
             <div class="field">
-              <label class="field-label">User Native Language</label>
+              <label class="field-label">Native Language</label>
               <select id="cfg-language" oninput="build(); queuePreviewReload(); saveApiKeys()">
                 <option value="en" selected>English ★</option>
                 <option value="es">Spanish ★</option>
@@ -1922,21 +2033,23 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="sw">Swahili</option>
                 <option value="af">Afrikaans</option>
               </select>
-              <div class="field-hint">★ indicates the poster text is fully translated, not just the logo.</div>
             </div>
-            <div class="field" style="margin-top:6px;">
+            <div class="field">
               <label class="field-label">Language Priority</label>
               <select id="cfg-logo-priority" onchange="syncSecondaryLangVisibility(); build(); queuePreviewReload()">
-                <option value="native_original" selected>Native &gt; Original &gt; Text</option>
-                <option value="original_native">Original &gt; Native &gt; Text</option>
-                <option value="native_if_original_english">Native if Original, otherwise English &gt; Original &gt; Text</option>
-                <option value="native_text">Native &gt; English &gt; Neutral &gt; Text</option>
-                <option value="native_custom_text">Native &gt; Custom &gt; Text</option>
-                <option value="native_custom_original_text">Native &gt; Custom &gt; Original &gt; Text</option>
+                <option value="native_original" selected>Native → Original → Text</option>
+                <option value="original_native">Original → Native → Text</option>
+                <option value="native_if_original_english">Native if Original, else English → Original → Text</option>
+                <option value="native_text">Native → English → Neutral → Text</option>
+                <option value="native_custom_text">Native → Custom → Text</option>
+                <option value="native_custom_original_text">Native → Custom → Original → Text</option>
               </select>
-              <div class="field-hint">Original is the source language of the content, text is plain text. Custom is your secondary language, below.</div>
             </div>
-            <div class="field" id="secondary-lang-field" style="margin-top:6px; display:none;">
+            </div><!-- /field-row -->
+            <!-- One hint for both columns: two stacked hint blocks side by side
+                 in half-width cells read as clutter. -->
+            <div class="field-hint" style="margin-top:-10px; margin-bottom:18px;">★ marks languages whose poster text is fully translated, not just the logo. Priority reads left to right — Original is the content's own language, Custom is your secondary language below.</div>
+            <div class="field" id="secondary-lang-field" style="display:none;">
               <label class="field-label">Secondary Language (Custom)</label>
               <select id="cfg-language-secondary" oninput="build(); queuePreviewReload()">
                 <option value="" selected>None</option>
@@ -1986,78 +2099,88 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </select>
               <div class="field-hint">Tried after your native language for the "Custom" priority modes above. ★ indicates the poster text is fully translated, not just the logo.</div>
             </div>
-            <div class="field" style="margin-top:6px;">
+            <div class="field">
               <label class="field-label">Fallback Poster Style</label>
               <select id="cfg-fallback-bg-style" onchange="build(); queuePreviewReload()">
                 <option value="minimal">Textured Backdrop</option>
                 <option value="photoreal" selected>Photorealistic</option>
               </select>
-              <div class="field-hint"><a href="#" onclick="openFallbackGallery(); return false;">Displayed if no poster can be found.</a>.</div>
+              <div class="field-hint"><a href="#" onclick="openFallbackGallery(); return false;">Used only when no poster can be found for a title.</a></div>
             </div>
-            <div class="field cfg-sep">
-              <label class="field-label">Top Vignette</label>
-              <select id="cfg-top-gradient" onchange="updateGradientFields(); build(); queuePreviewReload()">
-                <option value="off">Off</option>
-                <option value="low">Low</option>
-                <option value="medium" selected>Medium</option>
-                <option value="high">High</option>
-                <option value="custom">Custom</option>
-              </select>
-              <div class="field-hint">The power of the darkening applied to the top.</div>
-            </div>
-            <div id="top-gradient-custom-fields" style="display:none; margin-bottom:14px;">
+
+            <div class="cfg-sep">
+              <span class="group-title">Vignette</span>
               <div class="field">
-                <label class="field-label">Opacity</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-tg-op" min="0" max="1" step="0.05" value="1.0" oninput="updateWeightRange(this,'rv-tg-op'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rv-tg-op">100%</span>
+                <div class="field-label-row">
+                  <label class="field-label">Top</label>
+                  <span class="field-note">Darkening applied above the logo</span>
+                </div>
+                <select class="segmented-source" id="cfg-top-gradient" onchange="updateGradientFields(); build(); queuePreviewReload()">
+                  <option value="off">None</option>
+                  <option value="low">Low</option>
+                  <option value="medium" selected>Medium</option>
+                  <option value="high">High</option>
+                  <option value="custom">Custom</option>
+                </select>
+                <div class="segmented" data-for="cfg-top-gradient"></div>
+              </div>
+              <div id="top-gradient-custom-fields" style="display:none; margin-bottom:18px;">
+                <div class="field">
+                  <label class="field-label">Opacity</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-tg-op" min="0" max="1" step="0.05" value="1.0" oninput="updateWeightRange(this,'rv-tg-op'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rv-tg-op">100%</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="field-label">Height</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-tg-ht" min="0" max="1" step="0.05" value="0.25" oninput="updateWeightRange(this,'rv-tg-ht'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rv-tg-ht">25%</span>
+                  </div>
                 </div>
               </div>
               <div class="field">
-                <label class="field-label">Height</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-tg-ht" min="0" max="1" step="0.05" value="0.25" oninput="updateWeightRange(this,'rv-tg-ht'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rv-tg-ht">25%</span>
+                <div class="field-label-row">
+                  <label class="field-label">Bottom</label>
+                  <span class="field-note">Lowering may hurt rating legibility</span>
+                </div>
+                <select class="segmented-source" id="cfg-bottom-gradient" onchange="updateGradientFields(); build(); queuePreviewReload()">
+                  <option value="off">None</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high" selected>High</option>
+                  <option value="custom">Custom</option>
+                </select>
+                <div class="segmented" data-for="cfg-bottom-gradient"></div>
+              </div>
+              <div id="bottom-gradient-custom-fields" style="display:none; margin-bottom:18px;">
+                <div class="field">
+                  <label class="field-label">Opacity</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-bg-op" min="0" max="1" step="0.05" value="1.0" oninput="updateWeightRange(this,'rv-bg-op'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rv-bg-op">100%</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="field-label">Height</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-bg-ht" min="0" max="1" step="0.05" value="0.25" oninput="updateWeightRange(this,'rv-bg-ht'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rv-bg-ht">25%</span>
+                  </div>
                 </div>
               </div>
-            </div>
-            <div class="field">
-              <label class="field-label">Bottom Vignette</label>
-              <select id="cfg-bottom-gradient" onchange="updateGradientFields(); build(); queuePreviewReload()">
-                <option value="off">Off</option>
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high" selected>High</option>
-                <option value="custom">Custom</option>
-              </select>
-              <div class="field-hint">Lowering may hurt rating and logo legibility.</div>
-            </div>
-            <div id="bottom-gradient-custom-fields" style="display:none; margin-bottom:14px;">
-              <div class="field">
-                <label class="field-label">Opacity</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-bg-op" min="0" max="1" step="0.05" value="1.0" oninput="updateWeightRange(this,'rv-bg-op'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rv-bg-op">100%</span>
+              <div class="toggle-row">
+                <div>
+                  <div class="toggle-label">Vignette Only On Sash</div>
+                  <div class="field-hint" style="margin-top:3px;">Only draw the top vignette when a sash is visible.</div>
                 </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-top-vignette-sash-only" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
               </div>
-              <div class="field">
-                <label class="field-label">Height</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-bg-ht" min="0" max="1" step="0.05" value="0.25" oninput="updateWeightRange(this,'rv-bg-ht'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rv-bg-ht">25%</span>
-                </div>
-              </div>
-            </div>
-            <div class="toggle-row">
-              <div>
-                <div class="toggle-label">Vignette Only On Sash</div>
-                <div class="field-hint" style="margin-top:2px;">Only draw the top vignette when a sash is visible.</div>
-              </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="tog-top-vignette-sash-only" onchange="build(); queuePreviewReload()">
-                <div class="toggle-track"><div class="toggle-thumb"></div></div>
-              </label>
-            </div>
+            </div><!-- /vignette group -->
           </div>
         </div>
 
@@ -2783,32 +2906,26 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
       <div class="preview-panel panel">
         <div class="notch"></div>
         <div class="panel-header">
-          <span class="panel-title">Live Preview</span>
+          <span class="panel-title">Live preview</span>
           <span class="panel-index" id="preview-status" hidden>IDLE</span>
         </div>
         <div class="preview-frame" id="preview-frame">
-          <div class="preview-empty" id="preview-empty">
-            <span class="preview-empty-icon">◫</span>
-            Search &amp; select a title<br>to preview
+          <div class="preview-empty preview-placeholder" id="preview-empty">
+            <span class="preview-placeholder-title">Poster preview</span>
+            <span class="preview-placeholder-dim">1000 &times; 1500</span>
           </div>
         </div>
         <div class="preview-meta">
           <div class="preview-meta-items">
-            <span class="meta-item">IMDB: <span id="meta-imdb">—</span></span>
-            <span class="meta-item">TMDB: <span id="meta-tmdb">—</span></span>
-            <span class="meta-item">TYPE: <span id="meta-type">—</span></span>
+            <span class="meta-item">IMDB<span id="meta-imdb">—</span></span>
+            <span class="meta-item">TMDB<span id="meta-tmdb">—</span></span>
+            <span class="meta-item">Type<span id="meta-type">—</span></span>
           </div>
-          <div class="console-actions">
-            <button class="console-action console-action-copy" onclick="copyUrl()" title="Copy URL" aria-label="Copy URL">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l3 3v15H5z"/><path d="M8 3v6h8V3M8 21v-7h8v7"/></svg>
-            </button>
-            <button class="console-action console-action-load" onclick="openPresetModal()" title="Load Preset" aria-label="Load Preset">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h6l2 2h8v12H4z"/><path d="M12 10v6M9 13h6"/></svg>
-            </button>
-            <button class="console-action console-action-reset" onclick="resetDefaults(); build(); queuePreviewReload(); saveApiKeys()" title="Reset" aria-label="Reset">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v6h6"/><path d="M5.5 15a8 8 0 1 0 1-8.5L4 10"/></svg>
-            </button>
-          </div>
+        </div>
+        <div class="preview-actions">
+          <button class="btn btn-preview" onclick="copyUrl()" title="Copy config URL">Copy config URL</button>
+          <button class="btn btn-primary" onclick="openPresetModal()" title="Load preset">Load preset</button>
+          <button class="btn btn-reset" onclick="resetDefaults(); build(); queuePreviewReload(); saveApiKeys()" title="Reset">Reset</button>
         </div>
         <div class="preview-controls">
           <div id="url-display-row">
@@ -4108,6 +4225,9 @@ function resetDefaults() {
     if (el.tagName === 'SELECT') { for (const opt of el.options) opt.selected = opt.defaultSelected; }
   });
   onPrimaryClientChange({ rebuild: false });
+  // Re-reads both gradient selects: re-hides the custom opacity/height sliders
+  // if the reset moved off "custom", and repaints the segmented controls.
+  updateGradientFields();
   buildWeightSection('movie-weights', MOVIE_SOURCES, DEFAULT_MOVIE_W);
   buildWeightSection('tv-weights',    TV_SOURCES,    DEFAULT_TV_W);
   sashOrder    = SASH_SLOTS.filter(s => !SASH_DEFAULT_DISABLED.has(s.id)).map(s => s.id);
@@ -4299,6 +4419,59 @@ function updateCustomPaletteFields() {
 function updateGradientFields() {
   document.getElementById('top-gradient-custom-fields').style.display = document.getElementById('cfg-top-gradient').value === 'custom' ? 'block' : 'none';
   document.getElementById('bottom-gradient-custom-fields').style.display = document.getElementById('cfg-bottom-gradient').value === 'custom' ? 'block' : 'none';
+  syncSegmented();
+}
+
+// ── SEGMENTED CONTROLS ───────────────────────────────────────────────────────
+// A .segmented group renders one button per option of the <select> named in its
+// data-for.  The select stays in the DOM (hidden) and remains the only source
+// of truth, so build(), importUrl() and resetDefaults() keep working on it
+// unchanged — the buttons just write to it and re-fire its change event.
+
+/** Renders the buttons for one .segmented host from its select's options. */
+function buildSegmented(host) {
+  const sel = document.getElementById(host.dataset.for);
+  if (!sel) return;
+  host.replaceChildren();
+  host.setAttribute('role', 'radiogroup');
+  for (const opt of sel.options) {
+    const btn = document.createElement('div');
+    btn.className = 'segmented-opt';
+    btn.dataset.value = opt.value;
+    btn.textContent   = opt.textContent;
+    btn.setAttribute('role', 'radio');
+    btn.tabIndex = 0;
+    btn.addEventListener('click', () => {
+      if (sel.value === opt.value) return;
+      sel.value = opt.value;
+      // Fires the select's inline onchange (updateGradientFields → build → …),
+      // which assigning .value on its own does not.
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    btn.addEventListener('keydown', ev => {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); btn.click(); }
+    });
+    host.appendChild(btn);
+  }
+}
+
+/** Mirrors every segmented group onto its select's current value.  Call after
+ *  any programmatic change — assigning .value never fires change. */
+function syncSegmented() {
+  document.querySelectorAll('.segmented[data-for]').forEach(host => {
+    const sel = document.getElementById(host.dataset.for);
+    if (!sel) return;
+    host.querySelectorAll('.segmented-opt').forEach(btn => {
+      const on = btn.dataset.value === sel.value;
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+  });
+}
+
+function initSegmented() {
+  document.querySelectorAll('.segmented[data-for]').forEach(buildSegmented);
+  syncSegmented();
 }
 
 function updateRatingFields() {
@@ -4861,6 +5034,8 @@ if (!localStorage.getItem('postersplus_selection')) applyDefaultSelection();
 // Re-apply the user's persisted settings on top of the freshly-reset defaults
 // (Core Config — keys / language / selection — is left untouched).
 restoreSettings();
+// After restore, so the buttons paint the persisted value straight away.
+initSegmented();
 syncSecondaryLangVisibility();
 updateRatingFields();
 updateOriginalArt();
