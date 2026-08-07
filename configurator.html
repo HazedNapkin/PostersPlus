@@ -924,6 +924,11 @@
 
   .toggle-row:last-child { margin-bottom: 0; }
 
+  /* Exactly one score-out-of-10 row is ever visible and they always close the
+     panel, but :last-child lands on a hidden sibling — so the visible one
+     would keep a trailing gap on top of the body's own padding. */
+  .toggle-row.score10-row { margin-bottom: 0; }
+
   /* Explicit break between two groups of controls.  The margin collapses with
      the preceding row's --gap-field, so the rule sits --gap-group from both. */
   .cfg-sep {
@@ -2276,232 +2281,230 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="4">Bar</option>
               </select>
             </div>
-            <div id="rating-alt-colors-toggle" style="margin-bottom:14px;">
+            <div id="rating-alt-colors-toggle">
               <div class="field">
                 <label class="field-label">Colour Palette</label>
-                <select id="cfg-score-color-mode" onchange="updateCustomPaletteFields(); build(); queuePreviewReload()">
+                <select class="segmented-source" id="cfg-score-color-mode" onchange="updateCustomPaletteFields(); build(); queuePreviewReload()">
                   <option value="2" selected>Prestige</option>
                   <option value="0">Light</option>
                   <option value="1">Dark/light</option>
                   <option value="3">Custom</option>
                 </select>
+                <div class="segmented" data-for="cfg-score-color-mode"></div>
               </div>
             </div>
-            <div class="field" id="score-custom-palette-field" style="display:none; margin-top:-2px; margin-bottom:14px;">
-              <label class="field-label">Custom Palette</label>
+            <div class="field" id="score-custom-palette-field" style="display:none;">
+              <label class="field-label" data-tip="Use score:hex entries. The highest threshold below the rating wins.">Custom Palette</label>
               <textarea id="cfg-score-custom-palette" placeholder="0:#FF5050&#10;50:#FFD25A&#10;70:#78FFA0&#10;85:#BE8CFF" spellcheck="false"
                         oninput="build(); queuePreviewReload()"></textarea>
-              <div class="field-hint">Use score:hex entries. The highest score threshold below the rating is used.</div>
             </div>
-            <div id="rating-mode1-fields">
-              <div class="field">
-                <label class="field-label">Label Suffix</label>
-                <select id="cfg-bar-append" onchange="build(); queuePreviewReload()">
-                  <option value="0" selected>Year</option>
-                  <option value="1">Info sash</option>
-                  <option value="2">Year + Info sash</option>
-                </select>
-                <div class="field-hint">Picks what to append after the genre.</div>
-              </div>
-              <div class="field" style="border-top:none; padding-top:0; margin-top:6px;">
-                <label class="field-label">Text Colour</label>
-                <div class="color-field">
-                  <input type="text" id="cfg-rtc-m1" placeholder="Default" maxlength="6"                         oninput="_syncRtcM(1); build(); queuePreviewReload()">
-                  <input type="color" id="cfg-rtcp-m1" value="#c8c8c8"                         oninput="document.getElementById('cfg-rtc-m1').value=this.value.slice(1).toUpperCase(); _setAllRtc(this.value.slice(1).toUpperCase()); build(); queuePreviewReload()">
+
+            <div class="cfg-sep" id="rating-style-group">
+              <span class="group-title">Style</span>
+              <div id="rating-mode1-fields">
+                <div class="field">
+                  <label class="field-label" data-tip="What to append after the genre.">Label Suffix</label>
+                  <select id="cfg-bar-append" onchange="build(); queuePreviewReload()">
+                    <option value="0" selected>Year</option>
+                    <option value="1">Info sash</option>
+                    <option value="2">Year + Info sash</option>
+                  </select>
                 </div>
-                <div class="field-hint">Hex colour for the genre/rating text. Leave blank for the mode default.</div>
-              </div>
-              <div class="field" style="border-top:none; padding-top:0; margin-top:6px;">
-                <label class="field-label">Glow Colour</label>
-                <select id="cfg-glow-color-mode" onchange="updateGlowColorField(); build(); queuePreviewReload()">
-                  <option value="white" selected>White</option>
-                  <option value="match">Match Bar Colour</option>
-                  <option value="custom">Custom</option>
-                </select>
-              </div>
-              <div class="field" id="glow-color-custom-field" style="display:none;">
-                <label class="field-label">Custom Glow Colour</label>
-                <div class="color-field">
-                  <input type="text" id="cfg-glow-color" placeholder="FFFFFF" maxlength="6"
-                         oninput="_syncGlowColorPicker(); build(); queuePreviewReload()">
-                  <input type="color" id="cfg-glow-color-picker" value="#ffffff"
-                         oninput="document.getElementById('cfg-glow-color').value=this.value.slice(1).toUpperCase(); build(); queuePreviewReload()">
+                <div class="field">
+                  <label class="field-label" data-tip="Hex colour for the genre/rating text. Leave blank for the mode default.">Text Colour</label>
+                  <div class="color-field">
+                    <input type="text" id="cfg-rtc-m1" placeholder="Default" maxlength="6"                         oninput="_syncRtcM(1); build(); queuePreviewReload()">
+                    <input type="color" id="cfg-rtcp-m1" value="#c8c8c8"                         oninput="document.getElementById('cfg-rtc-m1').value=this.value.slice(1).toUpperCase(); _setAllRtc(this.value.slice(1).toUpperCase()); build(); queuePreviewReload()">
+                  </div>
                 </div>
-              </div>
-              <div class="field">
-                <label class="field-label">Font Size</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-font-mode1" min="0.04" max="0.16" step="0.005" value="0.08" oninput="updateRange(this,'rng-font1'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-font1">0.08</span>
+                <div class="field">
+                  <label class="field-label">Glow Colour</label>
+                  <select id="cfg-glow-color-mode" onchange="updateGlowColorField(); build(); queuePreviewReload()">
+                    <option value="white" selected>White</option>
+                    <option value="match">Match Bar Colour</option>
+                    <option value="custom">Custom</option>
+                  </select>
                 </div>
-              </div>
-              <div class="field">
-                <label class="field-label">Font Position</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-y-mode1" min="0.70" max="0.98" step="0.01" value="0.90" oninput="updateRange(this,'rng-y1'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-y1">0.90</span>
+                <div class="field" id="glow-color-custom-field" style="display:none;">
+                  <label class="field-label">Custom Glow Colour</label>
+                  <div class="color-field">
+                    <input type="text" id="cfg-glow-color" placeholder="FFFFFF" maxlength="6"
+                           oninput="_syncGlowColorPicker(); build(); queuePreviewReload()">
+                    <input type="color" id="cfg-glow-color-picker" value="#ffffff"
+                           oninput="document.getElementById('cfg-glow-color').value=this.value.slice(1).toUpperCase(); build(); queuePreviewReload()">
+                  </div>
                 </div>
-              </div>
-              <div class="field">
-                <label class="field-label">Bar Position</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-bar-bottom" min="0.00" max="0.20" step="0.005" value="0.04" oninput="updateRange(this,'rng-bb'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-bb">0.04</span>
+                <div class="field">
+                  <label class="field-label">Font Size</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-font-mode1" min="0.04" max="0.16" step="0.005" value="0.08" oninput="updateRange(this,'rng-font1'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-font1">0.08</span>
+                  </div>
                 </div>
-              </div>
-            </div>
-            <div id="rating-mode2-fields" style="display:none;">
-              <div class="field" style="border-top:none; padding-top:0; margin-top:6px;">
-                <label class="field-label">Text Colour</label>
-                <div class="color-field">
-                  <input type="text" id="cfg-rtc-m2" placeholder="Default" maxlength="6"                         oninput="_syncRtcM(2); build(); queuePreviewReload()">
-                  <input type="color" id="cfg-rtcp-m2" value="#c8c8c8"                         oninput="document.getElementById('cfg-rtc-m2').value=this.value.slice(1).toUpperCase(); _setAllRtc(this.value.slice(1).toUpperCase()); build(); queuePreviewReload()">
+                <div class="field">
+                  <label class="field-label">Font Position</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-y-mode1" min="0.70" max="0.98" step="0.01" value="0.90" oninput="updateRange(this,'rng-y1'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-y1">0.90</span>
+                  </div>
                 </div>
-                <div class="field-hint">Hex colour for the genre/rating text. Leave blank for the mode default.</div>
-              </div>
-              <div class="field" style="margin-top:10px;">
-                <label class="field-label">Font Size</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-font-mode2" min="0.04" max="0.16" step="0.005" value="0.10" oninput="updateRange(this,'rng-font2'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-font2">0.10</span>
+                <div class="field">
+                  <label class="field-label">Bar Position</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-bar-bottom" min="0.00" max="0.20" step="0.005" value="0.04" oninput="updateRange(this,'rng-bb'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-bb">0.04</span>
+                  </div>
                 </div>
               </div>
-              <div class="field">
-                <label class="field-label">Font Position</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-y-mode2" min="0.70" max="0.98" step="0.01" value="0.90" oninput="updateRange(this,'rng-y2'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-y2">0.90</span>
+              <div id="rating-mode2-fields" style="display:none;">
+                <div class="field">
+                  <label class="field-label" data-tip="Hex colour for the genre/rating text. Leave blank for the mode default.">Text Colour</label>
+                  <div class="color-field">
+                    <input type="text" id="cfg-rtc-m2" placeholder="Default" maxlength="6"                         oninput="_syncRtcM(2); build(); queuePreviewReload()">
+                    <input type="color" id="cfg-rtcp-m2" value="#c8c8c8"                         oninput="document.getElementById('cfg-rtc-m2').value=this.value.slice(1).toUpperCase(); _setAllRtc(this.value.slice(1).toUpperCase()); build(); queuePreviewReload()">
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="field-label">Font Size</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-font-mode2" min="0.04" max="0.16" step="0.005" value="0.10" oninput="updateRange(this,'rng-font2'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-font2">0.10</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="field-label">Font Position</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-y-mode2" min="0.70" max="0.98" step="0.01" value="0.90" oninput="updateRange(this,'rng-y2'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-y2">0.90</span>
+                  </div>
                 </div>
               </div>
-            </div>
-            <div id="rating-mode3-fields" style="display:none;">
-              <div class="field">
-                <label class="field-label">Append</label>
-                <select id="cfg-min-append" onchange="build(); queuePreviewReload()">
-                  <option value="0" selected>Year</option>
-                  <option value="1">Rating</option>
-                  <option value="2">Year + Rating</option>
-                </select>
-                <div class="field-hint">If rating is not chosen the seperator color will give an approximation.</div>
-              </div>
-              <div class="field" style="border-top:none; padding-top:0; margin-top:6px;">
-                <label class="field-label">Text Colour</label>
-                <div class="color-field">
-                  <input type="text" id="cfg-rtc-m3" placeholder="Default" maxlength="6"                         oninput="_syncRtcM(3); build(); queuePreviewReload()">
-                  <input type="color" id="cfg-rtcp-m3" value="#c8c8c8"                         oninput="document.getElementById('cfg-rtc-m3').value=this.value.slice(1).toUpperCase(); _setAllRtc(this.value.slice(1).toUpperCase()); build(); queuePreviewReload()">
+              <div id="rating-mode3-fields" style="display:none;">
+                <div class="field">
+                  <label class="field-label" data-tip="If rating is not chosen, the separator colour gives an approximation of it.">Append</label>
+                  <select class="segmented-source" id="cfg-min-append" onchange="build(); queuePreviewReload()">
+                    <option value="0" selected>Year</option>
+                    <option value="1">Rating</option>
+                    <option value="2">Year + Rating</option>
+                  </select>
+                  <div class="segmented" data-for="cfg-min-append"></div>
                 </div>
-                <div class="field-hint">Hex colour for the genre/rating text. Leave blank for the mode default.</div>
-              </div>
-              <div class="field">
-                <label class="field-label">Font Size</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-font-mode3" min="0.02" max="0.10" step="0.002" value="0.055" oninput="updateRange(this,'rng-font3'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-font3">0.055</span>
+                <div class="field">
+                  <label class="field-label" data-tip="Hex colour for the genre/rating text. Leave blank for the mode default.">Text Colour</label>
+                  <div class="color-field">
+                    <input type="text" id="cfg-rtc-m3" placeholder="Default" maxlength="6"                         oninput="_syncRtcM(3); build(); queuePreviewReload()">
+                    <input type="color" id="cfg-rtcp-m3" value="#c8c8c8"                         oninput="document.getElementById('cfg-rtc-m3').value=this.value.slice(1).toUpperCase(); _setAllRtc(this.value.slice(1).toUpperCase()); build(); queuePreviewReload()">
+                  </div>
                 </div>
-              </div>
-              <div class="field">
-                <label class="field-label">Font Horizontal Position</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-x-mode3" min="0.01" max="0.20" step="0.005" value="0.065" oninput="updateRange(this,'rng-x3'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-x3">0.065</span>
+                <div class="field">
+                  <label class="field-label">Font Size</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-font-mode3" min="0.02" max="0.10" step="0.002" value="0.055" oninput="updateRange(this,'rng-font3'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-font3">0.055</span>
+                  </div>
                 </div>
-              </div>
-              <div class="field">
-                <label class="field-label">Font Vertical Position</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-y-mode3" min="0.00" max="0.98" step="0.01" value="0.92" oninput="updateRange(this,'rng-y3'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-y3">0.92</span>
+                <div class="field">
+                  <label class="field-label">Font Horizontal Position</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-x-mode3" min="0.01" max="0.20" step="0.005" value="0.065" oninput="updateRange(this,'rng-x3'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-x3">0.065</span>
+                  </div>
                 </div>
-              </div>
-            </div>
-            <div id="rating-mode4-fields" style="display:none;">
-              <div class="field" style="margin-bottom:0;">
-                <label class="field-label">Style</label>
-                <select id="cfg-bar-style" onchange="_updateBarRatingRows(); build(); queuePreviewReload()">
-                  <option value="frosted" selected>Frosted</option>
-                  <option value="pure_black">Pure Black</option>
-                  <option value="silver">Black, Silver Trim</option>
-                  <option value="gold">Black, Gold Trim</option>
-                  <option value="rating_frosted">Rating Bar Frosted</option>
-                  <option value="rating_black">Rating Bar Black</option>
-                </select>
-              </div>
-              <div class="field" id="bar-accent-field" style="display:none; margin-top:8px; margin-bottom:0;">
-                <label class="field-label">Rating Bar Colour</label>
-                <select id="cfg-bar-accent" onchange="updateCustomPaletteFields(); build(); queuePreviewReload()">
-                  <option value="silver" selected>Pure Silver</option>
-                  <option value="sample">Colour Sample</option>
-                  <option value="gold">Pure Gold</option>
-                  <option value="palette_2">Prestige</option>
-                  <option value="palette_0">Light</option>
-                  <option value="palette_1">Dark/Light</option>
-                  <option value="palette_custom">Custom</option>
-                </select>
-              </div>
-              <div class="field" style="margin-top:10px; margin-bottom:0;">
-                <label class="field-label">Append</label>
-                <select id="cfg-bar4-append" onchange="build(); queuePreviewReload()">
-                  <option value="rating_year" selected>Rating and Year</option>
-                  <option value="rating">Rating</option>
-                  <option value="year">Year</option>
-                  <option value="sash">Info Sash</option>
-                </select>
-              </div>
-              <div class="field" style="border-top:none; padding-top:0; margin-top:6px;">
-                <label class="field-label">Text Colour</label>
-                <div class="color-field">
-                  <input type="text" id="cfg-rtc-m4" placeholder="Default" maxlength="6"                         oninput="_syncRtcM(4); build(); queuePreviewReload()">
-                  <input type="color" id="cfg-rtcp-m4" value="#c8c8c8"                         oninput="document.getElementById('cfg-rtc-m4').value=this.value.slice(1).toUpperCase(); _setAllRtc(this.value.slice(1).toUpperCase()); build(); queuePreviewReload()">
-                </div>
-                <div class="field-hint">Hex colour for the genre/rating text. Leave blank for the mode default.</div>
-              </div>
-              <div class="field" style="margin-top:10px;">
-                <label class="field-label">Bar Height</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-bar-height" min="0.04" max="0.18" step="0.005" value="0.080" oninput="updateRange(this,'rng-bh5'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-bh5">0.080</span>
+                <div class="field">
+                  <label class="field-label">Font Vertical Position</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-y-mode3" min="0.00" max="0.98" step="0.01" value="0.92" oninput="updateRange(this,'rng-y3'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-y3">0.92</span>
+                  </div>
                 </div>
               </div>
-              <div class="field">
-                <label class="field-label">Font Size</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-bar-font" min="0.15" max="0.70" step="0.01" value="0.55" oninput="updateRange(this,'rng-bf5'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-bf5">0.55</span>
+              <div id="rating-mode4-fields" style="display:none;">
+                <div class="field">
+                  <label class="field-label">Style</label>
+                  <select id="cfg-bar-style" onchange="_updateBarRatingRows(); build(); queuePreviewReload()">
+                    <option value="frosted" selected>Frosted</option>
+                    <option value="pure_black">Pure Black</option>
+                    <option value="silver">Black, Silver Trim</option>
+                    <option value="gold">Black, Gold Trim</option>
+                    <option value="rating_frosted">Rating Bar Frosted</option>
+                    <option value="rating_black">Rating Bar Black</option>
+                  </select>
+                </div>
+                <div class="field" id="bar-accent-field" style="display:none;">
+                  <label class="field-label">Rating Bar Colour</label>
+                  <select id="cfg-bar-accent" onchange="updateCustomPaletteFields(); build(); queuePreviewReload()">
+                    <option value="silver" selected>Pure Silver</option>
+                    <option value="sample">Colour Sample</option>
+                    <option value="gold">Pure Gold</option>
+                    <option value="palette_2">Prestige</option>
+                    <option value="palette_0">Light</option>
+                    <option value="palette_1">Dark/Light</option>
+                    <option value="palette_custom">Custom</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label class="field-label">Append</label>
+                  <select id="cfg-bar4-append" onchange="build(); queuePreviewReload()">
+                    <option value="rating_year" selected>Rating and Year</option>
+                    <option value="rating">Rating</option>
+                    <option value="year">Year</option>
+                    <option value="sash">Info Sash</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label class="field-label" data-tip="Hex colour for the genre/rating text. Leave blank for the mode default.">Text Colour</label>
+                  <div class="color-field">
+                    <input type="text" id="cfg-rtc-m4" placeholder="Default" maxlength="6"                         oninput="_syncRtcM(4); build(); queuePreviewReload()">
+                    <input type="color" id="cfg-rtcp-m4" value="#c8c8c8"                         oninput="document.getElementById('cfg-rtc-m4').value=this.value.slice(1).toUpperCase(); _setAllRtc(this.value.slice(1).toUpperCase()); build(); queuePreviewReload()">
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="field-label">Bar Height</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-bar-height" min="0.04" max="0.18" step="0.005" value="0.080" oninput="updateRange(this,'rng-bh5'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-bh5">0.080</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="field-label">Font Size</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-bar-font" min="0.15" max="0.70" step="0.01" value="0.55" oninput="updateRange(this,'rng-bf5'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-bf5">0.55</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="field-label">Bar Opacity</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-bar-frost" min="0.0" max="1.0" step="0.05" value="0.85" oninput="updateRange(this,'rng-bo5'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-bo5">0.85</span>
+                  </div>
+                </div>
+                <div class="toggle-row" id="bar-reference-row">
+                  <span class="toggle-label" data-tip="Match the poster's true colour instead of the saturation tint.">Reference Colour</span>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tog-bar-frost-reference" onchange="onFrostReferenceChange(this)">
+                    <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                  </label>
+                </div>
+                <div class="field" id="bar-saturation-field">
+                  <label class="field-label">Colour Saturation</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-bar-frost-sat" min="0.0" max="2.0" step="0.05" value="1.20" oninput="updateRange(this,'rng-bsat'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-bsat">1.20</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="field-label">Inset from Bottom</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-bar-inset" min="0.0" max="0.020" step="0.001" value="0.000" oninput="updateRange(this,'rng-bi5'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-bi5">0.000</span>
+                  </div>
                 </div>
               </div>
-              <div class="field">
-                <label class="field-label">Bar Opacity</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-bar-frost" min="0.0" max="1.0" step="0.05" value="0.85" oninput="updateRange(this,'rng-bo5'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-bo5">0.85</span>
-                </div>
-              </div>
-              <div class="toggle-row" id="bar-reference-row">
-                <div>
-                  <div class="toggle-label">Reference Colour</div>
-                  <div class="field-hint" style="margin-top:2px;">Match the poster's true colour instead of the saturation tint.</div>
-                </div>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="tog-bar-frost-reference" onchange="onFrostReferenceChange(this)">
-                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
-                </label>
-              </div>
-              <div class="field" id="bar-saturation-field">
-                <label class="field-label">Colour Saturation</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-bar-frost-sat" min="0.0" max="2.0" step="0.05" value="1.20" oninput="updateRange(this,'rng-bsat'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-bsat">1.20</span>
-                </div>
-              </div>
-              <div class="field">
-                <label class="field-label">Inset from Bottom</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-bar-inset" min="0.0" max="0.020" step="0.001" value="0.000" oninput="updateRange(this,'rng-bi5'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-bi5">0.000</span>
-                </div>
-              </div>
-            </div>
-            <div id="rating-glow-fields" style="margin-top:10px;">
+            </div><!-- /rating-style-group -->
+
+            <div class="cfg-sep" id="rating-glow-fields">
+              <span class="group-title">Glow</span>
               <div class="field">
                 <label class="field-label">Score Glow Threshold</label>
                 <div class="range-row">
@@ -2524,48 +2527,41 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </div>
               </div>
             </div>
-            <div class="toggle-row cfg-sep" id="hide-genre-row">
-              <div>
-                <div class="toggle-label">Hide Genre</div>
-                <div class="field-hint" style="margin-top:2px;">Removes the genre text and associated spacers.</div>
+
+            <div class="cfg-sep">
+              <div class="toggle-row" id="hide-genre-row">
+                <span class="toggle-label" data-tip="Removes the genre text and its associated spacers.">Hide Genre</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-hide-genre" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
               </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="tog-hide-genre" onchange="build(); queuePreviewReload()">
-                <div class="toggle-track"><div class="toggle-thumb"></div></div>
-              </label>
-            </div>
-            <!-- Score-out-of-10 toggles: one per rating mode that prints a
-                 numeric score. Grouped here rather than inside each mode's
-                 own block so every mode-agnostic toggle sits together. -->
-            <div class="toggle-row score10-row" id="numeric-score10-row" style="display:none;">
-              <div>
-                <div class="toggle-label">Display score out of 10</div>
+              <!-- Score-out-of-10 toggles: one per rating mode that prints a
+                   numeric score. Grouped here rather than inside each mode's
+                   own block so every mode-agnostic toggle sits together. -->
+              <div class="toggle-row score10-row" id="numeric-score10-row" style="display:none;">
+                <span class="toggle-label">Display score out of 10</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-score-out-of-10" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
               </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="tog-score-out-of-10" onchange="build(); queuePreviewReload()">
-                <div class="toggle-track"><div class="toggle-thumb"></div></div>
-              </label>
-            </div>
-            <div class="toggle-row score10-row" id="minimalist-score10-row" style="display:none;">
-              <div>
-                <div class="toggle-label">Display score out of 10</div>
+              <div class="toggle-row score10-row" id="minimalist-score10-row" style="display:none;">
+                <span class="toggle-label">Display score out of 10</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-minimalist-score-10" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
               </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="tog-minimalist-score-10" onchange="build(); queuePreviewReload()">
-                <div class="toggle-track"><div class="toggle-thumb"></div></div>
-              </label>
-            </div>
-            <div class="toggle-row score10-row" id="bar-score10-row" style="display:none;">
-              <div>
-                <div class="toggle-label">Display score out of 10</div>
+              <div class="toggle-row score10-row" id="bar-score10-row" style="display:none;">
+                <span class="toggle-label">Display score out of 10</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-bar-score-10" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
               </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="tog-bar-score-10" onchange="build(); queuePreviewReload()">
-                <div class="toggle-track"><div class="toggle-thumb"></div></div>
-              </label>
             </div>
-          </div>
-        </div>
+          </div>        </div>
 
         <!-- 3. LOGO -->
         <div class="section" data-tab="logo">
@@ -4521,9 +4517,12 @@ function buildSegmented(host) {
     btn.addEventListener('click', () => {
       if (sel.value === opt.value) return;
       sel.value = opt.value;
-      // Fires the select's inline onchange (updateGradientFields → build → …),
-      // which assigning .value on its own does not.
+      // Fires the select's inline onchange, which assigning .value alone does not.
       sel.dispatchEvent(new Event('change', { bubbles: true }));
+      // Repaint here rather than relying on the handler: only the vignette
+      // selects happen to call updateGradientFields(), so any other segmented
+      // control would set its value without ever moving the highlight.
+      syncSegmented();
     });
     btn.addEventListener('keydown', ev => {
       if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); btn.click(); }
@@ -4684,6 +4683,9 @@ function updateRatingFields() {
   document.getElementById('numeric-score10-row').style.display      = mode === 2 ? '' : 'none';
   document.getElementById('minimalist-score10-row').style.display   = mode === 3 ? '' : 'none';
   document.getElementById('bar-score10-row').style.display          = mode === 4 ? '' : 'none';
+  // Hidden mode has no per-mode fields, so the Style group would otherwise be
+  // a heading and a rule with nothing under them.
+  document.getElementById('rating-style-group').style.display       = mode === 0 ? 'none' : '';
   if (mode === 4) _updateBarRatingRows();
   updateCustomPaletteFields();
 }
