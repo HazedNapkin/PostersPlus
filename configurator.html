@@ -3113,6 +3113,60 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
   <a class="menu-item" id="ext-simkl" href="#" target="_blank" rel="noopener" role="menuitem">SIMKL</a>
 </div>
 
+<div class="preset-modal" id="preset-modal" onclick="if(event.target===this)closePresetModal()">
+  <div class="preset-modal-box">
+    <div class="preset-modal-header">
+      <span class="preset-modal-title">Load preset</span>
+      <div class="preset-modal-actions">
+        <button class="preset-modal-close" onclick="closePresetModal()">✕</button>
+      </div>
+    </div>
+    <div class="preset-grid" id="preset-grid"></div>
+  </div>
+</div>
+<div class="import-modal" id="import-modal" onclick="if(event.target===this)closeImportModal()">
+  <div class="import-modal-box">
+    <div class="import-modal-title">Import URL</div>
+    <input class="import-input" id="import-input" type="text" placeholder="Paste a poster URL here…" onkeydown="if(event.key==='Enter')applyImport(); if(event.key==='Escape')closeImportModal()">
+    <div class="import-modal-btns">
+      <button class="btn btn-reset" onclick="closeImportModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="applyImport()">Import</button>
+    </div>
+  </div>
+</div>
+<div class="import-modal" id="whatsnew-modal" onclick="if(event.target===this)closeWhatsNew()">
+  <div class="import-modal-box">
+    <div class="import-modal-title">What's new</div>
+    <div class="whatsnew-body">
+      <div>
+        <div class="whatsnew-section-title">v1.2-dev</div>
+        <ul class="whatsnew-list">
+          <li>Award sash labels are now clearer: "Globe Winner" / "Globe Nominee" replace the ambiguous "Golden Globe" label, matching the Oscar/Emmy naming pattern</li>
+          <li>New toggle to show a star icon instead of win/nominee text on award sashes</li>
+          <li>Background cache pre-warming: proactively refreshes posters, logos, and metadata for trending/popular titles ahead of requests, with configurable TMDB/MDBList budgets and an optional (off by default) quality-badge pre-fetch for self-hosted instances</li>
+        </ul>
+      </div>
+      <div>
+        <div class="whatsnew-section-title">v1.1.0</div>
+        <ul class="whatsnew-list">
+          <li>New Frosted Bar poster layout, with frosted, black, silver, gold, and rating-focused styles</li>
+          <li>Rebuilt textless-poster detection around a new OCR model, with background scanning and load controls for live installations</li>
+          <li>Smarter TMDB poster selection: a tiny number of votes can no longer promote a badly rated poster over substantially better artwork</li>
+          <li>Expanded artwork selection: original-art controls, language-aware poster matching, improved logo fallback, and face- and saliency-aware cropping</li>
+          <li>New notch sash style, plus release-status sashes for BluRay, Streaming, Cinema, and Production</li>
+          <li>Backdrop fallback and genre-tinted fallback canvas when no poster or textless art is available</li>
+          <li>MDBList rate-limit cooldown: automatic global pause on 429 to prevent cascade failures</li>
+          <li>New preset gallery and a reorganized, mobile-friendly tabbed configurator</li>
+          <li>New poster-output translations for French, Portuguese, and Italian</li>
+        </ul>
+      </div>
+    </div>
+    <div class="import-modal-btns">
+      <button class="btn btn-primary" onclick="closeWhatsNew()">Got it</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ── THEME TOGGLE ─────────────────────────────────────────────────────────────
 function applyTheme(mode) {
@@ -5535,62 +5589,6 @@ initCustomMobileSliders();
     .observe(document.getElementById(id), { childList: true, subtree: true });
 });
 </script>
-
-<div class="preset-modal" id="preset-modal" onclick="if(event.target===this)closePresetModal()">
-  <div class="preset-modal-box">
-    <div class="preset-modal-header">
-      <span class="preset-modal-title">Load preset</span>
-      <div class="preset-modal-actions">
-        <button class="preset-modal-close" onclick="closePresetModal()">✕</button>
-      </div>
-    </div>
-    <div class="preset-grid" id="preset-grid"></div>
-  </div>
-</div>
-
-<div class="import-modal" id="import-modal" onclick="if(event.target===this)closeImportModal()">
-  <div class="import-modal-box">
-    <div class="import-modal-title">Import URL</div>
-    <input class="import-input" id="import-input" type="text" placeholder="Paste a poster URL here…" onkeydown="if(event.key==='Enter')applyImport(); if(event.key==='Escape')closeImportModal()">
-    <div class="import-modal-btns">
-      <button class="btn btn-reset" onclick="closeImportModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="applyImport()">Import</button>
-    </div>
-  </div>
-</div>
-
-<div class="import-modal" id="whatsnew-modal" onclick="if(event.target===this)closeWhatsNew()">
-  <div class="import-modal-box">
-    <div class="import-modal-title">What's new</div>
-    <div class="whatsnew-body">
-      <div>
-        <div class="whatsnew-section-title">v1.2-dev</div>
-        <ul class="whatsnew-list">
-          <li>Award sash labels are now clearer: "Globe Winner" / "Globe Nominee" replace the ambiguous "Golden Globe" label, matching the Oscar/Emmy naming pattern</li>
-          <li>New toggle to show a star icon instead of win/nominee text on award sashes</li>
-          <li>Background cache pre-warming: proactively refreshes posters, logos, and metadata for trending/popular titles ahead of requests, with configurable TMDB/MDBList budgets and an optional (off by default) quality-badge pre-fetch for self-hosted instances</li>
-        </ul>
-      </div>
-      <div>
-        <div class="whatsnew-section-title">v1.1.0</div>
-        <ul class="whatsnew-list">
-          <li>New Frosted Bar poster layout, with frosted, black, silver, gold, and rating-focused styles</li>
-          <li>Rebuilt textless-poster detection around a new OCR model, with background scanning and load controls for live installations</li>
-          <li>Smarter TMDB poster selection: a tiny number of votes can no longer promote a badly rated poster over substantially better artwork</li>
-          <li>Expanded artwork selection: original-art controls, language-aware poster matching, improved logo fallback, and face- and saliency-aware cropping</li>
-          <li>New notch sash style, plus release-status sashes for BluRay, Streaming, Cinema, and Production</li>
-          <li>Backdrop fallback and genre-tinted fallback canvas when no poster or textless art is available</li>
-          <li>MDBList rate-limit cooldown: automatic global pause on 429 to prevent cascade failures</li>
-          <li>New preset gallery and a reorganized, mobile-friendly tabbed configurator</li>
-          <li>New poster-output translations for French, Portuguese, and Italian</li>
-        </ul>
-      </div>
-    </div>
-    <div class="import-modal-btns">
-      <button class="btn btn-primary" onclick="closeWhatsNew()">Got it</button>
-    </div>
-  </div>
-</div>
 
 </body>
 </html>
