@@ -506,44 +506,32 @@
      sliders) — spaced on the same rhythm as a field of their own. */
   .subfields { margin-bottom: var(--gap-field); }
 
-  /* A label with its hint button beside it.  Occupies exactly the same height
-     as a bare .field-label so both spell the same --gap-label below. */
-  .field-label-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: var(--gap-label);
-  }
-
-  .field-label-row .field-label { margin-bottom: 0; }
-
-  /* ── HINT BUTTON ── */
+  /* ── TOOLTIPS ── */
   /* Explanatory copy lives in a tooltip rather than under the control: a hint
-     on every field doubled the height of some rows and broke the rhythm. */
-  .hint-btn {
-    width: 14px; height: 14px;
-    flex-shrink: 0;
-    padding: 0;
-    border: 1px solid var(--text-muted);
-    border-radius: 50%;
-    background: transparent;
-    color: var(--text-muted);
-    font-family: var(--mono);
-    font-size: 9px;
-    line-height: 1;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+     on every field doubled the height of some rows and broke the rhythm.  The
+     hover target is the whole row; the only mark at rest is a dotted underline
+     on the label, which is quieter than an icon per field. */
+  /* Cursor goes on the label, not the row — a row-wide `help` cursor would
+     override the caret over its own text input. */
+  [data-tip] > .field-label,
+  [data-tip] .toggle-label {
     cursor: help;
-    transition: color 0.15s, border-color 0.15s;
+    text-decoration: underline dotted var(--text-muted);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 4px;
+    transition: color 0.15s, text-decoration-color 0.15s;
   }
 
-  .hint-btn:hover,
-  .hint-btn:focus-visible {
-    color: var(--gold);
-    border-color: var(--gold-dim);
-    outline: none;
+  [data-tip]:hover > .field-label,
+  [data-tip]:hover .toggle-label {
+    color: var(--silver);
+    text-decoration-color: var(--gold-dim);
   }
+
+  /* Labels that also run an action (open the gallery, open TMDB).  Specificity
+     has to match the rule above to win the cursor. */
+  [data-tip] > .field-label.label-action,
+  [data-tip] > .field-label a { cursor: pointer; }
 
   /* Single shared node, position:fixed so no scrolling or overflow:hidden
      ancestor can clip it. */
@@ -930,14 +918,6 @@
   }
 
   .toggle-row:last-child { margin-bottom: 0; }
-
-  /* The label side of a toggle row, so it reads as a peer of .field-label-row. */
-  .toggle-row-label {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-  }
 
   /* Explicit break between two groups of controls.  The margin collapses with
      the preceding row's --gap-field, so the rule sits --gap-group from both. */
@@ -1720,8 +1700,6 @@
     .tab-bar::after { display: none; }
     .tab-bar::-webkit-scrollbar { display: none; }
     .tab-btn { flex: 0 0 auto; }
-    /* Bigger tap target than the 14px dot, without changing the layout box. */
-    .hint-btn { width: 18px; height: 18px; font-size: 10px; }
     #tooltip { max-width: min(280px, calc(100vw - 24px)); font-size: 11px; }
     .segmented { gap: 5px; }
     .segmented-opt { min-height: 40px; display: flex; align-items: center; justify-content: center; }
@@ -2028,30 +2006,18 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             <input type="hidden" id="cfg-tmdb-resolved" value="">
             <input type="hidden" id="cfg-media-type" value="movie">
 
-            <div class="field">
-              <div class="field-label-row">
-                <label class="field-label"><a href="https://www.themoviedb.org/settings/api" target="_blank" style="color:inherit;text-decoration:none;border-bottom:1px solid var(--text-muted);">TMDB API Key</a></label>
-                <!-- data-tip is rewritten by updateKeyBadges() once server caps load. -->
-                <button type="button" class="hint-btn" id="tmdb-key-hint" aria-label="About the TMDB API key"
-                  data-tip="Your own TMDB key. Leave blank to use the server's.">i</button>
-              </div>
+            <!-- data-tip is rewritten by updateKeyBadges() once server caps load. -->
+            <div class="field" id="tmdb-key-field" data-tip="Your own TMDB key. Leave blank to use the server's. Click the label to get one.">
+              <label class="field-label"><a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">TMDB API Key</a></label>
               <input type="text" id="cfg-tmdb-key" placeholder="Optional — server key used if blank" oninput="build(); queuePreviewReload(); saveApiKeys()">
             </div>
-            <div class="field">
-              <div class="field-label-row">
-                <label class="field-label"><a href="https://mdblist.com/preferences/" target="_blank" style="color:inherit;text-decoration:none;border-bottom:1px solid var(--text-muted);">MDBList API Key</a></label>
-                <button type="button" class="hint-btn" id="mdblist-key-hint" aria-label="About the MDBList API key"
-                  data-tip="Your own MDBList key. Leave blank to use the server's.">i</button>
-              </div>
+            <div class="field" id="mdblist-key-field" data-tip="Your own MDBList key. Leave blank to use the server's. Click the label to get one.">
+              <label class="field-label"><a href="https://mdblist.com/preferences/" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">MDBList API Key</a></label>
               <input type="text" id="cfg-mdblist-key" placeholder="Optional — server key used if blank" oninput="build(); queuePreviewReload(); saveApiKeys()">
             </div>
 
-            <div class="toggle-row" id="anime-ids-row">
-              <div class="toggle-row-label">
-                <span class="toggle-label">Anime IDs</span>
-                <button type="button" class="hint-btn" aria-label="About Anime IDs"
-                  data-tip="Support Kitsu and AniList IDs for artwork. AIOMetadata only.">i</button>
-              </div>
+            <div class="toggle-row" id="anime-ids-row" data-tip="Support Kitsu and AniList IDs for artwork. AIOMetadata only.">
+              <span class="toggle-label">Anime IDs</span>
               <label class="toggle-switch">
                 <input type="checkbox" id="tog-anime-ids" onchange="build()">
                 <div class="toggle-track"><div class="toggle-thumb"></div></div>
@@ -2065,24 +2031,16 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </label>
               <div class="field-hint" id="trending-schedule-hint"></div>
             </div>
-            <div class="field cfg-sep">
-              <div class="field-label-row">
-                <label class="field-label">Primary Client</label>
-                <button type="button" class="hint-btn" aria-label="About Primary Client"
-                  data-tip="Sets recommended bar and notch insets for your player. Both stay adjustable.">i</button>
-              </div>
+            <div class="field cfg-sep" data-tip="Sets recommended bar and notch insets for your player. Both stay adjustable.">
+              <label class="field-label">Primary Client</label>
               <select id="cfg-primary-client" onchange="onPrimaryClientChange()">
                 <option value="stremio_tv_nuvio" selected>Stremio TV, Nuvio, Plex, Jellyfin</option>
                 <option value="stremio_desktop_web">Stremio Desktop/Web</option>
               </select>
             </div>
             <div class="field-row">
-            <div class="field">
-              <div class="field-label-row">
-                <label class="field-label">Native Language</label>
-                <button type="button" class="hint-btn" aria-label="About Native Language"
-                  data-tip="★ marks languages whose poster text is fully translated, not just the logo.">i</button>
-              </div>
+            <div class="field" data-tip="★ marks languages whose poster text is fully translated, not just the logo.">
+              <label class="field-label">Native Language</label>
               <select id="cfg-language" oninput="build(); queuePreviewReload(); saveApiKeys()">
                 <option value="en" selected>English ★</option>
                 <option value="es">Spanish ★</option>
@@ -2129,12 +2087,8 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="af">Afrikaans</option>
               </select>
             </div>
-            <div class="field">
-              <div class="field-label-row">
-                <label class="field-label">Language Priority</label>
-                <button type="button" class="hint-btn" aria-label="About Language Priority"
-                  data-tip="Sources are tried left to right. Original is the content's own language; Custom is your secondary language.">i</button>
-              </div>
+            <div class="field" data-tip="Sources are tried left to right. Original is the content's own language; Custom is your secondary language.">
+              <label class="field-label">Language Priority</label>
               <select id="cfg-logo-priority" onchange="syncSecondaryLangVisibility(); build(); queuePreviewReload()">
                 <option value="native_original" selected>Native → Original → Text</option>
                 <option value="original_native">Original → Native → Text</option>
@@ -2145,12 +2099,9 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </select>
             </div>
             </div><!-- /field-row -->
-            <div class="field" id="secondary-lang-field" style="display:none;">
-              <div class="field-label-row">
-                <label class="field-label">Secondary Language (Custom)</label>
-                <button type="button" class="hint-btn" aria-label="About Secondary Language"
-                  data-tip="Tried after your native language in the Custom priority modes. ★ marks fully translated languages.">i</button>
-              </div>
+            <div class="field" id="secondary-lang-field" style="display:none;"
+              data-tip="Tried after your native language in the Custom priority modes. ★ marks fully translated languages.">
+              <label class="field-label">Secondary Language (Custom)</label>
               <select id="cfg-language-secondary" oninput="build(); queuePreviewReload()">
                 <option value="" selected>None</option>
                 <option value="en">English ★</option>
@@ -2198,14 +2149,9 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="af">Afrikaans</option>
               </select>
             </div>
-            <div class="field">
-              <div class="field-label-row">
-                <label class="field-label">Fallback Poster Style</label>
-                <!-- Doubles as the gallery trigger: hover explains, click previews. -->
-                <button type="button" class="hint-btn" aria-label="Preview fallback styles"
-                  onclick="openFallbackGallery()"
-                  data-tip="Used only when no poster can be found for a title. Click to preview both styles.">i</button>
-              </div>
+            <div class="field" data-tip="Used only when no poster can be found for a title. Click the label to preview both styles.">
+              <!-- The label doubles as the gallery trigger: hover explains, click previews. -->
+              <label class="field-label label-action" onclick="openFallbackGallery()">Fallback Poster Style</label>
               <select id="cfg-fallback-bg-style" onchange="build(); queuePreviewReload()">
                 <option value="minimal">Textured Backdrop</option>
                 <option value="photoreal" selected>Photorealistic</option>
@@ -2214,12 +2160,8 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
 
             <div class="cfg-sep">
               <span class="group-title">Vignette</span>
-              <div class="field">
-                <div class="field-label-row">
-                  <label class="field-label">Top</label>
-                  <button type="button" class="hint-btn" aria-label="About the top vignette"
-                    data-tip="How strongly the top of the poster is darkened, above the logo.">i</button>
-                </div>
+              <div class="field" data-tip="How strongly the top of the poster is darkened, above the logo.">
+                <label class="field-label">Top</label>
                 <select class="segmented-source" id="cfg-top-gradient" onchange="updateGradientFields(); build(); queuePreviewReload()">
                   <option value="off">None</option>
                   <option value="low">Low</option>
@@ -2245,12 +2187,8 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   </div>
                 </div>
               </div>
-              <div class="field">
-                <div class="field-label-row">
-                  <label class="field-label">Bottom</label>
-                  <button type="button" class="hint-btn" aria-label="About the bottom vignette"
-                    data-tip="How strongly the bottom is darkened. Lowering this may hurt rating and logo legibility.">i</button>
-                </div>
+              <div class="field" data-tip="How strongly the bottom is darkened. Lowering this may hurt rating and logo legibility.">
+                <label class="field-label">Bottom</label>
                 <select class="segmented-source" id="cfg-bottom-gradient" onchange="updateGradientFields(); build(); queuePreviewReload()">
                   <option value="off">None</option>
                   <option value="low">Low</option>
@@ -2276,12 +2214,8 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   </div>
                 </div>
               </div>
-              <div class="toggle-row">
-                <div class="toggle-row-label">
-                  <span class="toggle-label">Vignette Only On Sash</span>
-                  <button type="button" class="hint-btn" aria-label="About vignette only on sash"
-                    data-tip="Only draw the top vignette when a sash is visible.">i</button>
-                </div>
+              <div class="toggle-row" data-tip="Only draw the top vignette when a sash is visible.">
+                <span class="toggle-label">Vignette Only On Sash</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-top-vignette-sash-only" onchange="build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
@@ -3426,26 +3360,27 @@ async function fetchServerCaps() {
 }
 
 function updateKeyBadges() {
-  const tmdbHint  = document.getElementById('tmdb-key-hint');
-  const mdbHint   = document.getElementById('mdblist-key-hint');
+  const tmdbHint  = document.getElementById('tmdb-key-field');
+  const mdbHint   = document.getElementById('mdblist-key-field');
   const tmdbInput = document.getElementById('cfg-tmdb-key');
   const mdbInput  = document.getElementById('cfg-mdblist-key');
 
   // The placeholder carries the required/optional status at a glance; the
   // tooltip carries the explanation.
+  const GET_ONE = ' Click the label to get one.';
   if (serverCaps.tmdb_key_set) {
-    tmdbHint.dataset.tip = 'Server-side TMDB key configured. Your key (if entered) takes priority.';
+    tmdbHint.dataset.tip = 'Server-side TMDB key configured. Your key (if entered) takes priority.' + GET_ONE;
     tmdbInput.placeholder = 'Optional — server key used if blank';
   } else {
-    tmdbHint.dataset.tip = 'No server-side TMDB key is configured, so your own key is required.';
+    tmdbHint.dataset.tip = 'No server-side TMDB key is configured, so your own key is required.' + GET_ONE;
     tmdbInput.placeholder = 'Required — no server key configured';
   }
 
   if (serverCaps.mdblist_key_set) {
-    mdbHint.dataset.tip = 'Server-side MDBList key configured. Your key (if entered) takes priority.';
+    mdbHint.dataset.tip = 'Server-side MDBList key configured. Your key (if entered) takes priority.' + GET_ONE;
     mdbInput.placeholder = 'Optional — server key used if blank';
   } else {
-    mdbHint.dataset.tip = 'Cached titles work without a key. Uncached titles require one.';
+    mdbHint.dataset.tip = 'Cached titles work without a key. Uncached titles require one.' + GET_ONE;
     mdbInput.placeholder = 'Required for uncached titles';
   }
 
@@ -4590,7 +4525,8 @@ function initSegmented() {
 // positioned inside a field.  Listeners are delegated from document, so
 // controls built later (weights, sash list) are covered without re-binding.
 (function initTooltips() {
-  let el = null, anchor = null;
+  const DELAY = 320;
+  let el = null, anchor = null, timer = null;
 
   function node() {
     if (!el) {
@@ -4602,7 +4538,7 @@ function initSegmented() {
     return el;
   }
 
-  function show(a) {
+  function paint(a) {
     const text = a.getAttribute('data-tip');
     if (!text) return;
     anchor = a;
@@ -4610,15 +4546,22 @@ function initSegmented() {
     t.textContent = text;
     t.classList.add('open');
 
-    // Measure only after the text is in — the box is auto-sized up to max-width.
-    const r  = a.getBoundingClientRect();
-    const tr = t.getBoundingClientRect();
-    const M  = 8;   // keep this far off every viewport edge
+    // Anchor to the row's label rather than the row box, so the tooltip appears
+    // beside the words it explains instead of alongside the middle of a control.
+    const ref = a.querySelector('.field-label, .toggle-label') || a;
+    const r   = ref.getBoundingClientRect();
+    // Park at the origin before measuring: a fixed, width:auto box shrinks to
+    // the space left of the viewport edge, so measuring it where it last sat
+    // would report a narrower box than it actually needs.
+    t.style.left = '0px';
+    t.style.top  = '0px';
+    const tr  = t.getBoundingClientRect();
+    const M   = 8;   // keep this far off every viewport edge
 
     let left = r.left + r.width / 2 - tr.width / 2;
     left = Math.max(M, Math.min(left, window.innerWidth - tr.width - M));
 
-    // Prefer below the anchor; flip above when that would run off the bottom.
+    // Prefer below the label; flip above when that would run off the bottom.
     let top = r.bottom + 8;
     if (top + tr.height > window.innerHeight - M) {
       top = Math.max(M, r.top - tr.height - 8);
@@ -4628,7 +4571,16 @@ function initSegmented() {
     t.style.top  = Math.round(top)  + 'px';
   }
 
+  // Hovering is now the whole row, so a short delay keeps tooltips from firing
+  // while the pointer merely crosses the panel.
+  function show(a, immediate) {
+    clearTimeout(timer);
+    if (immediate) { paint(a); return; }
+    timer = setTimeout(() => paint(a), DELAY);
+  }
+
   function hide() {
+    clearTimeout(timer);
     if (el) el.classList.remove('open');
     anchor = null;
   }
@@ -4638,21 +4590,33 @@ function initSegmented() {
   document.addEventListener('mouseover', ev => {
     const a = target(ev);
     if (a && a !== anchor) show(a);
+    else if (!a) hide();
   });
   document.addEventListener('mouseout', ev => {
-    if (target(ev) === anchor && anchor) hide();
+    if (!anchor) return;
+    // Moving between children of the same row still counts as inside it —
+    // without this the tooltip vanished the moment you crossed from the label
+    // onto the control it describes.
+    if (ev.relatedTarget && anchor.contains(ev.relatedTarget)) return;
+    if (target(ev) === anchor) hide();
   });
-  document.addEventListener('focusin',  ev => { const a = target(ev); if (a) show(a); });
-  document.addEventListener('focusout', hide);
 
-  // Tap toggles, and a tap anywhere else dismisses — hover never fires on touch.
+  // Tabbing onto a control explains the field it belongs to — the only route in
+  // for keyboard users now that there is no focusable hint button.
+  document.addEventListener('focusin',  ev => { const a = target(ev); if (a) show(a, true); });
+  document.addEventListener('focusout', hide);
+  // ...but get out of the way the moment they actually start entering a value.
+  document.addEventListener('input', hide);
+
+  // Tap the label to toggle; a tap anywhere else dismisses. Hover never fires
+  // on touch, so this is the only way in there.
   document.addEventListener('click', ev => {
     const a = target(ev);
     if (!a) { hide(); return; }
-    // Buttons that also do something (the fallback one opens the gallery) must
-    // not pin a tooltip: it outranks the modal's z-index and would sit on top.
-    if (a.hasAttribute('onclick')) { hide(); return; }
-    if (a === anchor) hide(); else show(a);
+    // Labels that also run an action (open the gallery, open TMDB) must not pin
+    // a tooltip: it outranks a modal's z-index and would sit on top of it.
+    if (ev.target.closest('.label-action, a')) { hide(); return; }
+    if (a === anchor) hide(); else show(a, true);
   });
 
   document.addEventListener('keydown', ev => { if (ev.key === 'Escape') hide(); });
