@@ -1317,6 +1317,11 @@ _FROST_CHROMATIC_S = 0.20
 # frost leans colour, not white), but above thin title text (e.g. the red "RUN" on
 # an otherwise black-and-white poster) so that doesn't override an honest white.
 _FROST_CHROMATIC_W = 0.08
+# A cluster this dark carries no usable colour for a *frosted* element — it would
+# only make the frost muddy — so it is skipped entirely. Callers tinting something
+# dark in the first place (the vignette) can lower it via _dominant_cluster's
+# min_v, where a deep amber is a perfectly good source.
+_FROST_MIN_V = 0.16
 
 
 def _is_skin_tone(r: float, g: float, b: float) -> bool:
@@ -1334,9 +1339,20 @@ def _is_skin_tone(r: float, g: float, b: float) -> bool:
 
 def _dominant_cluster(
     region: Image.Image,
+    min_s: float | None = None,
+    min_w: float | None = None,
+    min_v: float | None = None,
 ) -> tuple[tuple[float, float, float] | None, float, float, bool]:
     """Most prominent *actual* colour of a region → ((r,g,b), value, saturation,
     is_skin).
+
+    ``min_s`` / ``min_w`` override how chromatic and how widespread a cluster must
+    be to count as a genuine colour, defaulting to _FROST_CHROMATIC_S / _W.
+    ``min_v`` overrides how bright a cluster must be to be considered at all
+    (default _FROST_MIN_V). A caller that would rather have a minority accent
+    colour than an honest white/grey can relax them; the frosted elements use the
+    defaults, where a large flat panel of colour is what you actually want to
+    match and a dark cluster would make the frost muddy.
 
     Quantises the region into a handful of real colour clusters, rather than
     taking a flat mean of every pixel — a mean of several distinct colours lands
@@ -1353,6 +1369,12 @@ def _dominant_cluster(
     False)`` only for an empty region; the trailing fields let the caller judge
     reliability and whether the pick was skin."""
     import colorsys
+    if min_s is None:
+        min_s = _FROST_CHROMATIC_S
+    if min_w is None:
+        min_w = _FROST_CHROMATIC_W
+    if min_v is None:
+        min_v = _FROST_MIN_V
     if region.width == 0 or region.height == 0:
         return None, 0.0, 0.0, False
     # A modest downsample preserves the real colours; the old heavy-blur + 8x8
@@ -1385,7 +1407,7 @@ def _dominant_cluster(
         _h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
         if v > brightest_hsv[0]:
             brightest_hsv, brightest = (v, s), (float(r), float(g), float(b))
-        if v < 0.16:                       # near-black — never a tint source
+        if v < min_v:                      # near-black — never a tint source
             continue
         weight = count / total
         # Population-led, biased toward *chroma* (saturation × value), not raw
@@ -1395,7 +1417,7 @@ def _dominant_cluster(
         rgb = (float(r), float(g), float(b))
         if score > best_any_score:
             best_any_score, best_any, best_any_hsv = score, rgb, (v, s)
-        if s >= _FROST_CHROMATIC_S and weight >= _FROST_CHROMATIC_W:
+        if s >= min_s and weight >= min_w:
             if _is_skin_tone(r, g, b):
                 if score > best_skin_score:
                     best_skin_score, best_skin, best_skin_hsv = score, rgb, (v, s)
