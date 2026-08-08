@@ -18,7 +18,7 @@ from urllib.parse import parse_qsl, urlencode
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 logging.basicConfig(
     level=logging.INFO,
@@ -552,7 +552,7 @@ async def _background_quality_fetch(
 
 # Local imports
 from age_badge import draw_quality_age_badge, draw_tier_bar, _score_points
-from awards import dominant_frost_rgb
+from awards import _dominant_cluster, _frost_rank, _is_skin_tone, dominant_frost_rgb
 from awards import FETCH_FAILED, _RateLimited, draw_award_badge, draw_award_sash, parse_mdblist_awards
 from i18n import load_languages, translate_genre, translate_sash
 from cache import (
@@ -880,6 +880,18 @@ class RequestConfig:
     top_gradient:    str = "high"   # off | low | medium | high | custom - strength of the top vignette
     bottom_gradient: str = "high"   # off | low | medium | high | custom - strength of the bottom vignette
     top_vignette_sash_only: bool = False
+    # Tint a vignette from the poster art instead of painting it black.  Chosen per
+    # band: the top sits under sashes, badges and the age rating while the bottom
+    # sits under the logo and rating bar, so they are not one decision.  Both draw
+    # the same whole-poster colour sample the frosted bar / notch / sash use, so a
+    # tinted vignette always agrees with them.  (Legacy `vignette_poster_color`
+    # sets both — see build_request_config.)
+    vignette_poster_color_top: bool = False
+    vignette_poster_color_bottom: bool = False
+    vignette_color_saturation: float = 1.5  # chroma of the tint (0 = plain black vignette)
+    vignette_color_blur: float = 0.5        # 0 = follows the art, 1 = flat dominant colour
+    vignette_color_ramp: bool = False       # ramp between the poster's two colours, not one flat tint
+    vignette_color_local: bool = False      # sample each band's own area, not the whole poster
     top_gradient_opacity: float | None = None
     top_gradient_height: float | None = None
     bottom_gradient_opacity: float | None = None
@@ -1041,6 +1053,16 @@ def build_request_config(params: dict) -> RequestConfig:
         cfg.bottom_gradient = "custom"
 
     cfg.top_vignette_sash_only = _b("top_vignette_sash_only", cfg.top_vignette_sash_only)
+    # vignette_poster_color was a single toggle covering both bands before they were
+    # split. Honour it as the default for each side so existing URLs and presets
+    # keep rendering identically; an explicit per-band param wins over it.
+    _vpc_legacy = _b("vignette_poster_color", False)
+    cfg.vignette_poster_color_top    = _b("vignette_poster_color_top",    _vpc_legacy)
+    cfg.vignette_poster_color_bottom = _b("vignette_poster_color_bottom", _vpc_legacy)
+    cfg.vignette_color_saturation = _f("vignette_color_saturation", cfg.vignette_color_saturation, 0.0, 3.0)
+    cfg.vignette_color_blur       = _f("vignette_color_blur",       cfg.vignette_color_blur,       0.0, 1.0)
+    cfg.vignette_color_ramp    = _b("vignette_color_ramp",    cfg.vignette_color_ramp)
+    cfg.vignette_color_local   = _b("vignette_color_local",   cfg.vignette_color_local)
     val_tgo = params.get("top_gradient_opacity")
     if val_tgo is not None:
         try: cfg.top_gradient_opacity = float(val_tgo)
@@ -1255,6 +1277,477 @@ _BOTTOM_GRADIENT_LEVELS: dict[str, tuple[float, int] | None] = {
 # at the top).  Decoupled from strength so retuning one doesn't affect the
 # other.
 _BOTTOM_GRADIENT_CURVE = 1.5
+
+# --- Poster-coloured vignette ------------------------------------------------
+# HSV Value and Saturation of the tint at full slider strength.  Both are keyed
+# to the *slider*, never to how saturated the source art happens to be: the art
+# contributes hue, the slider contributes intensity.  Deriving intensity from the
+# source instead made output wildly inconsistent across a shelf — a vivid red
+# poster earned both more chroma and more Value and blew out, while a muted one
+# was scaled down twice over and barely showed at the same setting.
+_VIGNETTE_TINT_V = 0.38
+_VIGNETTE_TINT_S = 1.00
+# Slider value at which the tint reaches that full strength.  This is the top of
+# the configurator's range, so the slider maps linearly onto 0 → full.
+_VIGNETTE_SAT_FULL = 3.0
+# Noise gate on the sampled hue, in chroma (Value × Saturation): below _FLOOR the
+# sample is treated as colourless and the vignette stays black, reaching full
+# trust at _SOLID.  Deliberately generous — this exists only to reject greyscale
+# art and near-black shadow noise, NOT to scale down honestly muted palettes,
+# which is the mistake that made low-saturation posters need a high Value before
+# they read at all.
+_VIGNETTE_HUE_FLOOR = 0.02
+_VIGNETTE_HUE_SOLID = 0.08
+# Perceived brightness of a fully saturated hue swings roughly 8x between blue
+# and yellow at one HSV Value, so matching Value alone still leaves a shelf
+# uneven — it only moves which posters shout.  Pull each hue part of the way
+# toward a common luminance instead: 0.0 would keep raw Value, 1.0 would match
+# luminance exactly and drive blue to a clipped, garish extreme (it cannot be
+# bright without being vivid).  Half cuts the spread from ~8x to under 3x while
+# leaving every hue inside its natural range.
+_VIGNETTE_LUMA_REF     = 0.40
+_VIGNETTE_LUMA_CORRECT = 0.5
+_LUMA_COEFFS = np.array([0.299, 0.587, 0.114], dtype=np.float32)
+# Relaxed thresholds for the vignette's second-pass colour hunt (see
+# _vignette_dominant_rgb).  Low enough that one red prop on an otherwise
+# monochrome poster wins the pick, because a white or grey tint is
+# indistinguishable from no tint at all — it reads as the feature being broken.
+_VIGNETTE_ACCENT_S = 0.12
+# Deliberately tiny: on a poster that is 90% black, the warm clusters that carry
+# its whole identity each cover barely 1% and a stricter floor left it untinted.
+# Safe because it is paired with the _S threshold above and only ever reached
+# after the strict pick failed — art with no chromatic cluster at all still finds
+# nothing here and keeps its black vignette.
+_VIGNETTE_ACCENT_W = 0.008
+# The accent hunt also looks into darker clusters than a frosted element would.
+# A poster that is mostly black with one warm-lit figure has its colour *only*
+# down there; at the frost default it was skipped and the pick fell through to
+# whatever pale title text happened to be brighter.
+_VIGNETTE_ACCENT_V = 0.06
+# ...but a dark cluster must still carry real *chroma* (Value x Saturation), not
+# merely a high HSV Saturation, which is close to meaningless down there: pure
+# black plus eight levels of warm compression noise reads as S=0.22 while its
+# chroma is 0.03.  Taking hue from that and amplifying it to full saturation is
+# how a black-and-white poster ended up with an invented olive band.  A genuinely
+# dark-but-coloured cluster (a deep amber at 0.19) clears this comfortably.
+_VIGNETTE_ACCENT_CHROMA = 0.10
+# Whole-poster colour presence (mean opponent chroma, 0–255-ish) used only when no
+# accent cluster qualifies.  Measured over every pixel, so it cannot be fooled by
+# one cluster the way a single-cluster test can: a genuinely colour-graded but
+# muted poster reads ~20, a black-and-white one ~3-5.  This is what separates "the
+# art is dark teal" (tint it) from "the art is greyscale with a faint sepia cast"
+# (leave it black) — the two are indistinguishable from any single cluster.
+_VIGNETTE_PRESENCE_LOW  = 6.0
+_VIGNETTE_PRESENCE_HIGH = 18.0
+
+
+def _vignette_color_presence(poster: Image.Image) -> float:
+    """How much colour the poster actually contains, as mean opponent chroma.
+
+    Uses R-G / G-B rather than HSV Saturation because those are zero for any
+    neutral pixel regardless of brightness, where HSV Saturation explodes on
+    near-black (pure black plus a little warm noise reads S=0.22).
+    """
+    a = np.asarray(poster.convert("RGB").resize((64, 64), Image.Resampling.BOX), dtype=np.float32)
+    return float(np.hypot(a[..., 0] - a[..., 1], a[..., 1] - a[..., 2]).mean())
+
+
+def _vignette_dominant_rgb(
+    poster: Image.Image,
+) -> tuple[tuple[float, float, float], tuple[float, float, float], float]:
+    """Whole-poster colour for the vignette tint → (strict_pick, vignette_pick,
+    confidence).
+
+    ``strict_pick`` is the ordinary pick the frosted bar / notch / sash use,
+    returned so the caller can share it with them rather than quantising twice.
+
+    ``vignette_pick`` is what the vignette should tint from.  It is the strict
+    pick whenever that found a real colour — the common case, where every element
+    still agrees exactly.  Only when the strict pick comes back white, grey or
+    near-black does it hunt again with relaxed thresholds, so a mostly monochrome
+    poster tints from whatever accent it does have rather than from the neutral
+    that dominates it by area.
+
+    ``confidence`` answers "does this poster have a usable hue at all", once, for
+    the whole poster — and it is deliberately near-binary.  Judging that per cell
+    from local chroma instead made muted-but-hued art (a grey-teal war poster, a
+    dark-teal one) come out at half strength, which is the same mistake as letting
+    the source's saturation drive intensity: the art is supposed to choose the hue
+    and the slider the strength.  It only tapers below 1.0 for art that is
+    genuinely almost monochrome, so such a poster fades out rather than snapping
+    to black.  The tint is never invented, only found.
+    """
+    rgb, v, s, skin = _dominant_cluster(poster)
+    strict = rgb if rgb is not None else (128.0, 128.0, 128.0)
+    if rgb is not None and _frost_rank(v, s, skin) >= 2:
+        return strict, strict, 1.0
+    # Relax the thresholds, then — only if that still finds nothing — allow dark
+    # clusters too.  The order matters: dropping the brightness floor up front lets
+    # a poster's large dark regions outweigh its accent on area alone, which
+    # replaced Roma's yellow title and Sin City's blue with a near-black.  A dark
+    # colour is a last resort, not a peer of a bright one.
+    accent = None
+    for _min_v in (None, _VIGNETTE_ACCENT_V):
+        accent, accent_v, accent_s, _askin = _dominant_cluster(
+            poster, _VIGNETTE_ACCENT_S, _VIGNETTE_ACCENT_W, _min_v
+        )
+        if accent is not None and accent_v * accent_s >= _VIGNETTE_ACCENT_CHROMA:
+            return strict, accent, 1.0
+    # No cluster carries a real colour.  Fall back to how much colour the poster
+    # has *overall* rather than to the chosen cluster's own chroma: a single dark
+    # cluster cannot tell a dark-teal grade from greyscale-plus-sepia, and judging
+    # by it demoted honestly muted art to half strength.
+    best = accent if accent is not None else strict
+    presence = _vignette_color_presence(poster)
+    conf = (presence - _VIGNETTE_PRESENCE_LOW) / (_VIGNETTE_PRESENCE_HIGH - _VIGNETTE_PRESENCE_LOW)
+    return strict, best, max(0.0, min(1.0, conf))
+
+
+def _vignette_secondary_rgb(
+    poster: Image.Image, primary: tuple[float, float, float]
+) -> tuple[float, float, float] | None:
+    """Second colour for the two-tone ramp, or None if the art hasn't got one.
+
+    The best-scoring chromatic cluster whose hue is far enough from ``primary`` to
+    actually read as a different colour — a ramp between two shades of one hue is
+    just a flat tint with a smudge in it, so it is better to fall back to flat.
+    Scored the same way as the primary pick (population, biased toward chroma) so
+    the two ends are the poster's two real colours rather than its colour and an
+    incidental highlight.
+
+    Skin is excluded outright, and the coverage bar is much higher than the accent
+    hunt's.  Both matter: on a poster that is a man against a blue sky, his face
+    and hands are the only thing far enough from blue to qualify, so without these
+    the ramp announced a second colour — red — that is nowhere in the art.
+    """
+    import colorsys
+    small = poster.convert("RGB")
+    if max(small.size) > 64:
+        small = small.resize((48, 48), Image.Resampling.LANCZOS)
+    try:
+        q = small.quantize(colors=12, method=Image.Quantize.FASTOCTREE)
+    except Exception:
+        q = small.quantize(colors=12)
+    palette, counts = q.getpalette() or [], q.getcolors() or []
+    if not palette or not counts:
+        return None
+    p_h = colorsys.rgb_to_hsv(*(c / 255 for c in primary))[0]
+    total = float(sum(c for c, _ in counts)) or 1.0
+    best, best_score = None, -1.0
+    for count, idx in counts:
+        r, g, b = palette[idx * 3:idx * 3 + 3]
+        h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+        if v < _VIGNETTE_RAMP_MIN_V or s < _VIGNETTE_ACCENT_S:
+            continue
+        if v * s < _VIGNETTE_ACCENT_CHROMA:   # same real-colour test as the accent hunt
+            continue
+        if _is_skin_tone(r, g, b):          # a face is not a poster's second colour
+            continue
+        weight = count / total
+        if weight < _VIGNETTE_RAMP_MIN_W:
+            continue
+        dh = abs(h - p_h)
+        if min(dh, 1.0 - dh) < _VIGNETTE_RAMP_MIN_HUE:   # hue is circular
+            continue
+        score = weight * (0.3 + s * v)
+        if score > best_score:
+            best_score, best = score, (float(r), float(g), float(b))
+    return best
+
+
+def _vignette_level_band(
+    image: Image.Image, box: tuple[int, int, int, int], ramp: Image.Image, amount: float
+) -> None:
+    """Darken over-bright artwork inside one vignette band, in place.
+
+    The tint is composited *over* the art at the vignette's alpha, so whatever the
+    art does at (1 - alpha) lands in the result untouched.  That is the entire
+    reason a poster whose bottom is white cloud reads pale next to one whose bottom
+    is dark, at identical settings — the tint contributes the same to both.  This
+    scales the bright case down so the bleed-through is comparable, weighted by the
+    same alpha ramp so there is no seam, and scaled by ``amount`` (the tint's
+    strength) so a faint tint doesn't aggressively regrade the poster.
+
+    Only ever darkens: art already below the bleed budget is left exactly alone.
+    """
+    if amount <= 0:
+        return
+    x0, y0, x1, y1 = box
+    prof = np.asarray(ramp, dtype=np.float32)
+    peak = float(prof.max())
+    if peak <= 0:
+        return
+    band = image.crop(box)
+    art  = np.asarray(band.convert("RGB"), dtype=np.float32)
+    # Alpha-weighted mean luminance of the art, i.e. what actually reaches the eye.
+    w = prof / peak
+    art_luma = float((art @ _LUMA_COEFFS * w).sum() / max(w.sum(), 1e-6))
+    bleed = (1.0 - peak / 255.0) * art_luma
+    if bleed <= _VIGNETTE_ART_BLEED:
+        return
+    k = max(_VIGNETTE_LEVEL_FLOOR, _VIGNETTE_ART_BLEED / bleed)
+    k = 1.0 - (1.0 - k) * min(1.0, amount)
+    mask = ramp.point(lambda a, _p=peak: min(255, int(a * 255 / _p)))
+    # Scale the RGB array rather than Image.point, which on an RGBA band would
+    # scale the alpha channel too.
+    levelled = Image.fromarray(np.clip(art * k, 0, 255).astype(np.uint8), "RGB")
+    image.paste(levelled, (x0, y0), mask=mask)
+
+
+def _vignette_band_colour(
+    poster: Image.Image,
+    box: tuple[int, int, int, int],
+    whole: tuple[tuple[float, float, float], float, tuple[float, float, float] | None],
+    local: bool,
+    want_ramp: bool,
+) -> tuple[tuple[float, float, float], float, tuple[float, float, float] | None]:
+    """(tint, confidence, secondary) for one vignette band.
+
+    With ``local`` off this is just the whole-poster pick, so both bands agree and
+    so does every frosted element.
+
+    With it on, the band is judged on its own patch of art — the top can take a
+    poster's sky while the bottom takes its ground, instead of both being handed
+    one average that matches neither.  The whole-poster pick is kept as a fallback
+    for when the patch has no colour to offer (a band over plain shadow, say),
+    since otherwise local sampling would force a black band onto a poster that
+    plainly has colour elsewhere.  The comparison is on confidence, so the fallback
+    fires exactly when the local patch reads as colourless and not otherwise.
+
+    A local band takes its ramp partner locally too, or goes flat: pairing a local
+    primary with a secondary from the far end of the poster would ramp toward a
+    colour that isn't anywhere near this band.
+    """
+    if not local:
+        return whole
+    region = poster.crop(box)
+    _strict, tint, conf = _vignette_dominant_rgb(region)
+    if conf < whole[1]:
+        return whole
+    second = _vignette_secondary_rgb(region, tint) if (want_ramp and conf > 0) else None
+    return tint, conf, second
+
+
+def _vignette_hue_gate(field: np.ndarray) -> np.ndarray:
+    """0–1 confidence that each cell of ``field`` carries a usable hue.
+
+    Keyed on chroma — HSV Value x Saturation, which reduces to (max - min) / 255 —
+    so it rejects white, grey and near-black equally, and accepts a dark but vivid
+    hue.  0 means there is nothing there worth tinting from.
+    """
+    maxc = field.max(axis=-1)
+    minc = field.min(axis=-1)
+    chroma = np.where(maxc > 0, (maxc - minc) / 255.0, 0.0)
+    return np.clip(
+        (chroma - _VIGNETTE_HUE_FLOOR) / (_VIGNETTE_HUE_SOLID - _VIGNETTE_HUE_FLOOR), 0.0, 1.0
+    )
+# Horizontal resolution the band is reduced to at blur=0, before being smoothed
+# back up.  High enough that the band visibly follows the art (which is the whole
+# point of the low end of the slider), low enough that faces and title text stay
+# a colour haze rather than a legible ghost.
+_VIGNETTE_TINT_COLUMNS = 64
+# Easing exponents for the blur slider.  Both are front-loaded so the flattening
+# is obvious within the first half of the travel — at a linear ramp the top end
+# was indistinguishable from the bottom, since even a coarse sample is already
+# smooth once it has been scaled back up.
+_VIGNETTE_BLUR_DETAIL_CURVE = 3.0   # how fast the sampled detail collapses
+_VIGNETTE_BLUR_MIX_CURVE    = 0.7   # how fast it commits to the flat dominant colour
+# Peak Gaussian radius applied to the artwork inside the band, as a fraction of
+# poster width so it is resolution-independent.  Flattening the *tint* alone left
+# the art underneath perfectly sharp, which reads as a plain colour cast rather
+# than as blur; frosting the art is what actually sells the top of the slider.
+_VIGNETTE_BLUR_MAX_RATIO = 0.09
+# How much of the artwork's own luminance the band tolerates bleeding through the
+# vignette, in luma units at peak alpha.  The tint's own contribution is already
+# near-constant across posters (~33); what made a bright poster look washed next
+# to a dark one was purely this bleed — a poster whose bottom is white cloud sends
+# ~30 luma through a "high" vignette, a dark one ~3.  Levelling only ever darkens,
+# so dark art is untouched by construction and can never be made worse.
+_VIGNETTE_ART_BLEED  = 8.0
+_VIGNETTE_LEVEL_FLOOR = 0.30   # never darken the art below this fraction
+# Columns the two-tone ramp is drawn at.  It needs its own floor because the blur
+# slider collapses the sample to a single cell at the top end, which would leave
+# the ramp with nowhere to ramp.
+_VIGNETTE_RAMP_COLUMNS = 24
+# Minimum hue separation (0–1) for the ramp's second colour. Below this the two
+# ends are shades of one hue and the ramp reads as a flat tint with a smudge.
+_VIGNETTE_RAMP_MIN_HUE = 0.08
+# A ramp endpoint must be a real presence in the art, not a passing accent — it
+# claims half the band.  Far stricter than _VIGNETTE_ACCENT_W, which exists to
+# rescue monochrome posters and would happily promote a 1% highlight to a
+# co-headline colour the poster does not actually have.
+_VIGNETTE_RAMP_MIN_W = 0.06
+# ...and bright enough to be a colour statement rather than a shadow.  Much higher
+# than _VIGNETTE_ACCENT_V, which is deliberately low so a near-black poster can
+# find *any* hue: a dark brown that is really hair or shading passes that bar
+# easily and then gets announced as half the poster's palette.
+_VIGNETTE_RAMP_MIN_V = 0.40
+# Floor on the height of a locally-sampled region, as a fraction of the poster.
+# A shallow vignette is a thin strip of art to judge a colour from, and the strip
+# nearest the edge is often the least representative part of a poster.
+_VIGNETTE_LOCAL_MIN_H = 0.22
+
+
+def _vignette_tint_band(
+    src: Image.Image,
+    box: tuple[int, int, int, int],
+    dominant: tuple[float, float, float],
+    confidence: float,
+    saturation: float,
+    blur: float,
+    secondary: tuple[float, float, float] | None = None,
+) -> Image.Image:
+    """Colour field to paint one vignette band with, sampled from the poster art.
+
+    ``box`` is the band's crop rect in ``src`` — the artwork snapshot taken
+    *before* any gradient darkened it, since sampling the graded image would just
+    return the near-black a previous band already painted.
+
+    ``blur`` (0–1) trades local colour for the whole-poster ``dominant``: at 0 the
+    band follows the art across its width (a red left edge stays red), at 1 it is
+    one flat wash of the dominant colour.  It drives both the coarseness of the
+    downsample and the mix toward the dominant, each on its own front-loaded curve
+    (see _VIGNETTE_BLUR_*_CURVE) so the two ends read as clearly different.  The
+    same slider also frosts the art itself — see _vignette_frost_band, which is
+    what makes the high end read as blur rather than as a flat colour cast.
+
+    ``confidence`` (0–1, from _vignette_dominant_rgb) is whether the poster has a
+    usable hue at all.  It is the only thing besides the slider allowed to affect
+    strength, and it is judged once for the whole poster.
+
+    ``saturation`` (0–_VIGNETTE_SAT_FULL) sets the tint's strength on its own; the
+    art supplies only the hue.  Two posters at the same setting therefore land on
+    the same intensity however saturated their art is, differing in hue alone —
+    without that, a shelf of posters is wildly uneven, since a vivid one earns
+    both more chroma and more Value while a muted one is scaled down twice over.
+    0 is exactly black, i.e. the untinted vignette.  Strength moves Value and
+    Saturation together, so the band always darkens the poster as hard as a black
+    vignette would: the slider changes how much hue shows, never how much light
+    the vignette takes away.
+    """
+    band = src.crop(box).convert("RGB")
+    bw, bh = band.size
+    if bw <= 0 or bh <= 0:
+        return Image.new("RGB", (max(bw, 1), max(bh, 1)), (0, 0, 0))
+
+    # Downsample to a handful of colour cells (BOX = area average, so every pixel
+    # contributes), then let the upscale do the smoothing — far cheaper than a
+    # Gaussian over the full-size band and indistinguishable at this softness.
+    detail = (1.0 - blur) ** _VIGNETTE_BLUR_DETAIL_CURVE
+    cols   = max(1, min(bw, int(round(_VIGNETTE_TINT_COLUMNS * detail))))
+    if secondary is not None:
+        # The ramp needs columns to ramp across, and blur has just taken them away
+        # at the top of its range — give it back a floor of its own.
+        cols = max(1, min(bw, max(cols, _VIGNETTE_RAMP_COLUMNS)))
+    rows   = max(1, min(bh, max(1, cols // 2)))
+    field  = np.asarray(band.resize((cols, rows), Image.Resampling.BOX), dtype=np.float32)
+    if secondary is None:
+        dom = np.asarray(dominant, dtype=np.float32)
+    else:
+        # Two-tone: the poster's two real colours, ramped left to right across the
+        # band, shaped (1, cols, 3) to broadcast over the rows.
+        #
+        # Interpolated along the *hue arc*, not through RGB. A straight RGB lerp
+        # between distant hues passes through desaturated mud — blue to red goes via
+        # grey, which reads as two flat zones butted together rather than a blend.
+        # Walking the short way round the hue wheel keeps every intermediate fully
+        # saturated, so blue to red travels through purple as a gradient should.
+        import colorsys
+        h1, s1, v1 = colorsys.rgb_to_hsv(*(c / 255.0 for c in dominant))
+        h2, s2, v2 = colorsys.rgb_to_hsv(*(c / 255.0 for c in secondary))
+        dh = (h2 - h1 + 0.5) % 1.0 - 0.5          # shortest way round the wheel
+        dom = np.asarray(
+            [
+                [c * 255.0 for c in colorsys.hsv_to_rgb(
+                    (h1 + dh * t) % 1.0, s1 + (s2 - s1) * t, v1 + (v2 - v1) * t)]
+                for t in np.linspace(0.0, 1.0, cols)
+            ],
+            dtype=np.float32,
+        )[None, :, :]
+    if blur > 0:
+        mix   = blur ** _VIGNETTE_BLUR_MIX_CURVE
+        field = field * (1.0 - mix) + dom * mix
+
+    # A cell with no colour of its own borrows the poster's rather than dropping to
+    # black.  White and black are the two things local sampling handles worst — a
+    # snowfield or a shadow has no hue to offer, and leaving those cells black made
+    # whole bands of monochrome posters look untinted.  Borrowing keeps the band
+    # coloured wherever the poster has any colour at all; if the poster has none,
+    # `dominant` is neutral too and the gate below still takes the band to black.
+    borrow = (1.0 - _vignette_hue_gate(field))[..., None]
+    field  = field * (1.0 - borrow) + dom * borrow
+
+    # Per-cell HSV, vectorised.  `full` is the cell's hue at full saturation and
+    # value — i.e. hsv_to_rgb(h, 1, 1) — which lets the tint be rebuilt with the
+    # identity hsv_to_rgb(h, s, v) == v * (1 - s * (1 - full)), no colorsys loop.
+    minc  = field.min(axis=-1)
+    chrom = np.maximum(field.max(axis=-1) - minc, 1e-6)
+    full  = (field - minc[..., None]) / chrom[..., None]
+
+    # Strength comes from the slider and the poster-level `confidence` only — never
+    # from how chromatic this particular cell happens to be.  Cells vary in hue
+    # across the band; they must not vary in intensity, or the band ends up
+    # brighter over the colourful half of the art than the muted half.
+    strength = min(1.0, max(0.0, saturation) / _VIGNETTE_SAT_FULL) * max(0.0, min(1.0, confidence))
+
+    # Equalise across hues as well as across sources: scale each cell's Value by
+    # how far its hue's own luminance sits from the reference, so a yellow band
+    # and a blue band at the same setting land near the same brightness.
+    hue_luma  = np.maximum(full @ _LUMA_COEFFS, 1e-6)
+    hue_scale = (_VIGNETTE_LUMA_REF / hue_luma) ** _VIGNETTE_LUMA_CORRECT
+    s_eff = _VIGNETTE_TINT_S * strength
+    v_eff = np.minimum(1.0, _VIGNETTE_TINT_V * strength * hue_scale)
+    # s_eff is a scalar (strength is now poster-level, not per-cell); v_eff stays
+    # per-cell because the hue correction varies with each cell's hue.
+    tint  = 255.0 * v_eff[..., None] * (1.0 - s_eff * (1.0 - full))
+
+    small = Image.fromarray(np.clip(tint, 0, 255).astype(np.uint8), mode="RGB")
+    return small if (cols, rows) == (bw, bh) else small.resize((bw, bh), Image.Resampling.BICUBIC)
+
+
+def _vignette_frost_band(
+    image: Image.Image, box: tuple[int, int, int, int], ramp: Image.Image, blur: float
+) -> None:
+    """Blur the artwork inside one vignette band, in place, before it is tinted.
+
+    ``ramp`` is the band's own alpha gradient.  Reusing it as the paste mask makes
+    the blur strongest exactly where the darkening is and zero where the band
+    fades out, so the frosted area has no visible seam against the sharp art below
+    it.  The ramp is normalised first, so the blur reaches full strength at the
+    poster's edge whatever vignette level is set — the two sliders stay
+    independent rather than "low vignette" quietly capping the blur.
+
+    Runs before the tint is composited so the tint lands on frosted art, and
+    before every badge, logo, label and sash, none of which should be blurred.
+    """
+    if blur <= 0:
+        return
+    x0, y0, x1, y1 = box
+    radius = (x1 - x0) * _VIGNETTE_BLUR_MAX_RATIO * blur
+    if radius < 0.5:
+        return
+    peak = ramp.getextrema()[1]
+    if not peak:
+        return
+    mask = ramp.point(lambda a, _p=peak: min(255, int(a * 255 / _p)))
+
+    # Blur by reduction rather than running a wide Gaussian at full size: a box
+    # downscale, a small Gaussian, then a bicubic upscale is indistinguishable at
+    # these radii (max channel delta ~4/255) and roughly halves the cost at the
+    # default blur.  PIL's Gaussian is a box approximation whose cost barely moves
+    # with radius, so below a 3x reduction the resizes cost more than they save —
+    # hence the threshold rather than always taking this path.
+    band   = image.crop(box)
+    shrink = max(1, int(radius / 4))
+    if shrink > 2:
+        small   = band.resize((max(1, band.width // shrink), max(1, band.height // shrink)),
+                              Image.Resampling.BOX)
+        small   = small.filter(ImageFilter.GaussianBlur(radius / shrink))
+        blurred = small.resize(band.size, Image.Resampling.BICUBIC)
+    else:
+        blurred = band.filter(ImageFilter.GaussianBlur(radius))
+    image.paste(blurred, (x0, y0), mask=mask)
+
 
 # Genre-specific tint multipliers (R, G, B) for the fallback canvas.
 # Applied to a dark base luminance of 10–18, so the dominant channel peaks
@@ -1498,12 +1991,40 @@ def build_poster(
         if discovery_meta is not None
         else None
     )
+    # Resolved here rather than at the draw site because the top vignette needs it
+    # too — see the top gradient below.
+    _sash_shown = cfg.sash_mode != "hidden" and sash_result is not None
 
     # Snapshot the artwork *before* the vignette gradients darken it. The frosted
     # bar/notch/sash sample their tint colour from this, not the graded image —
     # otherwise the near-black top/bottom the gradients paint on drags the sampled
     # colour to grey (e.g. a blue sky reads as white behind the notch).
     _frost_color_src = image.copy()
+
+    # Whole-poster colour sample.  The strict pick is shared with every frosted
+    # element further down so they agree without re-quantising; the vignette's own
+    # pick differs only on art where the strict one found no colour at all.
+    _strict_tint: tuple[float, float, float] | None = None
+    _poster_tint: tuple[float, float, float] | None = None
+    _poster_conf = 0.0
+    _poster_tint2: tuple[float, float, float] | None = None
+    if cfg.vignette_poster_color_top or cfg.vignette_poster_color_bottom:
+        _strict_tint, _poster_tint, _poster_conf = _vignette_dominant_rgb(_frost_color_src)
+        if cfg.vignette_color_ramp and _poster_conf > 0:
+            _poster_tint2 = _vignette_secondary_rgb(_frost_color_src, _poster_tint)
+    # Whole-poster result, used directly unless local sampling is on and each band
+    # finds something better of its own.
+    _whole_colour = (_poster_tint, _poster_conf, _poster_tint2)
+    _slider_amount = min(1.0, max(0.0, cfg.vignette_color_saturation) / _VIGNETTE_SAT_FULL)
+
+    # A sash or notch sits on top of the top vignette, and tinting that band lifts
+    # it toward the sash's own colour — which is sampled from the same art, so the
+    # two converge and the label stops reading. The top band therefore stays plain
+    # black whenever one is shown; the bottom band is unaffected. Same reasoning as
+    # the existing "Vignette Only On Sash" option, which also lets the sash decide
+    # what the top of the poster does.
+    _top_enabled    = cfg.vignette_poster_color_top and not _sash_shown
+    _bottom_enabled = cfg.vignette_poster_color_bottom
 
     # --- TOP GRADIENT (vectorised) ---
     # Darkens the top of the poster so the age-rating numeral and quality
@@ -1525,7 +2046,29 @@ def build_poster(
         eased_top = ((1 - t_top) * top_max_alpha).astype(np.uint8)
         top_array = np.broadcast_to(eased_top[:, np.newaxis], (top_height, width)).copy()
         top_overlay = Image.fromarray(top_array, mode="L")
-        top_tinted = Image.new("RGBA", (width, top_height), (0, 0, 0, 0))
+        # Black by default; a poster-coloured vignette swaps in a tint field
+        # sampled from the art under this band.  Only the RGB changes — the alpha
+        # ramp, and so how hard the band darkens, is identical either way.
+        if _top_enabled and _poster_tint is not None:
+            # Local sampling reads at least _VIGNETTE_LOCAL_MIN_H of the poster, so a
+            # shallow vignette doesn't judge the whole tint from a sliver of edge.
+            _t_tint, _t_conf, _t_second = _vignette_band_colour(
+                _frost_color_src,
+                (0, 0, width, max(top_height, int(height * _VIGNETTE_LOCAL_MIN_H))),
+                _whole_colour, cfg.vignette_color_local, cfg.vignette_color_ramp,
+            )
+            _vignette_frost_band(
+                image, (0, 0, width, top_height), top_overlay, cfg.vignette_color_blur,
+            )
+            _vignette_level_band(
+                image, (0, 0, width, top_height), top_overlay, _slider_amount * _t_conf
+            )
+            top_tinted = _vignette_tint_band(
+                _frost_color_src, (0, 0, width, top_height), _t_tint, _t_conf,
+                cfg.vignette_color_saturation, cfg.vignette_color_blur, _t_second,
+            ).convert("RGBA")
+        else:
+            top_tinted = Image.new("RGBA", (width, top_height), (0, 0, 0, 0))
         top_tinted.putalpha(top_overlay)
         image.paste(top_tinted, (0, 0), mask=top_tinted)
 
@@ -1550,7 +2093,24 @@ def build_poster(
         eased_bot     = ((1 - (1 - t_bot) ** _BOTTOM_GRADIENT_CURVE) * bottom_max_alpha).astype(np.uint8)
         bottom_array  = np.broadcast_to(eased_bot[:, np.newaxis], (bottom_height, width)).copy()
         bottom_overlay = Image.fromarray(bottom_array, mode="L")
-        bottom_tinted  = Image.new("RGBA", (width, bottom_height), (0, 0, 0, 0))
+        if _bottom_enabled and _poster_tint is not None:
+            _b_tint, _b_conf, _b_second = _vignette_band_colour(
+                _frost_color_src,
+                (0, min(bottom_start, height - int(height * _VIGNETTE_LOCAL_MIN_H)), width, height),
+                _whole_colour, cfg.vignette_color_local, cfg.vignette_color_ramp,
+            )
+            _vignette_frost_band(
+                image, (0, bottom_start, width, height), bottom_overlay, cfg.vignette_color_blur,
+            )
+            _vignette_level_band(
+                image, (0, bottom_start, width, height), bottom_overlay, _slider_amount * _b_conf
+            )
+            bottom_tinted = _vignette_tint_band(
+                _frost_color_src, (0, bottom_start, width, height), _b_tint, _b_conf,
+                cfg.vignette_color_saturation, cfg.vignette_color_blur, _b_second,
+            ).convert("RGBA")
+        else:
+            bottom_tinted = Image.new("RGBA", (width, bottom_height), (0, 0, 0, 0))
         bottom_tinted.putalpha(bottom_overlay)
         image.paste(bottom_tinted, (0, bottom_start), mask=bottom_tinted)
 
@@ -1788,13 +2348,13 @@ def build_poster(
     # from ONE whole-poster colour sample, taken from the un-graded artwork. Since
     # they all draw from the same sample they always match automatically — so the
     # bar simply adopts the notch's colour (and, below, its saturation) whenever a
-    # frosted notch is shown, with no separate "match" toggle needed.
-    _sash_shown    = cfg.sash_mode != "hidden" and sash_result is not None
+    # frosted notch is shown, with no separate "match" toggle needed. A tinted
+    # vignette drew from the same sample above; reuse it rather than re-quantising.
     _notch_frosted = _sash_shown and cfg.sash_mode == "notch" and cfg.sash_badge_style == "frosted"
     _sash_poster   = _sash_shown and cfg.sash_mode == "sash" and cfg.sash_poster_color
     _bar_frosted   = cfg.rating_display_mode == 4 and cfg.bar_style in ("frosted", "rating_frosted")
     _frost_tint: tuple[float, float, float] | None = (
-        dominant_frost_rgb(_frost_color_src)
+        (_strict_tint if _strict_tint is not None else dominant_frost_rgb(_frost_color_src))
         if (_bar_frosted or _notch_frosted or _sash_poster) else None
     )
     # One saturation for every frosted element: a frosted notch owns it (its slider

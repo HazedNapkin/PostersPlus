@@ -2394,6 +2394,50 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
+              <div class="toggle-row">
+                <span class="toggle-label" data-tip="Fades the top to a dark shade of the poster's own colour instead of to black. Stays black whenever a sash or notch is shown, so its label keeps its contrast.">Top Colour from Poster</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-vignette-color-top" onchange="updateGradientFields(); build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
+              <div class="toggle-row">
+                <span class="toggle-label" data-tip="Fades the bottom to a dark shade of the poster's own colour instead of to black. Uses the same poster colour as the frosted bar and sash, so they always agree.">Bottom Colour from Poster</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-vignette-color-bottom" onchange="updateGradientFields(); build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
+              <div id="vignette-color-fields" class="subfields" style="display:none;">
+                <div class="toggle-row">
+                  <span class="toggle-label" data-tip="Ramps the vignette between the poster's two main colours across its width, instead of using one flat colour. Falls back to flat when the art has only one colour.">Two-Tone</span>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tog-vignette-ramp" onchange="build(); queuePreviewReload()">
+                    <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                  </label>
+                </div>
+                <div class="toggle-row">
+                  <span class="toggle-label" data-tip="Takes each vignette's colour from the artwork nearest it rather than from the whole poster, so the top and bottom can differ. Falls back to the whole poster when the nearby art has no colour of its own.">Sample Nearby Area</span>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tog-vignette-local" onchange="build(); queuePreviewReload()">
+                    <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                  </label>
+                </div>
+                <div class="field">
+                  <label class="field-label" data-tip="How much colour the tint carries. 0 is a plain black vignette; the vignette darkens the poster by the same amount either way.">Colour Saturation</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-vignette-sat" min="0.0" max="3.0" step="0.05" value="1.50" oninput="updateRange(this,'rng-vsat'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-vsat">1.50</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="field-label" data-tip="Frosts the artwork inside the vignette and evens out the tint. Low leaves the art sharp and lets the colour follow it across the poster's width; high melts both into one soft wash of the dominant colour. Logos, badges and labels are never blurred.">Blur</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-vignette-blur" min="0.0" max="1.0" step="0.05" value="0.50" oninput="updateRange(this,'rng-vblur'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-vblur">0.50</span>
+                  </div>
+                </div>
+              </div>
             </div><!-- /vignette group -->
           </div>
         </div>
@@ -4339,6 +4383,17 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
     params.set('bottom_gradient_height', document.getElementById('cfg-bg-ht').value);
   }
   if (c('tog-top-vignette-sash-only')) params.set('top_vignette_sash_only', 'true');
+  // Sliders only ride along when the tint is on, so an untinted URL stays as
+  // short (and as cache-compatible) as it was before the option existed.
+  { const _vgTop = c('tog-vignette-color-top'), _vgBot = c('tog-vignette-color-bottom');
+    if (_vgTop) params.set('vignette_poster_color_top', 'true');
+    if (_vgBot) params.set('vignette_poster_color_bottom', 'true');
+    if (_vgTop || _vgBot) {
+      params.set('vignette_color_saturation', n('cfg-vignette-sat').toFixed(2));
+      params.set('vignette_color_blur',       n('cfg-vignette-blur').toFixed(2));
+      if (c('tog-vignette-ramp')) params.set('vignette_color_ramp', 'true');
+      if (c('tog-vignette-local')) params.set('vignette_color_local', 'true');
+    } }
   if (c('tog-hide-genre')) params.set('hide_genre', 'true');
   params.set('fallback_to_imdb', c('tog-fallback-imdb') ? 'true' : 'false');
 
@@ -4756,6 +4811,9 @@ function updateCustomPaletteFields() {
 function updateGradientFields() {
   document.getElementById('top-gradient-custom-fields').style.display = document.getElementById('cfg-top-gradient').value === 'custom' ? 'block' : 'none';
   document.getElementById('bottom-gradient-custom-fields').style.display = document.getElementById('cfg-bottom-gradient').value === 'custom' ? 'block' : 'none';
+  document.getElementById('vignette-color-fields').style.display =
+    (document.getElementById('tog-vignette-color-top').checked
+     || document.getElementById('tog-vignette-color-bottom').checked) ? 'block' : 'none';
   syncSegmented();
 }
 
@@ -5273,6 +5331,18 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     }
   }
   if (p.has('top_vignette_sash_only')) _setEl('tog-top-vignette-sash-only', p.get('top_vignette_sash_only'));
+  // vignette_poster_color is the pre-split single toggle; it seeds both sides so
+  // an old URL or saved preset still round-trips, and an explicit per-band param
+  // overrides it.
+  { const _vgLegacy = p.get('vignette_poster_color');
+    const _vgTop = p.get('vignette_poster_color_top')    ?? _vgLegacy;
+    const _vgBot = p.get('vignette_poster_color_bottom') ?? _vgLegacy;
+    if (_vgTop !== null) _setEl('tog-vignette-color-top',    _vgTop);
+    if (_vgBot !== null) _setEl('tog-vignette-color-bottom', _vgBot); }
+  if (p.has('vignette_color_saturation')) _setEl('cfg-vignette-sat',  p.get('vignette_color_saturation'));
+  if (p.has('vignette_color_blur'))       _setEl('cfg-vignette-blur', p.get('vignette_color_blur'));
+  if (p.has('vignette_color_ramp'))       _setEl('tog-vignette-ramp', p.get('vignette_color_ramp'));
+  if (p.has('vignette_color_local'))      _setEl('tog-vignette-local', p.get('vignette_color_local'));
   if (p.has('hide_genre')) _setEl('tog-hide-genre', p.get('hide_genre'));
   // Presence of either anime placeholder re-arms the toggle, so pasting a
   // previously generated URL round-trips it (and so does the localStorage
