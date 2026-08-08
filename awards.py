@@ -1459,6 +1459,7 @@ def draw_award_badge(
     size_ratio_h: float = 1.0,     # vertical scale multiplier
     notch_style: str = "frosted",     # "silver" | "gold" | "frosted"
     notch_inset: float = 0.004,        # top-edge offset as fraction of poster height (± small)
+    notch_pad_ratio: float = 1.0,     # vertical padding scale; <1 tightens top/bottom space
     font_size_ratio: float = 0.43,    # font size as fraction of badge height
     frost_opacity: float = 0.75,      # frosted overlay opacity (0.0–1.0)
     frost_saturation: float = 1.2,    # frosted colour-cast strength (0 = grey)
@@ -1471,6 +1472,11 @@ def draw_award_badge(
     Centred notch badge that emerges from the top edge of the poster.
     Always horizontally centred; notch_inset nudges it up/down so users
     can control whether the top border is hidden or visible in their client.
+
+    Vertical space is controlled by two independent knobs: size_ratio_h sets the
+    nominal height (and with it the font scale), while notch_pad_ratio trims the
+    empty space above and below the text without touching the font or the badge
+    width.  Reach for notch_pad_ratio when the label looks lost in the notch.
 
     Three styles:
       silver  — dark gradient body with silver trim, white text
@@ -1516,16 +1522,33 @@ def draw_award_badge(
         label = f"★  {label}"
 
     # ── Dimensions ───────────────────────────────────────────────────────────
-    badge_h = int(height * 0.075 * size_ratio_h)
-    bh      = badge_h * SS  # SS-space height (independent of width)
+    # base_h is the nominal height size_ratio_h asks for.  It drives the font
+    # size and the horizontal padding; notch_pad_ratio then scales only the
+    # *drawn* height around that already-sized text.  Keeping the two separate
+    # is what lets padding tighten without shrinking the label or narrowing the
+    # badge — changing size_ratio_h alone moves both, which is rarely wanted.
+    base_h = int(height * 0.075 * size_ratio_h)
 
     # ── Font: fixed size so every label renders at the same scale ────────────
     _fonts_dir   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
-    font_size_ss = int(badge_h * font_size_ratio) * SS
+    font_size_ss = int(base_h * font_size_ratio) * SS
     try:
         font = ImageFont.truetype(os.path.join(_fonts_dir, "Inter-Bold.ttf"), font_size_ss)
     except IOError:
         font = ImageFont.load_default()
+
+    # Vertical padding.  Floored at the font's full line height so an aggressive
+    # notch_pad_ratio can crop the empty space but never the glyphs themselves;
+    # _text_center centres on ascent+descent, so that same span is what has to
+    # fit.  At the 1.0 default badge_h == base_h and geometry is unchanged.
+    try:
+        _ascent, _descent = font.getmetrics()
+        _line_h_ss = _ascent + _descent
+    except AttributeError:
+        _line_h_ss = font_size_ss
+    _min_badge_h = math.ceil(_line_h_ss * 1.05 / SS)
+    badge_h = max(_min_badge_h, int(base_h * notch_pad_ratio))
+    bh      = badge_h * SS  # SS-space height (independent of width)
 
     # Measure rendered text width at SS resolution
     _tmp_d  = ImageDraw.Draw(Image.new("L", (1, 1)))
@@ -1534,7 +1557,9 @@ def draw_award_badge(
 
     # Badge width: minimum is size_ratio_w-scaled default; expands to fit text
     # with horizontal padding of ~45% of badge_h (22.5% each side).
-    _h_pad    = int(badge_h * 0.70)
+    # Derived from base_h, not badge_h, so tightening the vertical padding
+    # leaves the badge exactly as wide as it was.
+    _h_pad    = int(base_h * 0.70)
     min_badge_w = int(width * 0.28 * size_ratio_w)
     max_badge_w = int(width * 0.70)
     badge_w   = max(min_badge_w, min(max_badge_w, text_w_ss // SS + _h_pad))

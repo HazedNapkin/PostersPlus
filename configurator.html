@@ -2857,6 +2857,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </div>
               </div>
               <div class="field">
+                <label class="field-label" data-tip="Trims the empty space above and below the label without changing the font size or badge width.">Padding</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-sash-badge-pad" min="0.50" max="1.50" step="0.05" value="1.00" oninput="updateRange(this,'rng-sbp'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-sbp">1.00</span>
+                </div>
+              </div>
+              <div class="field">
                 <label class="field-label" data-tip="Adjust as required for your client — this won't match the preview.">Inset</label>
                 <div class="range-row">
                   <input type="range" id="cfg-sash-badge-inset" min="-0.020" max="0.020" step="0.001" value="0.000" oninput="updateRange(this,'rng-sbi'); build(); queuePreviewReload()">
@@ -4384,6 +4391,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
       params.set('sash_badge_style',         vEl('cfg-sash-badge-style') || 'silver');
       params.set('sash_badge_size_w',        n('cfg-sash-badge-size-w').toFixed(2));
       params.set('sash_badge_size_h',        n('cfg-sash-badge-size-h').toFixed(2));
+      params.set('sash_badge_pad',           n('cfg-sash-badge-pad').toFixed(2));
       params.set('sash_badge_inset',         n('cfg-sash-badge-inset').toFixed(3));
       params.set('sash_badge_font_ratio',    n('cfg-sash-badge-font-ratio').toFixed(2));
       if (vEl('cfg-sash-badge-style') === 'frosted') {
@@ -5248,6 +5256,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('sash_badge_style'))         _setEl('cfg-sash-badge-style',        p.get('sash_badge_style'));
   if (p.has('sash_badge_size_w'))        _setEl('cfg-sash-badge-size-w',       p.get('sash_badge_size_w'));
   if (p.has('sash_badge_size_h'))        _setEl('cfg-sash-badge-size-h',       p.get('sash_badge_size_h'));
+  if (p.has('sash_badge_pad'))           _setEl('cfg-sash-badge-pad',          p.get('sash_badge_pad'));
   if (!preserveClientInsets && p.has('sash_badge_inset')) _setEl('cfg-sash-badge-inset', p.get('sash_badge_inset'));
   if (p.has('sash_badge_font_ratio'))    _setEl('cfg-sash-badge-font-ratio',    p.get('sash_badge_font_ratio'));
   if (p.has('sash_badge_frost_opacity')) _setEl('cfg-sash-badge-frost-opacity', p.get('sash_badge_frost_opacity'));
