@@ -1341,6 +1341,33 @@ _VIGNETTE_LUMA_CORRECT = 0.5
 # reference and keeps its full Value boost.
 _VIGNETTE_LUMA_SAT_SHARE = 0.5
 _LUMA_COEFFS = np.array([0.299, 0.587, 0.114], dtype=np.float32)
+# Ceiling on how *colourful* the tint is allowed to be, as CIELAB C* at full
+# slider — the other half of the same job the luma correction above does.  Value
+# and Saturation say nothing about perceived colourfulness: at one luminance a red
+# or a violet carries roughly twice the chroma of a gold or a teal, which is why a
+# shelf matched for brightness still had a few bands that took the poster over
+# while the rest sat under it.  Everything the eye called pleasant measured 15–19,
+# everything called too much measured 29–50, so the budget is set just above the
+# pleasant band and scaled by the slider, leaving the slider live across its range.
+_VIGNETTE_TINT_MAX_CHROMA = 27.0
+_SRGB_TO_XYZ = np.array([[0.4124, 0.3576, 0.1805],
+                         [0.2126, 0.7152, 0.0722],
+                         [0.0193, 0.1192, 0.9505]], dtype=np.float32)
+_D65_WHITE   = np.array([0.95047, 1.0, 1.08883], dtype=np.float32)
+
+
+def _lab_chroma(rgb: np.ndarray) -> np.ndarray:
+    """CIELAB C* of an sRGB array shaped (..., 3) on 0–255.
+
+    Perceptual chroma, not HSV Saturation: the point is to compare how colourful
+    two different hues look, which HSV cannot answer — a fully saturated navy and
+    a fully saturated gold are both S=1 and nowhere near each other on the eye.
+    """
+    c = np.clip(rgb, 0.0, 255.0) / 255.0
+    lin = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+    xyz = (lin @ _SRGB_TO_XYZ.T) / _D65_WHITE
+    f   = np.where(xyz > 0.008856, np.cbrt(xyz), 7.787 * xyz + 16.0 / 116.0)
+    return np.hypot(500.0 * (f[..., 0] - f[..., 1]), 200.0 * (f[..., 1] - f[..., 2]))
 
 
 def _vignette_hue_profile(
@@ -1784,6 +1811,17 @@ def _vignette_tint_band(
     # Both stay per-cell: strength is poster-level, but the hue correction varies
     # with each cell's own hue.
     tint  = 255.0 * v_eff[..., None] * (1.0 - s_eff[..., None] * (1.0 - full))
+
+    # Clip the result to a perceptual chroma budget, per cell, by pulling it toward
+    # its own luminance — which holds the hue and the brightness and takes only the
+    # colourfulness away.  A clip, not an equalisation: a hue already inside the
+    # budget is left exactly alone, so the quiet posters stay exactly as quiet and
+    # only the ones taking their poster over come down.  Two-tone is clipped end by
+    # end for the same reason, since it is usually one end that goes too far.
+    ceiling = _VIGNETTE_TINT_MAX_CHROMA * strength
+    keep    = np.minimum(1.0, ceiling / np.maximum(_lab_chroma(tint), 1e-6))[..., None]
+    grey    = (tint @ _LUMA_COEFFS)[..., None]
+    tint    = grey + (tint - grey) * keep
 
     small = Image.fromarray(np.clip(tint, 0, 255).astype(np.uint8), mode="RGB")
     return small if (cols, rows) == (bw, bh) else small.resize((bw, bh), Image.Resampling.BICUBIC)
