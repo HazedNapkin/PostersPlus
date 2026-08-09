@@ -1516,8 +1516,16 @@ def _vignette_level_band(
     reason a poster whose bottom is white cloud reads pale next to one whose bottom
     is dark, at identical settings — the tint contributes the same to both.  This
     scales the bright case down so the bleed-through is comparable, weighted by the
-    same alpha ramp so there is no seam, and scaled by ``amount`` (the tint's
-    strength) so a faint tint doesn't aggressively regrade the poster.
+    same alpha ramp so there is no seam, and scaled by ``amount`` — how hard the
+    two sliders are asking for a wash at all — so a faint one doesn't aggressively
+    regrade the poster.
+
+    ``amount`` deliberately does *not* include the tint's confidence.  Hue
+    confidence answers "is this the poster's colour", which has nothing to do with
+    how much art should show through; letting it in meant the posters whose hue was
+    least trusted — the near-monochrome ones — were also the only ones that kept
+    their art legible under the band, which is exactly the inconsistency this
+    function exists to remove.
 
     Only ever darkens: art already below the bleed budget is left exactly alone.
     """
@@ -1609,16 +1617,28 @@ _VIGNETTE_BLUR_MIX_CURVE    = 0.7   # how fast it commits to the flat dominant c
 # than as blur; frosting the art is what actually sells the top of the slider.
 # The ceiling is what decides whether a busy poster (a spider's legs, a cartoon
 # background) reads as a deliberate wash or as colour sprayed over legible art —
-# at 0.09 even the top of the slider left too much of it standing.
-_VIGNETTE_BLUR_MAX_RATIO = 0.16
+# at 0.09 even the top of the slider left too much of it standing.  Returns
+# diminish fast above this: a Gaussian takes away detail but not contrast, so
+# doubling the radius again buys a few percent where the bleed budget below buys
+# a third.  Frosting the art is what sells the top of the slider; levelling it is
+# what makes the top of the slider look the same on every poster.
+_VIGNETTE_BLUR_MAX_RATIO = 0.24
 # How much of the artwork's own luminance the band tolerates bleeding through the
 # vignette, in luma units at peak alpha.  The tint's own contribution is already
 # near-constant across posters (~33); what made a bright poster look washed next
 # to a dark one was purely this bleed — a poster whose bottom is white cloud sends
 # ~30 luma through a "high" vignette, a dark one ~3.  Levelling only ever darkens,
 # so dark art is untouched by construction and can never be made worse.
-_VIGNETTE_ART_BLEED  = 8.0
-_VIGNETTE_LEVEL_FLOOR = 0.30   # never darken the art below this fraction
+#
+# This budget, not the blur radius, is what decides whether a band reads as mist
+# or as art seen through a colour cast: blur removes *detail* but keeps contrast,
+# and it is surviving contrast that the eye reads as "the background is still
+# there".  Doubling the radius barely moves that; halving the budget does.
+_VIGNETTE_ART_BLEED  = 3.0
+# ...and the floor has to be low enough for the budget to be reachable on bright
+# art.  At 0.30 a poster whose band is white paper or cloud hit the floor before
+# it hit the budget, so the very posters that showed the most kept showing it.
+_VIGNETTE_LEVEL_FLOOR = 0.12   # never darken the art below this fraction
 # Columns the two-tone ramp is drawn at.  It needs its own floor because the blur
 # slider collapses the sample to a single cell at the top end, which would leave
 # the ramp with nowhere to ramp.
@@ -2080,6 +2100,11 @@ def build_poster(
     # finds something better of its own.
     _whole_colour = (_poster_tint, _poster_conf, _poster_tint2)
     _slider_amount = min(1.0, max(0.0, cfg.vignette_color_saturation) / _VIGNETTE_SAT_FULL)
+    # How hard the band is being asked to wash the art out, for the levelling pass.
+    # Both sliders ask for it — colour lays a tint over the art, blur melts it — so
+    # the stronger of the two drives it, and a poster is levelled the same whether
+    # the wash it is under is a vivid tint or a heavy frost.
+    _level_amount  = max(_slider_amount, min(1.0, max(0.0, cfg.vignette_color_blur)))
 
     # A sash or notch sits on top of the top vignette, and tinting that band lifts
     # it toward the sash's own colour — which is sampled from the same art, so the
@@ -2125,7 +2150,7 @@ def build_poster(
                 image, (0, 0, width, top_height), top_overlay, cfg.vignette_color_blur,
             )
             _vignette_level_band(
-                image, (0, 0, width, top_height), top_overlay, _slider_amount * _t_conf
+                image, (0, 0, width, top_height), top_overlay, _level_amount
             )
             top_tinted = _vignette_tint_band(
                 _frost_color_src, (0, 0, width, top_height), _t_tint, _t_conf,
@@ -2167,7 +2192,7 @@ def build_poster(
                 image, (0, bottom_start, width, height), bottom_overlay, cfg.vignette_color_blur,
             )
             _vignette_level_band(
-                image, (0, bottom_start, width, height), bottom_overlay, _slider_amount * _b_conf
+                image, (0, bottom_start, width, height), bottom_overlay, _level_amount
             )
             bottom_tinted = _vignette_tint_band(
                 _frost_color_src, (0, bottom_start, width, height), _b_tint, _b_conf,
