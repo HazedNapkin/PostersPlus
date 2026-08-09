@@ -552,7 +552,7 @@ async def _background_quality_fetch(
 
 # Local imports
 from age_badge import draw_quality_age_badge, draw_tier_bar, _score_points
-from awards import _dominant_cluster, dominant_frost_rgb
+from awards import _dominant_cluster, _is_skin_tone, dominant_frost_rgb
 from awards import FETCH_FAILED, _RateLimited, draw_award_badge, draw_award_sash, parse_mdblist_awards
 from i18n import load_languages, translate_genre, translate_sash
 from cache import (
@@ -1344,7 +1344,7 @@ _LUMA_COEFFS = np.array([0.299, 0.587, 0.114], dtype=np.float32)
 
 
 def _vignette_hue_profile(
-    poster: Image.Image, skin_weight: float = _VIGNETTE_SKIN_WEIGHT
+    poster: Image.Image,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """(rgb, hue, weight, support) for a poster, as flat 64x64 fields plus a
     per-hue-family support curve.
@@ -1372,7 +1372,7 @@ def _vignette_hue_profile(
     # Vectorised _is_skin_tone (awards.py) — same warm R>G>B band, same limits.
     skin = ((r > g) & (g > b) & (hue >= 0.015) & (hue <= 0.11)
             & (sat >= 0.20) & (sat <= 0.68) & (maxc >= 0.35))
-    weight = chroma * np.where(skin, skin_weight, 1.0)
+    weight = chroma * np.where(skin, _VIGNETTE_SKIN_WEIGHT, 1.0)
     idx = np.minimum((hue * _VIGNETTE_HUE_BINS).astype(np.int32), _VIGNETTE_HUE_BINS - 1)
     hist = np.bincount(idx.ravel(), weights=weight.ravel(),
                        minlength=_VIGNETTE_HUE_BINS) / weight.size
@@ -1389,10 +1389,9 @@ def _vignette_family_rgb(
     """The art's own colour at hue ``centre``: the weighted mean of the pixels in
     that family, pulled back onto the family's hue.
 
-    Averaging alone would drift the hue toward whatever else is nearby, which
-    quietly defeated the ramp's minimum-separation rule — two "different" colours
-    came back as two shades of one.  Saturation and Value are kept from the art so
-    the colour is still one the poster actually has.
+    Averaging alone drifts the hue toward whatever else is nearby, which is how a
+    family's own colour comes back as a slightly different one.  Saturation and
+    Value are kept from the art, so the result is still a colour the poster has.
     """
     dh = np.abs(hue - centre)
     dh = np.minimum(dh, 1.0 - dh)
@@ -1452,35 +1451,59 @@ def _vignette_secondary_rgb(
 ) -> tuple[float, float, float] | None:
     """Second colour for the two-tone ramp, or None if the art hasn't got one.
 
-    The next-best-supported hue family, far enough from ``primary`` to read as a
-    different colour and carrying a real share of the primary's own support.  Both
-    bars are deliberately high.  A ramp between neighbouring hues is a flat tint
-    with a smudge in it, and a ramp toward a colour the poster barely has is worse
-    than flat: because distant hues are blended the short way round the wheel, a
-    blue ramping to a token red travels through violet and magenta, neither of
-    which is anywhere in the art.  Flat is the honest fallback.
+    The best-scoring chromatic cluster whose hue is far enough from ``primary`` to
+    actually read as a different colour — a ramp between two shades of one hue is
+    just a flat tint with a smudge in it, so it is better to fall back to flat.
+    Scored by population, biased toward chroma, so the two ends are the poster's
+    two real colours rather than its colour and an incidental highlight.
 
-    Skin is excluded outright here rather than merely down-weighted — on a poster
-    that is a face against a blue sky, skin is the only thing far enough from blue
-    to qualify, and it would announce a second colour the poster hasn't got.
+    Deliberately left on clusters rather than moved onto the hue histogram the
+    primary now uses.  Support answers "how much of the poster is this colour",
+    which is the right question for the wash the whole band takes but the wrong one
+    for its far end: it only ever nominates a *distant* hue, and distant hues blend
+    the short way round the wheel, so the ramp sweeps through violets and magentas
+    the art hasn't got.  Picking the nearest real cluster instead keeps the far end
+    somewhere adjacent, which is what makes the ramp read as depth in the colour
+    rather than as a rainbow laid over the poster.
+
+    Skin is excluded outright, and the coverage bar is high.  Both matter: on a
+    poster that is a man against a blue sky, his face and hands are the only thing
+    far enough from blue to qualify, so without these the ramp announced a second
+    colour — red — that is nowhere in the art.
     """
     import colorsys
+    small = poster.convert("RGB")
+    if max(small.size) > 64:
+        small = small.resize((48, 48), Image.Resampling.LANCZOS)
+    try:
+        q = small.quantize(colors=12, method=Image.Quantize.FASTOCTREE)
+    except Exception:
+        q = small.quantize(colors=12)
+    palette, counts = q.getpalette() or [], q.getcolors() or []
+    if not palette or not counts:
+        return None
     p_h = colorsys.rgb_to_hsv(*(c / 255 for c in primary))[0]
-    a, hue, weight, support = _vignette_hue_profile(poster, skin_weight=0.0)
-    p_support = support[int(round(p_h * _VIGNETTE_HUE_BINS - 0.5)) % _VIGNETTE_HUE_BINS]
-    best, best_support = None, 0.0
-    for i in range(_VIGNETTE_HUE_BINS):
-        centre = (i + 0.5) / _VIGNETTE_HUE_BINS
-        dh = abs(centre - p_h)
+    total = float(sum(c for c, _ in counts)) or 1.0
+    best, best_score = None, -1.0
+    for count, idx in counts:
+        r, g, b = palette[idx * 3:idx * 3 + 3]
+        h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+        if v < _VIGNETTE_RAMP_MIN_V or s < _VIGNETTE_RAMP_MIN_S:
+            continue
+        if v * s < _VIGNETTE_RAMP_MIN_CHROMA:   # a real colour, not compression noise
+            continue
+        if _is_skin_tone(r, g, b):          # a face is not a poster's second colour
+            continue
+        weight = count / total
+        if weight < _VIGNETTE_RAMP_MIN_W:
+            continue
+        dh = abs(h - p_h)
         if min(dh, 1.0 - dh) < _VIGNETTE_RAMP_MIN_HUE:   # hue is circular
             continue
-        if support[i] > best_support:
-            best, best_support = centre, support[i]
-    if best is None or best_support < max(
-        _VIGNETTE_SUPPORT_LOW, _VIGNETTE_RAMP_MIN_SHARE * p_support
-    ):
-        return None
-    return _vignette_family_rgb(a, hue, weight, best)
+        score = weight * (0.3 + s * v)
+        if score > best_score:
+            best_score, best = score, (float(r), float(g), float(b))
+    return best
 
 
 def _vignette_level_band(
@@ -1600,18 +1623,24 @@ _VIGNETTE_LEVEL_FLOOR = 0.30   # never darken the art below this fraction
 # slider collapses the sample to a single cell at the top end, which would leave
 # the ramp with nowhere to ramp.
 _VIGNETTE_RAMP_COLUMNS = 24
-# Minimum hue separation (0–1) for the ramp's second colour.  Below this the two
-# ends are shades of one hue and the ramp reads as a flat tint with a smudge — at
-# the old 0.08 almost every poster "qualified" with the family next door to its
-# own, so the ramp was near-permanently on and doing nothing visible.  The posters
-# that genuinely have two colours (a blue field and a red crest, a gold sky over
-# green) separate by 0.3 and up.
-_VIGNETTE_RAMP_MIN_HUE = 0.20
+# Minimum hue separation (0–1) for the ramp's second colour. Below this the two
+# ends are shades of one hue and the ramp reads as a flat tint with a smudge.
+# Kept low on purpose: raising it only lets *distant* hues qualify, and a ramp
+# across half the colour wheel travels through colours the poster hasn't got.
+_VIGNETTE_RAMP_MIN_HUE = 0.08
 # A ramp endpoint must be a real presence in the art, not a passing accent — it
-# claims half the band.  Measured against the primary's own support so the bar
-# scales with how colourful the poster is: on vivid art a second colour has to be
-# a co-headline, on muted art a muted second colour still counts.
-_VIGNETTE_RAMP_MIN_SHARE = 0.45
+# claims half the band.  A 1% highlight promoted to a co-headline colour is a
+# colour the poster does not actually have.
+_VIGNETTE_RAMP_MIN_W = 0.06
+# ...and bright enough to be a colour statement rather than a shadow: a dark brown
+# that is really hair or shading passes a low bar easily and then gets announced
+# as half the poster's palette.
+_VIGNETTE_RAMP_MIN_V = 0.40
+# How chromatic a cluster must be to be a ramp endpoint at all.  Saturation alone
+# is close to meaningless on dark clusters — pure black plus a little warm
+# compression noise reads S=0.22 while its chroma is 0.03 — so both are checked.
+_VIGNETTE_RAMP_MIN_S      = 0.12
+_VIGNETTE_RAMP_MIN_CHROMA = 0.10
 # Floor on the height of a locally-sampled region, as a fraction of the poster.
 # A shallow vignette is a thin strip of art to judge a colour from, and the strip
 # nearest the edge is often the least representative part of a poster.
