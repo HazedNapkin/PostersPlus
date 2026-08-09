@@ -552,7 +552,7 @@ async def _background_quality_fetch(
 
 # Local imports
 from age_badge import draw_quality_age_badge, draw_tier_bar, _score_points
-from awards import _dominant_cluster, _frost_rank, _is_skin_tone, dominant_frost_rgb
+from awards import _dominant_cluster, dominant_frost_rgb
 from awards import FETCH_FAILED, _RateLimited, draw_award_badge, draw_award_sash, parse_mdblist_awards
 from i18n import load_languages, translate_genre, translate_sash
 from cache import (
@@ -1298,6 +1298,30 @@ _VIGNETTE_SAT_FULL = 3.0
 # they read at all.
 _VIGNETTE_HUE_FLOOR = 0.02
 _VIGNETTE_HUE_SOLID = 0.08
+# --- Which hue the poster is "made of" ---------------------------------------
+# The tint's hue is chosen from a chroma-weighted hue histogram of the whole
+# poster rather than from its largest colour cluster.  A cluster pick answers
+# "what is the biggest single colour here", which is the wrong question: it let a
+# red coat covering 1.6% of an otherwise black-and-white Schindler's List beat the
+# greyscale it stands in, and let a saturated 8% brown outrank the pale blue that
+# is half of a hazy landscape.  Summing chroma per hue instead answers "how much
+# of this poster is actually this colour", which is what a whole-band wash needs.
+_VIGNETTE_HUE_BINS = 36
+# Bins either side of a peak that count toward it.  Colour in real art is spread
+# over neighbouring hues — a sunset is not one hue but a band of them — so support
+# is measured over a family (±3 bins ≈ ±30°), not a single slice.
+_VIGNETTE_HUE_SPAN = 3
+# Faces are everywhere in poster art and are nobody's idea of a poster's colour,
+# but they are still part of it — a sepia portrait really is warm.  Half weight
+# keeps skin from *deciding* the hue while letting it corroborate one.
+_VIGNETTE_SKIN_WEIGHT = 0.5
+# Support (mean chroma per pixel landing in one hue family) at which the tint is
+# fully trusted, and below which it fades to black.  This is the whole
+# black-and-white answer: a poster whose colour is one small prop scores an order
+# of magnitude below one that is genuinely graded, so it keeps the plain black
+# vignette instead of announcing an accent nothing else in the art supports.
+_VIGNETTE_SUPPORT_LOW  = 0.006
+_VIGNETTE_SUPPORT_FULL = 0.028
 # Perceived brightness of a fully saturated hue swings roughly 8x between blue
 # and yellow at one HSV Value, so matching Value alone still leaves a shelf
 # uneven — it only moves which posters shout.  Pull each hue part of the way
@@ -1307,49 +1331,99 @@ _VIGNETTE_HUE_SOLID = 0.08
 # leaving every hue inside its natural range.
 _VIGNETTE_LUMA_REF     = 0.40
 _VIGNETTE_LUMA_CORRECT = 0.5
+# ...and of that correction, the share taken out of Saturation rather than Value
+# when a hue is *brighter* than the reference.  There is no such thing as a dark
+# yellow: drop a gold's Value far enough to match a blue's luminance and it stops
+# reading as gold and starts reading as olive mud, which is exactly what made
+# yellow and amber posters the worst outputs on a shelf.  Spending half the
+# correction on chroma instead lands the same luminance as a paler, cleaner gold.
+# Only bright hues are affected — a blue or red is already darker than the
+# reference and keeps its full Value boost.
+_VIGNETTE_LUMA_SAT_SHARE = 0.5
 _LUMA_COEFFS = np.array([0.299, 0.587, 0.114], dtype=np.float32)
-# Relaxed thresholds for the vignette's second-pass colour hunt (see
-# _vignette_dominant_rgb).  Low enough that one red prop on an otherwise
-# monochrome poster wins the pick, because a white or grey tint is
-# indistinguishable from no tint at all — it reads as the feature being broken.
-_VIGNETTE_ACCENT_S = 0.12
-# Deliberately tiny: on a poster that is 90% black, the warm clusters that carry
-# its whole identity each cover barely 1% and a stricter floor left it untinted.
-# Safe because it is paired with the _S threshold above and only ever reached
-# after the strict pick failed — art with no chromatic cluster at all still finds
-# nothing here and keeps its black vignette.
-_VIGNETTE_ACCENT_W = 0.008
-# The accent hunt also looks into darker clusters than a frosted element would.
-# A poster that is mostly black with one warm-lit figure has its colour *only*
-# down there; at the frost default it was skipped and the pick fell through to
-# whatever pale title text happened to be brighter.
-_VIGNETTE_ACCENT_V = 0.06
-# ...but a dark cluster must still carry real *chroma* (Value x Saturation), not
-# merely a high HSV Saturation, which is close to meaningless down there: pure
-# black plus eight levels of warm compression noise reads as S=0.22 while its
-# chroma is 0.03.  Taking hue from that and amplifying it to full saturation is
-# how a black-and-white poster ended up with an invented olive band.  A genuinely
-# dark-but-coloured cluster (a deep amber at 0.19) clears this comfortably.
-_VIGNETTE_ACCENT_CHROMA = 0.10
-# Whole-poster colour presence (mean opponent chroma, 0–255-ish) used only when no
-# accent cluster qualifies.  Measured over every pixel, so it cannot be fooled by
-# one cluster the way a single-cluster test can: a genuinely colour-graded but
-# muted poster reads ~20, a black-and-white one ~3-5.  This is what separates "the
-# art is dark teal" (tint it) from "the art is greyscale with a faint sepia cast"
-# (leave it black) — the two are indistinguishable from any single cluster.
-_VIGNETTE_PRESENCE_LOW  = 6.0
-_VIGNETTE_PRESENCE_HIGH = 18.0
 
 
-def _vignette_color_presence(poster: Image.Image) -> float:
-    """How much colour the poster actually contains, as mean opponent chroma.
+def _vignette_hue_profile(
+    poster: Image.Image, skin_weight: float = _VIGNETTE_SKIN_WEIGHT
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """(rgb, hue, weight, support) for a poster, as flat 64x64 fields plus a
+    per-hue-family support curve.
 
-    Uses R-G / G-B rather than HSV Saturation because those are zero for any
-    neutral pixel regardless of brightness, where HSV Saturation explodes on
-    near-black (pure black plus a little warm noise reads S=0.22).
+    ``weight`` is each pixel's chroma — max minus min channel — so neutrals
+    contribute nothing at any brightness, unlike HSV Saturation which explodes on
+    near-black (pure black plus a little warm noise reads S=0.22 and used to hand
+    black-and-white art an invented olive tint).  Skin is down-weighted rather
+    than dropped; see _VIGNETTE_SKIN_WEIGHT.
+
+    ``support[i]`` is the mean weight per pixel falling in bin ``i``'s hue family,
+    i.e. how much of the poster is that colour.  It is both how the hue is chosen
+    (the peak) and how far the tint is trusted (the peak's height).
     """
-    a = np.asarray(poster.convert("RGB").resize((64, 64), Image.Resampling.BOX), dtype=np.float32)
-    return float(np.hypot(a[..., 0] - a[..., 1], a[..., 1] - a[..., 2]).mean())
+    a = np.asarray(poster.convert("RGB").resize((64, 64), Image.Resampling.BOX),
+                   dtype=np.float32) / 255.0
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    maxc = a.max(axis=-1)
+    chroma = maxc - a.min(axis=-1)
+    safe = np.maximum(chroma, 1e-6)
+    hue = np.where(maxc == r, ((g - b) / safe) % 6.0,
+          np.where(maxc == g, (b - r) / safe + 2.0, (r - g) / safe + 4.0)) / 6.0
+    hue = np.where(chroma <= 1e-6, 0.0, hue)
+    sat = np.where(maxc > 0, chroma / np.maximum(maxc, 1e-6), 0.0)
+    # Vectorised _is_skin_tone (awards.py) — same warm R>G>B band, same limits.
+    skin = ((r > g) & (g > b) & (hue >= 0.015) & (hue <= 0.11)
+            & (sat >= 0.20) & (sat <= 0.68) & (maxc >= 0.35))
+    weight = chroma * np.where(skin, skin_weight, 1.0)
+    idx = np.minimum((hue * _VIGNETTE_HUE_BINS).astype(np.int32), _VIGNETTE_HUE_BINS - 1)
+    hist = np.bincount(idx.ravel(), weights=weight.ravel(),
+                       minlength=_VIGNETTE_HUE_BINS) / weight.size
+    support = np.zeros(_VIGNETTE_HUE_BINS, dtype=np.float64)
+    for offset in range(-_VIGNETTE_HUE_SPAN, _VIGNETTE_HUE_SPAN + 1):
+        # Triangular window, wrapped: hue is circular, so bin 35 neighbours bin 0.
+        support += (1.0 - abs(offset) / (_VIGNETTE_HUE_SPAN + 1)) * np.roll(hist, -offset)
+    return a, hue, weight, support
+
+
+def _vignette_family_rgb(
+    a: np.ndarray, hue: np.ndarray, weight: np.ndarray, centre: float
+) -> tuple[float, float, float] | None:
+    """The art's own colour at hue ``centre``: the weighted mean of the pixels in
+    that family, pulled back onto the family's hue.
+
+    Averaging alone would drift the hue toward whatever else is nearby, which
+    quietly defeated the ramp's minimum-separation rule — two "different" colours
+    came back as two shades of one.  Saturation and Value are kept from the art so
+    the colour is still one the poster actually has.
+    """
+    dh = np.abs(hue - centre)
+    dh = np.minimum(dh, 1.0 - dh)
+    mask = (dh <= (_VIGNETTE_HUE_SPAN + 0.5) / _VIGNETTE_HUE_BINS) * weight
+    total = mask.sum()
+    if total <= 0:
+        return None
+    import colorsys
+    mean = [float((a[..., i] * mask).sum() / total) for i in range(3)]
+    _h, s, v = colorsys.rgb_to_hsv(*mean)
+    return tuple(c * 255.0 for c in colorsys.hsv_to_rgb(centre, s, v))
+
+
+def _vignette_hue_pick(
+    poster: Image.Image,
+) -> tuple[tuple[float, float, float] | None, float]:
+    """(tint colour, confidence) for a region — the hue the most of it is made of.
+
+    ``confidence`` answers "is this colour really what the art is", and it is the
+    same number that chose the hue: the support behind the winning family.  A
+    poster that is genuinely graded — a cold war photo, a navy Terminator, a teal
+    landscape — clears _VIGNETTE_SUPPORT_FULL even when muted, because the cast
+    covers it.  A black-and-white one whose only colour is a coat or a face fades
+    to black instead, and both a plain grey and a warm off-white read as no colour
+    at all.  The tint is never invented, only found.
+    """
+    a, hue, weight, support = _vignette_hue_profile(poster)
+    peak = int(np.argmax(support))
+    centre = (peak + 0.5) / _VIGNETTE_HUE_BINS
+    conf = (support[peak] - _VIGNETTE_SUPPORT_LOW) / (_VIGNETTE_SUPPORT_FULL - _VIGNETTE_SUPPORT_LOW)
+    return _vignette_family_rgb(a, hue, weight, centre), float(np.clip(conf, 0.0, 1.0))
 
 
 def _vignette_dominant_rgb(
@@ -1358,49 +1432,19 @@ def _vignette_dominant_rgb(
     """Whole-poster colour for the vignette tint → (strict_pick, vignette_pick,
     confidence).
 
-    ``strict_pick`` is the ordinary pick the frosted bar / notch / sash use,
-    returned so the caller can share it with them rather than quantising twice.
-
-    ``vignette_pick`` is what the vignette should tint from.  It is the strict
-    pick whenever that found a real colour — the common case, where every element
-    still agrees exactly.  Only when the strict pick comes back white, grey or
-    near-black does it hunt again with relaxed thresholds, so a mostly monochrome
-    poster tints from whatever accent it does have rather than from the neutral
-    that dominates it by area.
-
-    ``confidence`` answers "does this poster have a usable hue at all", once, for
-    the whole poster — and it is deliberately near-binary.  Judging that per cell
-    from local chroma instead made muted-but-hued art (a grey-teal war poster, a
-    dark-teal one) come out at half strength, which is the same mistake as letting
-    the source's saturation drive intensity: the art is supposed to choose the hue
-    and the slider the strength.  It only tapers below 1.0 for art that is
-    genuinely almost monochrome, so such a poster fades out rather than snapping
-    to black.  The tint is never invented, only found.
+    ``strict_pick`` is the ordinary cluster pick the frosted bar / notch / sash
+    use, returned so the caller can share it with them rather than quantising
+    twice.  The vignette's own pick comes from _vignette_hue_pick instead: a
+    frosted element is a small patch that wants to match one prominent colour,
+    while a vignette is a wash across the whole width and wants the colour the
+    poster is mostly made of.  The two agree on ordinary art and part company
+    exactly where they should — on a poster with one vivid accent in a neutral
+    field, which the bar may match and the vignette must not.
     """
-    rgb, v, s, skin = _dominant_cluster(poster)
+    rgb, _v, _s, _skin = _dominant_cluster(poster)
     strict = rgb if rgb is not None else (128.0, 128.0, 128.0)
-    if rgb is not None and _frost_rank(v, s, skin) >= 2:
-        return strict, strict, 1.0
-    # Relax the thresholds, then — only if that still finds nothing — allow dark
-    # clusters too.  The order matters: dropping the brightness floor up front lets
-    # a poster's large dark regions outweigh its accent on area alone, which
-    # replaced Roma's yellow title and Sin City's blue with a near-black.  A dark
-    # colour is a last resort, not a peer of a bright one.
-    accent = None
-    for _min_v in (None, _VIGNETTE_ACCENT_V):
-        accent, accent_v, accent_s, _askin = _dominant_cluster(
-            poster, _VIGNETTE_ACCENT_S, _VIGNETTE_ACCENT_W, _min_v
-        )
-        if accent is not None and accent_v * accent_s >= _VIGNETTE_ACCENT_CHROMA:
-            return strict, accent, 1.0
-    # No cluster carries a real colour.  Fall back to how much colour the poster
-    # has *overall* rather than to the chosen cluster's own chroma: a single dark
-    # cluster cannot tell a dark-teal grade from greyscale-plus-sepia, and judging
-    # by it demoted honestly muted art to half strength.
-    best = accent if accent is not None else strict
-    presence = _vignette_color_presence(poster)
-    conf = (presence - _VIGNETTE_PRESENCE_LOW) / (_VIGNETTE_PRESENCE_HIGH - _VIGNETTE_PRESENCE_LOW)
-    return strict, best, max(0.0, min(1.0, conf))
+    pick, conf = _vignette_hue_pick(poster)
+    return strict, (pick if pick is not None else strict), (conf if pick is not None else 0.0)
 
 
 def _vignette_secondary_rgb(
@@ -1408,51 +1452,35 @@ def _vignette_secondary_rgb(
 ) -> tuple[float, float, float] | None:
     """Second colour for the two-tone ramp, or None if the art hasn't got one.
 
-    The best-scoring chromatic cluster whose hue is far enough from ``primary`` to
-    actually read as a different colour — a ramp between two shades of one hue is
-    just a flat tint with a smudge in it, so it is better to fall back to flat.
-    Scored the same way as the primary pick (population, biased toward chroma) so
-    the two ends are the poster's two real colours rather than its colour and an
-    incidental highlight.
+    The next-best-supported hue family, far enough from ``primary`` to read as a
+    different colour and carrying a real share of the primary's own support.  Both
+    bars are deliberately high.  A ramp between neighbouring hues is a flat tint
+    with a smudge in it, and a ramp toward a colour the poster barely has is worse
+    than flat: because distant hues are blended the short way round the wheel, a
+    blue ramping to a token red travels through violet and magenta, neither of
+    which is anywhere in the art.  Flat is the honest fallback.
 
-    Skin is excluded outright, and the coverage bar is much higher than the accent
-    hunt's.  Both matter: on a poster that is a man against a blue sky, his face
-    and hands are the only thing far enough from blue to qualify, so without these
-    the ramp announced a second colour — red — that is nowhere in the art.
+    Skin is excluded outright here rather than merely down-weighted — on a poster
+    that is a face against a blue sky, skin is the only thing far enough from blue
+    to qualify, and it would announce a second colour the poster hasn't got.
     """
     import colorsys
-    small = poster.convert("RGB")
-    if max(small.size) > 64:
-        small = small.resize((48, 48), Image.Resampling.LANCZOS)
-    try:
-        q = small.quantize(colors=12, method=Image.Quantize.FASTOCTREE)
-    except Exception:
-        q = small.quantize(colors=12)
-    palette, counts = q.getpalette() or [], q.getcolors() or []
-    if not palette or not counts:
-        return None
     p_h = colorsys.rgb_to_hsv(*(c / 255 for c in primary))[0]
-    total = float(sum(c for c, _ in counts)) or 1.0
-    best, best_score = None, -1.0
-    for count, idx in counts:
-        r, g, b = palette[idx * 3:idx * 3 + 3]
-        h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
-        if v < _VIGNETTE_RAMP_MIN_V or s < _VIGNETTE_ACCENT_S:
-            continue
-        if v * s < _VIGNETTE_ACCENT_CHROMA:   # same real-colour test as the accent hunt
-            continue
-        if _is_skin_tone(r, g, b):          # a face is not a poster's second colour
-            continue
-        weight = count / total
-        if weight < _VIGNETTE_RAMP_MIN_W:
-            continue
-        dh = abs(h - p_h)
+    a, hue, weight, support = _vignette_hue_profile(poster, skin_weight=0.0)
+    p_support = support[int(round(p_h * _VIGNETTE_HUE_BINS - 0.5)) % _VIGNETTE_HUE_BINS]
+    best, best_support = None, 0.0
+    for i in range(_VIGNETTE_HUE_BINS):
+        centre = (i + 0.5) / _VIGNETTE_HUE_BINS
+        dh = abs(centre - p_h)
         if min(dh, 1.0 - dh) < _VIGNETTE_RAMP_MIN_HUE:   # hue is circular
             continue
-        score = weight * (0.3 + s * v)
-        if score > best_score:
-            best_score, best = score, (float(r), float(g), float(b))
-    return best
+        if support[i] > best_support:
+            best, best_support = centre, support[i]
+    if best is None or best_support < max(
+        _VIGNETTE_SUPPORT_LOW, _VIGNETTE_RAMP_MIN_SHARE * p_support
+    ):
+        return None
+    return _vignette_family_rgb(a, hue, weight, best)
 
 
 def _vignette_level_band(
@@ -1521,8 +1549,8 @@ def _vignette_band_colour(
     if not local:
         return whole
     region = poster.crop(box)
-    _strict, tint, conf = _vignette_dominant_rgb(region)
-    if conf < whole[1]:
+    tint, conf = _vignette_hue_pick(region)
+    if tint is None or conf < whole[1]:
         return whole
     second = _vignette_secondary_rgb(region, tint) if (want_ramp and conf > 0) else None
     return tint, conf, second
@@ -1556,7 +1584,10 @@ _VIGNETTE_BLUR_MIX_CURVE    = 0.7   # how fast it commits to the flat dominant c
 # poster width so it is resolution-independent.  Flattening the *tint* alone left
 # the art underneath perfectly sharp, which reads as a plain colour cast rather
 # than as blur; frosting the art is what actually sells the top of the slider.
-_VIGNETTE_BLUR_MAX_RATIO = 0.09
+# The ceiling is what decides whether a busy poster (a spider's legs, a cartoon
+# background) reads as a deliberate wash or as colour sprayed over legible art —
+# at 0.09 even the top of the slider left too much of it standing.
+_VIGNETTE_BLUR_MAX_RATIO = 0.16
 # How much of the artwork's own luminance the band tolerates bleeding through the
 # vignette, in luma units at peak alpha.  The tint's own contribution is already
 # near-constant across posters (~33); what made a bright poster look washed next
@@ -1569,19 +1600,18 @@ _VIGNETTE_LEVEL_FLOOR = 0.30   # never darken the art below this fraction
 # slider collapses the sample to a single cell at the top end, which would leave
 # the ramp with nowhere to ramp.
 _VIGNETTE_RAMP_COLUMNS = 24
-# Minimum hue separation (0–1) for the ramp's second colour. Below this the two
-# ends are shades of one hue and the ramp reads as a flat tint with a smudge.
-_VIGNETTE_RAMP_MIN_HUE = 0.08
+# Minimum hue separation (0–1) for the ramp's second colour.  Below this the two
+# ends are shades of one hue and the ramp reads as a flat tint with a smudge — at
+# the old 0.08 almost every poster "qualified" with the family next door to its
+# own, so the ramp was near-permanently on and doing nothing visible.  The posters
+# that genuinely have two colours (a blue field and a red crest, a gold sky over
+# green) separate by 0.3 and up.
+_VIGNETTE_RAMP_MIN_HUE = 0.20
 # A ramp endpoint must be a real presence in the art, not a passing accent — it
-# claims half the band.  Far stricter than _VIGNETTE_ACCENT_W, which exists to
-# rescue monochrome posters and would happily promote a 1% highlight to a
-# co-headline colour the poster does not actually have.
-_VIGNETTE_RAMP_MIN_W = 0.06
-# ...and bright enough to be a colour statement rather than a shadow.  Much higher
-# than _VIGNETTE_ACCENT_V, which is deliberately low so a near-black poster can
-# find *any* hue: a dark brown that is really hair or shading passes that bar
-# easily and then gets announced as half the poster's palette.
-_VIGNETTE_RAMP_MIN_V = 0.40
+# claims half the band.  Measured against the primary's own support so the bar
+# scales with how colourful the poster is: on vivid art a second colour has to be
+# a co-headline, on muted art a muted second colour still counts.
+_VIGNETTE_RAMP_MIN_SHARE = 0.45
 # Floor on the height of a locally-sampled region, as a fraction of the poster.
 # A shallow vignette is a thin strip of art to judge a colour from, and the strip
 # nearest the edge is often the least representative part of a poster.
@@ -1611,9 +1641,9 @@ def _vignette_tint_band(
     same slider also frosts the art itself — see _vignette_frost_band, which is
     what makes the high end read as blur rather than as a flat colour cast.
 
-    ``confidence`` (0–1, from _vignette_dominant_rgb) is whether the poster has a
-    usable hue at all.  It is the only thing besides the slider allowed to affect
-    strength, and it is judged once for the whole poster.
+    ``confidence`` (0–1, from _vignette_hue_pick) is how much of the art actually
+    carries the chosen hue.  It is the only thing besides the slider allowed to
+    affect strength, and it is judged once for the whole region.
 
     ``saturation`` (0–_VIGNETTE_SAT_FULL) sets the tint's strength on its own; the
     art supplies only the hue.  Two posters at the same setting therefore land on
@@ -1692,14 +1722,19 @@ def _vignette_tint_band(
 
     # Equalise across hues as well as across sources: scale each cell's Value by
     # how far its hue's own luminance sits from the reference, so a yellow band
-    # and a blue band at the same setting land near the same brightness.
+    # and a blue band at the same setting land near the same brightness.  A hue
+    # brighter than the reference gives part of that back as chroma instead of
+    # Value (see _VIGNETTE_LUMA_SAT_SHARE), because a gold darkened far enough to
+    # match a navy is no longer gold, it is mud.
     hue_luma  = np.maximum(full @ _LUMA_COEFFS, 1e-6)
-    hue_scale = (_VIGNETTE_LUMA_REF / hue_luma) ** _VIGNETTE_LUMA_CORRECT
-    s_eff = _VIGNETTE_TINT_S * strength
-    v_eff = np.minimum(1.0, _VIGNETTE_TINT_V * strength * hue_scale)
-    # s_eff is a scalar (strength is now poster-level, not per-cell); v_eff stays
-    # per-cell because the hue correction varies with each cell's hue.
-    tint  = 255.0 * v_eff[..., None] * (1.0 - s_eff * (1.0 - full))
+    hue_ratio = _VIGNETTE_LUMA_REF / hue_luma
+    v_scale   = hue_ratio ** _VIGNETTE_LUMA_CORRECT
+    s_scale   = np.minimum(1.0, hue_ratio) ** _VIGNETTE_LUMA_SAT_SHARE
+    s_eff = _VIGNETTE_TINT_S * strength * s_scale
+    v_eff = np.minimum(1.0, _VIGNETTE_TINT_V * strength * v_scale)
+    # Both stay per-cell: strength is poster-level, but the hue correction varies
+    # with each cell's own hue.
+    tint  = 255.0 * v_eff[..., None] * (1.0 - s_eff[..., None] * (1.0 - full))
 
     small = Image.fromarray(np.clip(tint, 0, 255).astype(np.uint8), mode="RGB")
     return small if (cols, rows) == (bw, bh) else small.resize((bw, bh), Image.Resampling.BICUBIC)
