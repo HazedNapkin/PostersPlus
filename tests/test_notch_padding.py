@@ -19,7 +19,8 @@ import awards
 import main
 
 
-def _render(pad: float, *, label: str = "Oscar Nominee", size_ratio_h: float = 1.15) -> Image.Image:
+def _render(pad: float, *, label: str = "Oscar Nominee", size_ratio_h: float = 1.15,
+            font_size_ratio: float = 0.43) -> Image.Image:
     # Black backdrop + the "black" notch style keeps the badge body dark and the
     # text near-white, so both are separable by luminance alone.
     bg = Image.new("RGBA", (1000, 1500), (0, 0, 0, 255))
@@ -27,7 +28,7 @@ def _render(pad: float, *, label: str = "Oscar Nominee", size_ratio_h: float = 1
         bg, label, sash_type="nom",
         size_ratio_w=1.40, size_ratio_h=size_ratio_h,
         notch_style="black", notch_pad_ratio=pad,
-        font_size_ratio=0.43, notch_inset=0.0,
+        font_size_ratio=font_size_ratio, notch_inset=0.0,
     )
 
 
@@ -59,13 +60,30 @@ class NotchPaddingDefaultTests(unittest.TestCase):
 
     def test_omitting_the_argument_matches_an_explicit_one(self):
         # Guards the no-op default: an untouched caller must render exactly what
-        # it rendered before notch_pad_ratio existed.
+        # it rendered before notch_pad_ratio existed.  Parametrised over the font
+        # scale because the padding floor is derived from the font — an unclamped
+        # floor overtakes the nominal height above ~0.78 and silently re-renders
+        # saved URLs.
         bg = Image.new("RGBA", (1000, 1500), (0, 0, 0, 255))
-        kwargs = dict(sash_type="nom", size_ratio_w=1.40, size_ratio_h=1.15,
-                      notch_style="black", font_size_ratio=0.43, notch_inset=0.0)
-        omitted = awards.draw_award_badge(bg, "Oscar Nominee", **kwargs)
-        explicit = awards.draw_award_badge(bg, "Oscar Nominee", notch_pad_ratio=1.0, **kwargs)
-        self.assertEqual(omitted.tobytes(), explicit.tobytes())
+        for font_size_ratio in (0.43, 0.70, 1.00):
+            with self.subTest(font_size_ratio=font_size_ratio):
+                kwargs = dict(sash_type="nom", size_ratio_w=1.40, size_ratio_h=1.15,
+                              notch_style="black", font_size_ratio=font_size_ratio,
+                              notch_inset=0.0)
+                omitted = awards.draw_award_badge(bg, "Oscar Nominee", **kwargs)
+                explicit = awards.draw_award_badge(bg, "Oscar Nominee",
+                                                   notch_pad_ratio=1.0, **kwargs)
+                self.assertEqual(omitted.tobytes(), explicit.tobytes())
+
+    def test_default_pad_height_is_independent_of_font_size(self):
+        # The nominal height comes from size_ratio_h alone, so at the 1.0 default
+        # the drawn height must not move when the font scale does.  This is what
+        # keeps pre-existing URLs rendering at the height they always did.
+        heights = {
+            fsr: _metrics(_render(1.0, font_size_ratio=fsr))["badge_h"]
+            for fsr in (0.43, 0.70, 0.90, 1.00)
+        }
+        self.assertEqual(len(set(heights.values())), 1, heights)
 
     def test_param_is_clamped_and_survives_junk(self):
         for raw, expected in (("0.70", 0.70), ("0.1", 0.5), ("9", 1.5), ("abc", 1.0)):
@@ -102,8 +120,10 @@ class NotchPaddingGeometryTests(unittest.TestCase):
 
     def test_floor_prevents_clipping_at_extreme_values(self):
         # Below the floor the badge stops shrinking rather than eating glyphs.
-        floored = _metrics(_render(0.5))
-        for pad in (0.4, 0.2, 0.0):
+        # The floor is measured from the label's ink, so compare against the
+        # fully-collapsed render rather than assuming which ratio reaches it.
+        floored = _metrics(_render(0.0))
+        for pad in (0.2, 0.1):
             with self.subTest(pad=pad):
                 m = _metrics(_render(pad))
                 self.assertEqual(m["badge_h"], floored["badge_h"])
@@ -116,6 +136,26 @@ class NotchPaddingGeometryTests(unittest.TestCase):
         m = _metrics(_render(0.0, size_ratio_h=2.0))
         self.assertGreater(m["pad_top"], 0)
         self.assertGreater(m["pad_bottom"], 0)
+
+    def test_floor_is_the_same_for_every_label(self):
+        # The floor comes from a fixed reference string, not the label, so a
+        # library of mixed-language awards trims to a uniform height instead of
+        # one that jumps around with each title's tallest glyph.
+        heights = {
+            label: _metrics(_render(0.0, label=label))["badge_h"]
+            for label in ("Oscar Winner", "Ganadora del Óscar",
+                          "Prêmio Ganhador ÅÄÖ", "À binge-watcher")
+        }
+        self.assertEqual(len(set(heights.values())), 1, heights)
+
+    def test_floor_measures_ink_so_diacritics_survive(self):
+        # The reference string carries the tallest accented capitals, so accents
+        # that sit above the cap height stay inside the badge.
+        for label in ("Ganadora del Óscar", "Prêmio Ganhador ÅÄÖ", "À binge-watcher"):
+            with self.subTest(label=label):
+                m = _metrics(_render(0.0, label=label))
+                self.assertGreater(m["pad_top"], 0)
+                self.assertGreater(m["pad_bottom"], 0)
 
     def test_all_styles_render_at_a_tight_pad(self):
         # Silver/gold draw their trim through Cairo with a PIL fallback, so the
