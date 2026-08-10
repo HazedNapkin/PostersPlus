@@ -1481,17 +1481,22 @@ def _vignette_hue_pick(
     """
     a, hue, weight, support = _vignette_hue_profile(poster, rows)
     peak = int(np.argmax(support))
-    centre = (peak + 0.5) / _VIGNETTE_HUE_BINS
+    return (_vignette_family_rgb(a, hue, weight, (peak + 0.5) / _VIGNETTE_HUE_BINS),
+            _vignette_hue_confidence(support, peak))
+
+
+def _vignette_hue_confidence(support: np.ndarray, peak: int) -> float:
+    """How far a hue peak is to be trusted: how much of the art carries it, and
+    how clearly it beat the best rival far enough away to be a different colour
+    rather than its own family's shoulder."""
     conf = (support[peak] - _VIGNETTE_SUPPORT_LOW) / (_VIGNETTE_SUPPORT_FULL - _VIGNETTE_SUPPORT_LOW)
-    # ...and how clearly it won, against the best rival far enough away in hue to
-    # be a different colour rather than the same family's shoulder.
     bins  = np.arange(_VIGNETTE_HUE_BINS)
     apart = np.minimum(np.abs(bins - peak), _VIGNETTE_HUE_BINS - np.abs(bins - peak))
     rival = support[apart >= _VIGNETTE_RIVAL_HUE * _VIGNETTE_HUE_BINS]
     if rival.size and support[peak] > 0:
         margin = 1.0 - rival.max() / support[peak]
         conf = min(conf, margin / (1.0 - _VIGNETTE_RIVAL_CLEAR))
-    return _vignette_family_rgb(a, hue, weight, centre), float(np.clip(conf, 0.0, 1.0))
+    return float(np.clip(conf, 0.0, 1.0))
 
 
 def _vignette_dominant_rgb(
@@ -1626,7 +1631,8 @@ def _vignette_level_band(
 def _vignette_band_colour(
     poster: Image.Image,
     seam: tuple[tuple[int, int, int, int], np.ndarray],
-    whole: tuple[tuple[float, float, float], float, tuple[float, float, float] | None],
+    whole: tuple[tuple[float, float, float], float, tuple[float, float, float] | None,
+                 np.ndarray],
     local: bool,
     want_ramp: bool,
 ) -> tuple[tuple[float, float, float], float, tuple[float, float, float] | None]:
@@ -1635,37 +1641,48 @@ def _vignette_band_colour(
     With ``local`` off this is just the whole-poster pick, so both bands agree and
     so does every frosted element.
 
-    With it on, ``seam`` is the window around the band's inner edge and its
-    per-row weights (see _vignette_seam), and the tint is taken from there.  That
-    window is the one place the tint and the artwork are seen together: outside it
-    the art is untouched, inside it the band has started to cover the art but has
-    not hidden it, and past it there is nothing left to agree with.  Matching it is
-    what makes the band read as the poster's own colour deepening rather than as a
-    different colour arriving.
+    With it on there are two candidates and a rule for choosing between them.  The
+    seam — the window around the band's inner edge, see _vignette_seam — is where
+    the tint and the artwork are seen together, so a band that matches it reads as
+    the poster's own colour deepening rather than as a different colour arriving.
+    But the seam is a sliver, and a sliver can be unrepresentative: a red coat, a
+    lit shoulder, one lamp.  The whole poster is representative by construction and
+    can be a colour that is nowhere near the join.  Each is right where the other
+    is wrong, and neither is right often enough to use alone.
 
-    The whole-poster pick is kept as a fallback for when the seam has no colour at
-    all (a band fading out over plain shadow, say), since otherwise a colourless
-    seam would force a black band onto a poster that plainly has colour elsewhere.
-    Only *no* colour, mind: a seam that found a hue but is unsure of it — because
-    a rival ran it close — keeps its own and fades toward black by that much.
-    Borrowing the whole poster's colour there would answer a question about the
-    join with a colour from somewhere else, which is the failure this sampling
-    exists to avoid, and it is how a tie at the seam ended up painted in the very
-    colour the tie was meant to reject.
+    So a candidate is scored by the *weaker* of its two supports — how much of the
+    join carries that hue, and how much of the poster does — and the better score
+    wins.  A colour has to be earned twice.  A prop at the join fails on the
+    poster; a poster colour absent from the join fails at the join; a colour that
+    is genuinely both is the one the band should be.  The scores are directly
+    comparable because both curves are in the same units, mean weighted chroma per
+    pixel, and only the two candidates are scored — taking the best hue of the
+    combined curve instead would invent a third colour that neither sample chose.
 
-    A seam-sampled band takes its ramp partner from the seam too, or goes flat:
-    pairing a seam primary with a secondary from the far end of the poster would
-    ramp toward a colour that isn't anywhere near the join.
+    Confidence comes from that same combined curve, so a band whose colour only
+    one side supports fades out rather than committing.
+
+    The winner brings its own ramp partner, from the sample that chose it: pairing
+    a seam primary with a secondary from the far end of the poster would ramp
+    toward a colour that isn't anywhere near the join.
     """
     if not local:
-        return whole
+        return whole[:3]
     box, rows = seam
     region = poster.crop(box)
-    tint, conf = _vignette_hue_pick(region, rows)
-    if tint is None or conf <= 0.0:
-        return whole
-    second = _vignette_secondary_rgb(region, tint) if (want_ramp and conf > 0) else None
-    return tint, conf, second
+    _a, _hue, _w, seam_sup = _vignette_hue_profile(region, rows)
+    both = np.minimum(seam_sup, whole[3])
+    seam_peak, whole_peak = int(np.argmax(seam_sup)), int(np.argmax(whole[3]))
+    peak = seam_peak if both[seam_peak] > both[whole_peak] else whole_peak
+    conf = _vignette_hue_confidence(both, peak)
+    if conf <= 0.0:
+        return whole[:3]
+    if peak == whole_peak and whole[0] is not None:
+        return whole[0], conf, whole[2]
+    tint = _vignette_family_rgb(_a, _hue, _w, (peak + 0.5) / _VIGNETTE_HUE_BINS)
+    if tint is None:
+        return whole[:3]
+    return tint, conf, (_vignette_secondary_rgb(region, tint) if want_ramp else None)
 
 
 def _vignette_hue_gate(field: np.ndarray) -> np.ndarray:
@@ -2224,13 +2241,17 @@ def build_poster(
     _poster_tint: tuple[float, float, float] | None = None
     _poster_conf = 0.0
     _poster_tint2: tuple[float, float, float] | None = None
+    _poster_support = np.zeros(_VIGNETTE_HUE_BINS)
     if cfg.vignette_poster_color_top or cfg.vignette_poster_color_bottom:
         _strict_tint, _poster_tint, _poster_conf = _vignette_dominant_rgb(_frost_color_src)
         if cfg.vignette_color_ramp and _poster_conf > 0:
             _poster_tint2 = _vignette_secondary_rgb(_frost_color_src, _poster_tint)
-    # Whole-poster result, used directly unless local sampling is on and each band
-    # finds something better of its own.
-    _whole_colour = (_poster_tint, _poster_conf, _poster_tint2)
+        # Kept whole so a band can weigh its own seam's colour against how much of
+        # the poster carries it — see _vignette_band_colour.
+        _poster_support = _vignette_hue_profile(_frost_color_src)[3]
+    # Whole-poster result, used directly unless a band finds something its seam and
+    # the poster agree on better.
+    _whole_colour = (_poster_tint, _poster_conf, _poster_tint2, _poster_support)
     _slider_amount = min(1.0, max(0.0, cfg.vignette_color_saturation) / _VIGNETTE_SAT_FULL)
     # How hard the band is being asked to wash the art out, for the levelling pass.
     # Both sliders ask for it — colour lays a tint over the art, blur melts it — so
