@@ -2417,7 +2417,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   </label>
                 </div>
                 <div class="toggle-row">
-                  <span class="toggle-label" data-tip="Takes each vignette's colour from the artwork nearest it rather than from the whole poster, so the top and bottom can differ. Falls back to the whole poster when the nearby art has no colour of its own.">Sample Nearby Area</span>
+                  <span class="toggle-label" data-tip="Takes each vignette's colour from the strip of art it fades out into, rather than from the whole poster, so the band reads as that art deepening instead of a new colour arriving. The top and bottom can differ. Falls back to the whole poster when the art at the join has no colour of its own.">Blend Into Nearby Art</span>
                   <label class="toggle-switch">
                     <input type="checkbox" id="tog-vignette-local" onchange="build(); queuePreviewReload()">
                     <div class="toggle-track"><div class="toggle-thumb"></div></div>
