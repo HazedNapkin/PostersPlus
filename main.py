@@ -2280,11 +2280,23 @@ def build_poster(
     # what the top of the poster does.
     _top_enabled    = cfg.vignette_poster_color_top and not _sash_shown
     _bottom_enabled = cfg.vignette_poster_color_bottom
-    # What colour a tinted band actually landed on, kept for the frosted notch to
-    # match if it is asked to (see _frost_tint below).  Only a band that is really
-    # carrying colour is recorded: the top band's is preferred when both are tinted,
-    # since that is the one a notch sits on.
+    # What colour a tinted band actually *paints*, kept for the frosted notch to
+    # match if it is asked to (see _frost_tint below).  Read off the band's own
+    # tint field at its deepest row rather than taken from the sample the hue was
+    # picked from: those two share a hue and nothing else.  The sample is the art's
+    # own colour — a bright sky blue at V 0.88 — while the band lays down that hue
+    # at the tint's Value and Saturation, which at any setting is a dark shade of
+    # it, and lower saturation makes it darker still.  Matching the sample gave a
+    # notch far brighter and more colourful than the band beside it.  The top
+    # band's is preferred when both are tinted, since that is the one a notch sits
+    # on.
     _vignette_shown: tuple[float, float, float] | None = None
+
+    def _band_paint(field: Image.Image, deepest_row: int) -> tuple[float, float, float]:
+        """Mean colour along a tint field's peak-alpha edge — what the eye sees
+        where the band is strongest, before the art bleeding through lightens it."""
+        row = np.asarray(field.convert("RGB"), dtype=np.float32)[deepest_row]
+        return tuple(float(c) for c in row.mean(axis=0))
 
     # --- TOP GRADIENT (vectorised) ---
     # Darkens the top of the poster so the age-rating numeral and quality
@@ -2327,7 +2339,8 @@ def build_poster(
                 cfg.vignette_color_saturation, cfg.vignette_color_blur, _t_second,
             ).convert("RGBA")
             if _t_conf >= _VIGNETTE_MATCH_MIN_CONF and _slider_amount > 0:
-                _vignette_shown = _t_tint
+                # Top band: strongest at the poster's edge, so row 0.
+                _vignette_shown = _band_paint(top_tinted, 0)
         else:
             top_tinted = Image.new("RGBA", (width, top_height), (0, 0, 0, 0))
         top_tinted.putalpha(top_overlay)
@@ -2368,12 +2381,13 @@ def build_poster(
             _vignette_level_band(
                 image, (0, bottom_start, width, height), bottom_overlay, _level_amount
             )
-            if _vignette_shown is None and _b_conf >= _VIGNETTE_MATCH_MIN_CONF and _slider_amount > 0:
-                _vignette_shown = _b_tint
             bottom_tinted = _vignette_tint_band(
                 _frost_color_src, (0, bottom_start, width, height), _b_tint, _b_conf,
                 cfg.vignette_color_saturation, cfg.vignette_color_blur, _b_second,
             ).convert("RGBA")
+            if _vignette_shown is None and _b_conf >= _VIGNETTE_MATCH_MIN_CONF and _slider_amount > 0:
+                # Bottom band: strongest at the poster's edge, so the last row.
+                _vignette_shown = _band_paint(bottom_tinted, -1)
         else:
             bottom_tinted = Image.new("RGBA", (width, bottom_height), (0, 0, 0, 0))
         bottom_tinted.putalpha(bottom_overlay)
@@ -2630,8 +2644,18 @@ def build_poster(
     # actually wearing: a band that came out black has no colour to match, and the
     # notch keeps its own logic rather than tinting from a hue nothing else on the
     # poster shows.  The frosted bar follows, as it already follows the notch.
-    if cfg.notch_vignette_color and _notch_frosted and _vignette_shown is not None:
+    _frost_matched = (
+        cfg.notch_vignette_color and _notch_frosted and _vignette_shown is not None
+    )
+    if _frost_matched:
         _frost_tint = _vignette_shown
+    # Matching implies reference mode.  The saturation slider exists to turn a
+    # poster colour into a pastel that is not the poster's colour any more, which
+    # is the one thing a match cannot afford; reference mode keeps the hue and the
+    # saturation as given and adds white only as far as the dark text needs, so
+    # the notch lands on the band's own colour lifted to legibility.  The two
+    # controls are mutually exclusive in the configurator for the same reason.
+    _frost_ref = cfg.frost_reference or _frost_matched
     # One saturation for every frosted element: a frosted notch owns it (its slider
     # lives in the sash panel); otherwise the rating bar's slider drives it. Sharing
     # it keeps the bar and any sash/notch identical.
@@ -2853,7 +2877,7 @@ def build_poster(
                 font_size_ratio  = cfg.bar_font_size_ratio,
                 frost_opacity    = cfg.bar_frost_opacity,
                 frost_saturation = _frost_sat,
-                frost_reference  = cfg.frost_reference,
+                frost_reference  = _frost_ref,
                 bottom_inset     = cfg.bar_bottom_inset,
                 style            = cfg.bar_style,
                 score            = score if score not in ("N/A", None) else None,
@@ -2888,7 +2912,7 @@ def build_poster(
                                      font_size_ratio=cfg.sash_badge_font_ratio,
                                      frost_opacity=cfg.sash_badge_frost_opacity,
                                      frost_saturation=cfg.sash_badge_frost_saturation,
-                                     frost_reference=cfg.frost_reference,
+                                     frost_reference=_frost_ref,
                                      tint_rgb=_frost_tint,
                                      star=_is_star,
                                      text_color=cfg.sash_text_color)
@@ -2899,7 +2923,7 @@ def build_poster(
                                     height_ratio=cfg.sash_height_ratio,
                                     poster_color=_poster_color,
                                     frost_saturation=_frost_sat,
-                                    frost_reference=cfg.frost_reference,
+                                    frost_reference=_frost_ref,
                                     star=_is_star,
                                     text_color=cfg.sash_text_color)
 

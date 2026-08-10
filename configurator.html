@@ -2878,7 +2878,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <div class="toggle-row" id="sash-vignette-color-row" style="display:none;">
                 <span class="toggle-label" data-tip="Takes the notch's colour from whatever a tinted vignette landed on, so the two agree. Keeps its usual colour when neither vignette is tinted, or when the tinted one came out too near black to have a colour of its own. Frosted notch only.">Match Tinted Vignette</span>
                 <label class="toggle-switch">
-                  <input type="checkbox" id="tog-notch-vignette-color" onchange="build(); queuePreviewReload()">
+                  <input type="checkbox" id="tog-notch-vignette-color" onchange="onNotchVignetteColorChange(this)">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
@@ -4765,7 +4765,21 @@ function updateBadgeStyleFields() {
 // Reference Colour is one global setting shown in whichever panel owns the
 // saturation control (Rating, or Sash for a frosted notch). Keep both toggles in
 // sync and refresh which saturation slider is visible.
+// Reference Colour and Match Tinted Vignette both decide how the frosted tint
+// is built, and matching already implies reference behaviour — so they are one
+// choice, not two, and turning either on releases the other.
+function onNotchVignetteColorChange(el) {
+  if (el.checked) {
+    _setEl('tog-sash-frost-reference', false);
+    _setEl('tog-bar-frost-reference', false);
+    updateBadgeStyleFields();
+  }
+  build();
+  queuePreviewReload();
+}
+
 function onFrostReferenceChange(el) {
+  if (el.checked) _setEl('tog-notch-vignette-color', false);
   const on = el.checked;
   _setEl('tog-bar-frost-reference',  on ? 'true' : 'false');
   _setEl('tog-sash-frost-reference', on ? 'true' : 'false');
