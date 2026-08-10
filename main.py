@@ -2910,6 +2910,29 @@ def build_poster(
 # Lifecycle
 # ---------------------------------------------------------------------------
 
+def prune_rating_state(now: float) -> tuple[int, int]:
+    """Drop rating back-off entries that have expired, and the failure counters
+    left behind by ones that already went.  Returns how many of each.
+
+    Both dicts are keyed by (imdb_id, API key) and are written and cleared
+    together everywhere a request touches them: a failure sets the counter and
+    the back-off, an expiry on access deletes both, a success clears both.  Only
+    this sweep could separate them, by deleting an expired back-off and leaving
+    its counter — which is why the counters are swept by *absence* of a back-off
+    rather than against the list just expired.  That also collects anything
+    stranded before this function existed, without which a long-lived instance
+    keeps a counter for every title that ever failed a rating fetch and was never
+    asked for again.
+    """
+    expired = [k for k, v in _rating_backoff.items() if v <= now]
+    for k in expired:
+        del _rating_backoff[k]
+    orphans = [k for k in _rating_fail_count if k not in _rating_backoff]
+    for k in orphans:
+        del _rating_fail_count[k]
+    return len(expired), len(orphans)
+
+
 async def _cache_prune_loop() -> None:
     """Periodically prune expired rows from all cache tables."""
     # Wait a few minutes after startup before the first run so the service
@@ -2919,15 +2942,12 @@ async def _cache_prune_loop() -> None:
         logger.info("Running scheduled cache prune")
         await asyncio.get_running_loop().run_in_executor(None, prune_caches)
 
-        # Evict expired entries from the in-process rating backoff dict.
-        # Entries are also removed lazily on access, but titles that are never
-        # re-requested would otherwise accumulate indefinitely.
-        _now = asyncio.get_running_loop().time()
-        expired = [k for k, v in _rating_backoff.items() if v <= _now]
-        for k in expired:
-            del _rating_backoff[k]
-        if expired:
-            logger.debug(f"Pruned {len(expired)} expired rating backoff entries")
+        expired, orphans = prune_rating_state(asyncio.get_running_loop().time())
+        if expired or orphans:
+            logger.debug(
+                f"Pruned {expired} expired rating backoff entries "
+                f"and {orphans} stranded failure counters"
+            )
 
         await asyncio.sleep(6 * 3600)   # every 6 hours
 
@@ -3796,6 +3816,9 @@ async def stats(access_key: str = ""):
             "rating_fetches_in_flight":  len(_rating_fetch_inflight),
             "rating_backoff_titles":     len({imdb_id for imdb_id, _ in _rating_backoff}),
             "rating_backoff_entries":    len(_rating_backoff),
+            # Should track the line above: a persistent gap means counters are
+            # outliving their back-off entries again.
+            "rating_fail_counters":      len(_rating_fail_count),
             "mdblist_keys":              mdblist_keys,
             "composite_cache_disabled":  _cfg.DISABLE_COMPOSITE_CACHE,
             "svg_logo_support":          svg_logo_supported(),
