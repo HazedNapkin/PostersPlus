@@ -892,7 +892,7 @@ class RequestConfig:
     # on; the two per-band toggles above stay off because tinting a vignette is a
     # transformative change to every poster on a shelf and belongs opted into.
     vignette_color_saturation: float = 2.5  # chroma of the tint (0 = plain black vignette)
-    vignette_color_lightness: float = 1.0   # scales the tint's Value (1.0 = tuned default)
+    vignette_color_lightness: float = 1.3   # scales the tint's Value (1.0 = the tuned base)
     vignette_color_blur: float = 1.0        # 0 = follows the art, 1 = flat dominant colour
     vignette_color_ramp: bool = True        # ramp between the poster's two colours, not one flat tint
     vignette_color_local: bool = True       # weigh the band's own seam against the whole poster
