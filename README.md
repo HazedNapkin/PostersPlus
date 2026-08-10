@@ -392,6 +392,8 @@ Sashes display contextual metadata about a title - awards, festival recognition,
 
 Sash priority order is configurable in the web configurator via drag-and-drop. The Primary Client selector sets recommended edge insets: Stremio TV, Nuvio, Plex, and Jellyfin use `0` for both bar and notch; Stremio Desktop/Web use `0.007` for the bar and `0.004` for the notch. Both sliders remain manually adjustable, and loading a preset preserves them. Existing URLs can override the notch with `sash_badge_inset` and the bar with `bar_bottom_inset`. Individual sashes can be disabled entirely with the ✕ button - disabled sashes are serialised as `-slot_name` in the URL (e.g. `&sash_priority=wins,cast,-trending`).
 
+In Notch mode, the label is sized from the notch height, so `sash_badge_size_h` (Height) scales the text along with the badge. To tighten the empty space above and below the label *without* resizing it, use `sash_badge_pad` (Padding, default `1.0`, range `0.5`–`1.5`) — it trims only the vertical padding and leaves both the font and the badge width untouched. `sash_badge_inset` is a different control again: it shifts the whole notch up or down rather than reshaping it. Padding stops shrinking once the label's line height is reached, so low values crop the gap, never the glyphs.
+
 ### Customising Directors, Studios, and Cast
 
 **Source editors** can modify the lists directly in `discovery.py`.

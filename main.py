@@ -909,6 +909,7 @@ class RequestConfig:
     sash_badge_size_w: float = 1.05      # horizontal scale of badge
     sash_badge_size_h: float = 1.05      # vertical scale of badge
     sash_badge_inset: float = 0.0          # top-edge offset as fraction of poster height (± small)
+    sash_badge_pad:   float = 1.0          # vertical padding scale (<1 tightens top/bottom space)
     sash_badge_font_ratio:   float = 0.43  # font size as fraction of badge height
     sash_badge_frost_opacity: float = 0.75 # frosted overlay opacity (0.0–1.0)
     sash_badge_frost_saturation: float = 1.2 # frosted colour-cast strength (0 = grey)
@@ -1102,6 +1103,7 @@ def build_request_config(params: dict) -> RequestConfig:
     elif "sash_badge" in params:
         cfg.sash_mode = "notch" if cfg.sash_badge else "sash"
     cfg.sash_badge_inset         = _f("sash_badge_inset",         cfg.sash_badge_inset,         -0.02, 0.02)
+    cfg.sash_badge_pad           = _f("sash_badge_pad",           cfg.sash_badge_pad,           0.5, 1.5)
     cfg.sash_badge_font_ratio    = _f("sash_badge_font_ratio",    cfg.sash_badge_font_ratio,    0.10, 1.0)
     cfg.sash_badge_frost_opacity = _f("sash_badge_frost_opacity", cfg.sash_badge_frost_opacity, 0.0, 1.0)
     cfg.sash_badge_frost_saturation = _f("sash_badge_frost_saturation", cfg.sash_badge_frost_saturation, 0.0, 2.0)
@@ -2934,6 +2936,7 @@ def build_poster(
                                      size_ratio_h=cfg.sash_badge_size_h,
                                      notch_style=cfg.sash_badge_style,
                                      notch_inset=cfg.sash_badge_inset,
+                                     notch_pad_ratio=cfg.sash_badge_pad,
                                      font_size_ratio=cfg.sash_badge_font_ratio,
                                      frost_opacity=cfg.sash_badge_frost_opacity,
                                      frost_saturation=cfg.sash_badge_frost_saturation,

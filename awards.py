@@ -1462,6 +1462,7 @@ def draw_award_badge(
     size_ratio_h: float = 1.0,     # vertical scale multiplier
     notch_style: str = "frosted",     # "silver" | "gold" | "frosted"
     notch_inset: float = 0.004,        # top-edge offset as fraction of poster height (± small)
+    notch_pad_ratio: float = 1.0,     # vertical padding scale; <1 tightens top/bottom space
     font_size_ratio: float = 0.43,    # font size as fraction of badge height
     frost_opacity: float = 0.75,      # frosted overlay opacity (0.0–1.0)
     frost_saturation: float = 1.2,    # frosted colour-cast strength (0 = grey)
@@ -1474,6 +1475,14 @@ def draw_award_badge(
     Centred notch badge that emerges from the top edge of the poster.
     Always horizontally centred; notch_inset nudges it up/down so users
     can control whether the top border is hidden or visible in their client.
+
+    Vertical space is controlled by two independent knobs: size_ratio_h sets the
+    nominal height (and with it the font scale), while notch_pad_ratio trims the
+    empty space above and below the text without touching the font or the badge
+    width.  Reach for notch_pad_ratio when the label looks lost in the notch.
+    Trimming stops once the label's ink reaches the edges, and scales the corner
+    radius and border with it; at font sizes that already fill the notch there is
+    no empty space to reclaim and the control has no effect.
 
     Three styles:
       silver  — dark gradient body with silver trim, white text
@@ -1519,29 +1528,65 @@ def draw_award_badge(
         label = f"★  {label}"
 
     # ── Dimensions ───────────────────────────────────────────────────────────
-    badge_h = int(height * 0.075 * size_ratio_h)
-    bh      = badge_h * SS  # SS-space height (independent of width)
+    # base_h is the nominal height size_ratio_h asks for.  It drives the font
+    # size and the horizontal padding; notch_pad_ratio then scales only the
+    # *drawn* height around that already-sized text.  Keeping the two separate
+    # is what lets padding tighten without shrinking the label or narrowing the
+    # badge — changing size_ratio_h alone moves both, which is rarely wanted.
+    base_h = int(height * 0.075 * size_ratio_h)
 
     # ── Font: fixed size so every label renders at the same scale ────────────
     _fonts_dir   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
-    font_size_ss = int(badge_h * font_size_ratio) * SS
+    font_size_ss = int(base_h * font_size_ratio) * SS
     try:
         font = ImageFont.truetype(os.path.join(_fonts_dir, "Inter-Bold.ttf"), font_size_ss)
     except IOError:
         font = ImageFont.load_default()
 
-    # Measure rendered text width at SS resolution
+    # Measure rendered text at SS resolution — the ink extents drive both the
+    # badge width and the vertical padding floor below.
     _tmp_d  = ImageDraw.Draw(Image.new("L", (1, 1)))
     _tbbox  = _tmp_d.textbbox((0, 0), label, font=font)
     text_w_ss = int(_tbbox[2] - _tbbox[0])
 
+    # Vertical padding.  Floored so an aggressive notch_pad_ratio crops the empty
+    # space but never the glyphs.  _text_center places the line box at
+    # bh/2 - (ascent+descent)/2 - descent + int(ascent*0.22), so ink spans
+    # bh/2 + _k + bbox[1] .. bh/2 + _k + bbox[3]; solving both ends for [0, bh]
+    # gives the smallest height that still fits.  Measured against a reference
+    # string of the tallest and deepest glyphs rather than the label itself, so
+    # every award trims to the same height (cf. _REF in ratings.py) while
+    # accented capitals still clear the border.
+    _PAD_REF = "ÅÄÖÜÀÁÉÓÊÎÑÇgjpqy0★"
+    _ref_bbox = _tmp_d.textbbox((0, 0), _PAD_REF, font=font)
+    try:
+        _ascent, _descent = font.getmetrics()
+    except AttributeError:
+        _ascent, _descent = 0, 0  # matches _text_center's own fallback
+    _k = -(_ascent + _descent) / 2 - _descent + int(_ascent * 0.22)
+    _ink_h_ss = max(-2 * (_k + _ref_bbox[1]), 2 * (_k + _ref_bbox[3]))
+    _min_badge_h = math.ceil(_ink_h_ss * 1.05 / SS)  # 5% keeps ink off the border
+    # The floor may only ever tighten the notch, never grow it past the height
+    # the size and font ratios already asked for.  Without this clamp a
+    # font_size_ratio above ~0.78 would raise badge_h even at the 1.0 default,
+    # re-rendering saved URLs that predate this control.
+    _min_badge_h = min(_min_badge_h, base_h)
+    badge_h = max(_min_badge_h, int(base_h * notch_pad_ratio))
+    bh      = badge_h * SS  # SS-space height (independent of width)
+
     # Badge width: minimum is size_ratio_w-scaled default; expands to fit text
     # with horizontal padding of ~45% of badge_h (22.5% each side).
-    _h_pad    = int(badge_h * 0.70)
+    # Derived from base_h, not badge_h, so tightening the vertical padding
+    # leaves the badge exactly as wide as it was.
+    _h_pad    = int(base_h * 0.70)
     min_badge_w = int(width * 0.28 * size_ratio_w)
     max_badge_w = int(width * 0.70)
     badge_w   = max(min_badge_w, min(max_badge_w, text_w_ss // SS + _h_pad))
 
+    # Corner radius and border scale with the drawn height, not base_h: a radius
+    # derived from the untrimmed height would exceed half of a tightened badge
+    # and distort the rounded rectangle.  Tightening therefore also thins the
+    # border slightly, which keeps the notch in proportion.
     radius   = int(badge_h * 0.32)
     border_w = max(1, int(badge_h * 0.055))
     bw    = badge_w * SS
