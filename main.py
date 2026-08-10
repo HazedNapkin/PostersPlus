@@ -1322,6 +1322,15 @@ _VIGNETTE_SKIN_WEIGHT = 0.5
 # vignette instead of announcing an accent nothing else in the art supports.
 _VIGNETTE_SUPPORT_LOW  = 0.006
 _VIGNETTE_SUPPORT_FULL = 0.028
+# A peak is only worth taking if it actually beat the alternatives.  Where a strip
+# of art is two colours in equal measure — a red jacket against a teal sky, at the
+# depth where the band happens to meet both — the winner is decided by a rounding
+# difference, and the band paints a colour the strip is only half made of.  Worse,
+# it is unstable: the same poster re-encoded picks the other one.  So the tint
+# fades out as its nearest real rival closes in, and a dead heat lands on black,
+# which is the honest answer to "what colour is this" when there are two.
+_VIGNETTE_RIVAL_HUE   = 0.15   # hue distance at which a rival is a *different* colour
+_VIGNETTE_RIVAL_CLEAR = 0.75   # rival/peak below this is a clear win, above it fades
 # Perceived brightness of a fully saturated hue swings roughly 8x between blue
 # and yellow at one HSV Value, so matching Value alone still leaves a shelf
 # uneven — it only moves which posters shout.  Pull each hue part of the way
@@ -1449,6 +1458,14 @@ def _vignette_hue_pick(
     peak = int(np.argmax(support))
     centre = (peak + 0.5) / _VIGNETTE_HUE_BINS
     conf = (support[peak] - _VIGNETTE_SUPPORT_LOW) / (_VIGNETTE_SUPPORT_FULL - _VIGNETTE_SUPPORT_LOW)
+    # ...and how clearly it won, against the best rival far enough away in hue to
+    # be a different colour rather than the same family's shoulder.
+    bins  = np.arange(_VIGNETTE_HUE_BINS)
+    apart = np.minimum(np.abs(bins - peak), _VIGNETTE_HUE_BINS - np.abs(bins - peak))
+    rival = support[apart >= _VIGNETTE_RIVAL_HUE * _VIGNETTE_HUE_BINS]
+    if rival.size and support[peak] > 0:
+        margin = 1.0 - rival.max() / support[peak]
+        conf = min(conf, margin / (1.0 - _VIGNETTE_RIVAL_CLEAR))
     return _vignette_family_rgb(a, hue, weight, centre), float(np.clip(conf, 0.0, 1.0))
 
 
@@ -1525,7 +1542,8 @@ def _vignette_secondary_rgb(
         if weight < _VIGNETTE_RAMP_MIN_W:
             continue
         dh = abs(h - p_h)
-        if min(dh, 1.0 - dh) < _VIGNETTE_RAMP_MIN_HUE:   # hue is circular
+        dh = min(dh, 1.0 - dh)                           # hue is circular
+        if not _VIGNETTE_RAMP_MIN_HUE <= dh <= _VIGNETTE_RAMP_MAX_HUE:
             continue
         score = weight * (0.3 + s * v)
         if score > best_score:
@@ -1676,11 +1694,16 @@ _VIGNETTE_LEVEL_FLOOR = 0.12   # never darken the art below this fraction
 # slider collapses the sample to a single cell at the top end, which would leave
 # the ramp with nowhere to ramp.
 _VIGNETTE_RAMP_COLUMNS = 24
-# Minimum hue separation (0–1) for the ramp's second colour. Below this the two
-# ends are shades of one hue and the ramp reads as a flat tint with a smudge.
-# Kept low on purpose: raising it only lets *distant* hues qualify, and a ramp
-# across half the colour wheel travels through colours the poster hasn't got.
+# Hue separation (0–1) the ramp's second colour has to sit in.  Below the minimum
+# the two ends are shades of one hue and the ramp reads as a flat tint with a
+# smudge.  Above the maximum they are too far apart to join: the blend takes the
+# short way round the wheel, so a blue reaching for a red goes through violet and
+# magenta, and the band ends up mostly made of colours the poster hasn't got.  A
+# gold to a green is a gradient; a blue to a red is a rainbow.  Flat is the honest
+# fallback for the second case, which is why the window is closed at both ends
+# rather than the minimum simply being raised.
 _VIGNETTE_RAMP_MIN_HUE = 0.08
+_VIGNETTE_RAMP_MAX_HUE = 0.30
 # A ramp endpoint must be a real presence in the art, not a passing accent — it
 # claims half the band.  A 1% highlight promoted to a co-headline colour is a
 # colour the poster does not actually have.
