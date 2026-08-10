@@ -2649,13 +2649,13 @@ def build_poster(
     )
     if _frost_matched:
         _frost_tint = _vignette_shown
-    # Matching implies reference mode.  The saturation slider exists to turn a
-    # poster colour into a pastel that is not the poster's colour any more, which
-    # is the one thing a match cannot afford; reference mode keeps the hue and the
-    # saturation as given and adds white only as far as the dark text needs, so
-    # the notch lands on the band's own colour lifted to legibility.  The two
+    # Matching gets its own mode rather than the saturation slider or plain
+    # reference.  The slider turns a poster colour into a pastel that is not that
+    # colour any more; reference keeps the saturation but lifts the Value to make
+    # the panel light, and since chroma is S x V that alone hands a dark muted band
+    # back as a bright one.  "match" holds chroma where the band had it.  The two
     # controls are mutually exclusive in the configurator for the same reason.
-    _frost_ref = cfg.frost_reference or _frost_matched
+    _frost_ref: bool | str = "match" if _frost_matched else cfg.frost_reference
     # One saturation for every frosted element: a frosted notch owns it (its slider
     # lives in the sash panel); otherwise the rating bar's slider drives it. Sharing
     # it keeps the bar and any sash/notch identical.
