@@ -1315,6 +1315,18 @@ _VIGNETTE_HUE_SPAN = 3
 # but they are still part of it — a sepia portrait really is warm.  Half weight
 # keeps skin from *deciding* the hue while letting it corroborate one.
 _VIGNETTE_SKIN_WEIGHT = 0.5
+# ...and a pixel too dark to read as a colour doesn't get a vote at all, however
+# chromatic it measures.  This is where invented reds come from, and why they are
+# nearly always red: black in real artwork is not neutral.  The Wire's lower half
+# is RGB (13, 4, 3) — the eye calls that black, but it is HSV Saturation 0.79 at
+# hue 0.02, and there is enough of it to outvote the poster's actual yellow.  Film
+# stock, colour grading and chroma subsampling all leave warm residue in the
+# shadows; almost nothing leaves green or blue residue there, which is why one
+# colour kept turning up in posters that hadn't got it.  Chroma weighting alone
+# doesn't save you: each pixel counts for little, but half a poster of them adds
+# up to more support than a real colour covering a tenth of it.
+_VIGNETTE_DARK_FLOOR = 0.06   # below this Value a pixel's hue is discarded
+_VIGNETTE_DARK_SOLID = 0.16   # ...and above this it is trusted in full
 # Support (mean chroma per pixel landing in one hue family) at which the tint is
 # fully trusted, and below which it fades to black.  This is the whole
 # black-and-white answer: a poster whose colour is one small prop scores an order
@@ -1393,8 +1405,9 @@ def _vignette_hue_profile(
     ``weight`` is each pixel's chroma — max minus min channel — so neutrals
     contribute nothing at any brightness, unlike HSV Saturation which explodes on
     near-black (pure black plus a little warm noise reads S=0.22 and used to hand
-    black-and-white art an invented olive tint).  Skin is down-weighted rather
-    than dropped; see _VIGNETTE_SKIN_WEIGHT.
+    black-and-white art an invented olive tint).  It is then faded out over the
+    shadows, where a hue is measurable but not visible, and halved over skin; see
+    _VIGNETTE_DARK_FLOOR and _VIGNETTE_SKIN_WEIGHT.
 
     ``support[i]`` is the mean weight per pixel falling in bin ``i``'s hue family,
     i.e. how much of the poster is that colour.  It is both how the hue is chosen
@@ -1414,6 +1427,8 @@ def _vignette_hue_profile(
     skin = ((r > g) & (g > b) & (hue >= 0.015) & (hue <= 0.11)
             & (sat >= 0.20) & (sat <= 0.68) & (maxc >= 0.35))
     weight = chroma * np.where(skin, _VIGNETTE_SKIN_WEIGHT, 1.0)
+    weight *= np.clip((maxc - _VIGNETTE_DARK_FLOOR)
+                      / (_VIGNETTE_DARK_SOLID - _VIGNETTE_DARK_FLOOR), 0.0, 1.0)
     if rows is not None and len(rows):
         n = weight.shape[0]
         weight = weight * np.interp(
