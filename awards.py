@@ -1594,11 +1594,14 @@ def draw_award_badge(
         frost.putalpha(Image.fromarray((rr_f * frost_opacity * 255).astype(np.uint8), "L"))
         badge_ss = Image.alpha_composite(blurred_ss, frost)
 
-        # Dark text
+        # Text: dark on a light panel, light on a dark one (a matched panel can be
+        # either — every other frost is light by construction).
         txt_layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
         td = ImageDraw.Draw(txt_layer)
         tx, ty = _text_center(td, label, font, bw / 2, text_cy_ss)
-        td.text((tx, ty), label, font=font, fill=(0, 0, 0, 245))
+        # (text_color is deliberately not consulted here: this style has always
+        # ignored it, and honouring it now would restyle existing posters.)
+        td.text((tx, ty), label, font=font, fill=(*_frost_ink(fr_r, fr_g, fr_b), 245))
         badge_ss = Image.alpha_composite(badge_ss, txt_layer)
 
         badge_final = badge_ss.resize((badge_w, badge_h), Image.Resampling.LANCZOS)
@@ -1747,6 +1750,20 @@ def draw_award_badge(
     return result
 
 
+def _frost_ink(r: float, g: float, b: float) -> tuple[int, int, int]:
+    """Label colour for a frosted panel of this colour — dark on light, light on
+    dark.
+
+    Every frosted surface was light by construction until matching let one take a
+    tinted vignette's own colour, which can be genuinely dark; its label has to
+    follow or the badge stops reading.  The threshold sits well below any colour
+    the other two modes produce (their luminance floor is 0.60), so this only ever
+    changes what a matched panel does.
+    """
+    lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+    return (0, 0, 0) if lum >= 0.45 else (238, 238, 240)
+
+
 def _frosted_tint(
     dr: float, dg: float, db: float, saturation: float = 1.2,
     reference: bool | str = False,
@@ -1761,13 +1778,13 @@ def _frosted_tint(
       lifted to ~60 %+ Value and mixed 60/40 with white.
 
     • Match (``reference="match"``) — the frost is standing in for a colour that
-      is already on the poster (a tinted vignette), so it has to look like the
-      same colour rather than like the same hue.  A frosted panel has to be light
-      to keep dark text readable, and lifting a dark colour's Value while keeping
-      its Saturation is what makes a muted olive band come back as bright yellow:
-      chroma is S x V, so tripling V triples the colourfulness.  This mode lifts
-      Value to the panel's floor and takes S down in the same proportion, holding
-      chroma where the source had it.  ``saturation`` is ignored.
+      is already on the poster (a tinted vignette), so it must be *that colour*,
+      lightness included.  Anything else is visibly a different colour sitting
+      next to it: holding hue and chroma while lifting Value for legibility still
+      reads as pale khaki beside dark olive, because lightness is most of what the
+      eye calls "colour".  So the source is returned as it came, floored only
+      short of black, and the caller flips its label to light ink — see
+      _frost_ink.  ``saturation`` is ignored.
 
     • Reference (``reference=True``) — hew to the poster's *true* hue and
       saturation, dropping the pastel whitening so the frost closely matches the
@@ -1785,27 +1802,25 @@ def _frosted_tint(
     # (near-black/grey noise), full by 0.18 (a clear hue, however dark).
     conf = max(0.0, min(1.0, (v * s - 0.05) / 0.13))
 
-    _PANEL_V = 0.85   # how light the frosted panel has to be for its dark text
+    _PANEL_V = 0.85     # how light a dark-text frosted panel has to be
+    _MATCH_MIN_V = 0.12  # ...and how dark a matched one is allowed to get
 
     if reference == "match":
-        # Same colour, not just the same hue: hold S x V where the source had it
-        # while raising V to the panel floor.  No `conf` fade — the caller has
-        # already decided this colour is worth matching, and a source that is
-        # genuinely near-neutral should come back near-neutral rather than being
-        # faded twice.
-        v_out = max(v, _PANEL_V)
-        s_out = min(1.0, s * v / v_out)
-        br, bg, bb = (c * 255 for c in colorsys.hsv_to_rgb(h, s_out, v_out))
-    elif reference:
+        # The source colour, as it is.  Floored just clear of black so the panel
+        # is still a surface rather than a hole; the caller's own gate is what
+        # decides whether there was a colour worth matching in the first place.
+        # No `conf` fade either — that judgement has already been made, and a
+        # source close to neutral should come back close to neutral, not twice
+        # faded.
+        v_out = max(v, _MATCH_MIN_V)
+        return tuple(int(c * 255) for c in colorsys.hsv_to_rgb(h, s, v_out))
+    if reference:
         # True poster hue + saturation at a bright value, then just enough white
         # to reach a luminance floor for the dark text — vivid, not pastel.
         s_eff = min(1.0, s) * conf
         br, bg, bb = (c * 255 for c in colorsys.hsv_to_rgb(h, s_eff, max(v, _PANEL_V)))
-
-    if reference:
-        # Both colour-true modes share the legibility backstop: white is added
-        # only as far as the dark text needs, and an already-light colour keeps
-        # all of its own.
+        # White is added only as far as the dark text needs, so an already-light
+        # colour keeps all of its own.
         lum = (0.299 * br + 0.587 * bg + 0.114 * bb) / 255
         _FLOOR = 0.60
         w = (_FLOOR - lum) / (1.0 - lum) if lum < _FLOOR else 0.0

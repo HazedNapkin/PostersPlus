@@ -14,7 +14,8 @@ except ImportError:
     _HAS_CAIRO = False
     logger.warning("pycairo not available — shape edges will use PIL (no antialiasing)")
 
-from awards import FETCH_FAILED, _FetchFailed, _RateLimited, dominant_frost_rgb, _frosted_tint
+from awards import (FETCH_FAILED, _FetchFailed, _RateLimited, dominant_frost_rgb,
+                    _frost_ink, _frosted_tint)
 from config import (
     GENRE_MAP,
     GENRE_PRIORITY,
@@ -544,6 +545,13 @@ def draw_frosted_bar(
         frost = Image.new("RGBA", (width, bar_h), (r, g, b, int(frost_opacity*255)))
         return Image.alpha_composite(base, frost), _h2, _s2, _v2
 
+    def _frosted_ink() -> tuple[int, int, int]:
+        """Label colour for a frosted body — dark on a light bar, light on a dark
+        one.  The bar shares the notch's frosted colour, and one matched to a
+        tinted vignette can be genuinely dark where every other frost is light."""
+        dr, dg, db = tint_rgb if tint_rgb is not None else dominant_frost_rgb(image)
+        return _frost_ink(*_frosted_tint(dr, dg, db, frost_saturation, frost_reference))
+
     if style == "pure_black":
         ink = (*_SILVER, 248)
         arr = np.zeros((bar_h, width, 4), dtype=np.uint8)
@@ -583,7 +591,7 @@ def draw_frosted_bar(
 
     elif style == "rating_frosted":
         stripe = _rating_stripe
-        ink = (15, 15, 15, 248)
+        ink = (*_frosted_ink(), 248)
         bar_img, _, _, _ = _build_frosted_base()
         if fill_color is not None:
             # Explicit colour chosen — use it directly.
@@ -614,7 +622,7 @@ def draw_frosted_bar(
         text_y += _stripe_nudge
 
     else:  # plain frosted — small nudge down, no stripe compensation needed
-        ink = (15, 15, 15, 248)
+        ink = (*_frosted_ink(), 248)
         bar_img, _, _, _ = _build_frosted_base()
         text_y += max(1, int(bar_h * 0.03))
 
