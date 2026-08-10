@@ -1380,10 +1380,15 @@ def _lab_chroma(rgb: np.ndarray) -> np.ndarray:
 
 
 def _vignette_hue_profile(
-    poster: Image.Image,
+    poster: Image.Image, rows: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """(rgb, hue, weight, support) for a poster, as flat 64x64 fields plus a
     per-hue-family support curve.
+
+    ``rows`` optionally weights each row of the region before anything else —
+    used to fade out the part of a seam the band will hide (see
+    _vignette_band_colour).  It is resampled to the working height, so it can be
+    given at the region's own resolution.
 
     ``weight`` is each pixel's chroma — max minus min channel — so neutrals
     contribute nothing at any brightness, unlike HSV Saturation which explodes on
@@ -1409,6 +1414,11 @@ def _vignette_hue_profile(
     skin = ((r > g) & (g > b) & (hue >= 0.015) & (hue <= 0.11)
             & (sat >= 0.20) & (sat <= 0.68) & (maxc >= 0.35))
     weight = chroma * np.where(skin, _VIGNETTE_SKIN_WEIGHT, 1.0)
+    if rows is not None and len(rows):
+        n = weight.shape[0]
+        weight = weight * np.interp(
+            np.linspace(0.0, 1.0, n), np.linspace(0.0, 1.0, len(rows)), rows
+        ).astype(np.float32)[:, None]
     idx = np.minimum((hue * _VIGNETTE_HUE_BINS).astype(np.int32), _VIGNETTE_HUE_BINS - 1)
     hist = np.bincount(idx.ravel(), weights=weight.ravel(),
                        minlength=_VIGNETTE_HUE_BINS) / weight.size
@@ -1442,7 +1452,7 @@ def _vignette_family_rgb(
 
 
 def _vignette_hue_pick(
-    poster: Image.Image,
+    poster: Image.Image, rows: np.ndarray | None = None,
 ) -> tuple[tuple[float, float, float] | None, float]:
     """(tint colour, confidence) for a region — the hue the most of it is made of.
 
@@ -1454,7 +1464,7 @@ def _vignette_hue_pick(
     to black instead, and both a plain grey and a warm off-white read as no colour
     at all.  The tint is never invented, only found.
     """
-    a, hue, weight, support = _vignette_hue_profile(poster)
+    a, hue, weight, support = _vignette_hue_profile(poster, rows)
     peak = int(np.argmax(support))
     centre = (peak + 0.5) / _VIGNETTE_HUE_BINS
     conf = (support[peak] - _VIGNETTE_SUPPORT_LOW) / (_VIGNETTE_SUPPORT_FULL - _VIGNETTE_SUPPORT_LOW)
@@ -1600,7 +1610,7 @@ def _vignette_level_band(
 
 def _vignette_band_colour(
     poster: Image.Image,
-    box: tuple[int, int, int, int],
+    seam: tuple[tuple[int, int, int, int], np.ndarray],
     whole: tuple[tuple[float, float, float], float, tuple[float, float, float] | None],
     local: bool,
     want_ramp: bool,
@@ -1610,19 +1620,23 @@ def _vignette_band_colour(
     With ``local`` off this is just the whole-poster pick, so both bands agree and
     so does every frosted element.
 
-    With it on, ``box`` is the *seam* — the strip of art the band fades out into,
-    straddling its inner edge — and the tint is taken from there.  That is the one
-    place the tint and the art are visible side by side, so matching it is what
-    makes the band read as the poster's own colour deepening rather than as a
-    different colour arriving.  Sampling the art the band *covers* instead answers
-    a question nobody sees the answer to: down at the poster's edge the art is gone
-    under the wash, and a colour picked from there has nothing to agree with.
+    With it on, ``seam`` is the window around the band's inner edge and its
+    per-row weights (see _vignette_seam), and the tint is taken from there.  That
+    window is the one place the tint and the artwork are seen together: outside it
+    the art is untouched, inside it the band has started to cover the art but has
+    not hidden it, and past it there is nothing left to agree with.  Matching it is
+    what makes the band read as the poster's own colour deepening rather than as a
+    different colour arriving.
 
-    The whole-poster pick is kept as a fallback for when the seam has no colour to
-    offer (a band fading out over plain shadow, say), since otherwise a colourless
+    The whole-poster pick is kept as a fallback for when the seam has no colour at
+    all (a band fading out over plain shadow, say), since otherwise a colourless
     seam would force a black band onto a poster that plainly has colour elsewhere.
-    The comparison is on confidence, so the fallback fires exactly when the seam
-    reads as colourless and not otherwise.
+    Only *no* colour, mind: a seam that found a hue but is unsure of it — because
+    a rival ran it close — keeps its own and fades toward black by that much.
+    Borrowing the whole poster's colour there would answer a question about the
+    join with a colour from somewhere else, which is the failure this sampling
+    exists to avoid, and it is how a tie at the seam ended up painted in the very
+    colour the tie was meant to reject.
 
     A seam-sampled band takes its ramp partner from the seam too, or goes flat:
     pairing a seam primary with a secondary from the far end of the poster would
@@ -1630,9 +1644,10 @@ def _vignette_band_colour(
     """
     if not local:
         return whole
+    box, rows = seam
     region = poster.crop(box)
-    tint, conf = _vignette_hue_pick(region)
-    if tint is None or conf < whole[1]:
+    tint, conf = _vignette_hue_pick(region, rows)
+    if tint is None or conf <= 0.0:
         return whole
     second = _vignette_secondary_rgb(region, tint) if (want_ramp and conf > 0) else None
     return tint, conf, second
@@ -1717,34 +1732,45 @@ _VIGNETTE_RAMP_MIN_V = 0.40
 # compression noise reads S=0.22 while its chroma is 0.03 — so both are checked.
 _VIGNETTE_RAMP_MIN_S      = 0.12
 _VIGNETTE_RAMP_MIN_CHROMA = 0.10
-# Depth of the seam strip, as a fraction of poster height.  This is the art just
-# *outside* the band — what it fades out into and mixes with, and the only part of
-# the poster where the tint and the untouched artwork are seen side by side.  Thin
-# on purpose: agreement with the join falls off the further the sample reaches,
-# because it starts picking up content that is nowhere near the join.  Measured
-# over 26 posters, the tint's hue lands within a bin of the art at the join on
-# 25 of them at this depth, against 20 sampling the whole poster.
+# Depth of the seam window either side of a band's inner edge, as a fraction of
+# the poster.  The window spans both: outside it is the art the band fades into,
+# inside it is the art the band has begun to cover but not yet hidden, and the
+# join the eye actually sees is made of both.  Thin on purpose — reach further and
+# the sample starts answering for content nowhere near the join.
 _VIGNETTE_SEAM_H = 0.08
 
 
-def _vignette_seam_box(
-    width: int, height: int, edge: int, inward: int
-) -> tuple[int, int, int, int]:
-    """The strip of art a band fades out into, just beyond its inner edge.
+def _vignette_seam(
+    width: int, height: int, edge: int, inward: int, ramp: Image.Image
+) -> tuple[tuple[int, int, int, int], np.ndarray]:
+    """(crop rect, per-row weights) for the seam around a band's inner edge.
 
     ``edge`` is that edge's y; ``inward`` is +1 when the band lies below it (the
-    bottom vignette) and -1 when it lies above (the top).  A band deep enough to
-    leave no poster outside it falls back to its own shallow end, where the alpha
-    is near zero and the art is still very nearly untouched.
+    bottom vignette) and -1 when it lies above (the top).
+
+    Rows are weighted by how much of the artwork still shows at that height — one
+    minus the band's own alpha — so the window fades out exactly as the art it is
+    reading disappears under the wash.  A flat window would let the first rows
+    inside the band vote as loudly as the untouched art beside them at a shallow
+    setting and be nearly hidden at a deep one, which is what made the tint jump
+    around as the vignette level was changed: the sample was moving over the art
+    without any regard for how much of that art would survive.
     """
     depth = max(1, int(height * _VIGNETTE_SEAM_H))
-    if inward > 0:                      # band below the edge — the art is above it
-        y1, y0 = min(height, edge), min(height, edge) - depth
-    else:                               # band above the edge — the art is below it
-        y0, y1 = max(0, edge), max(0, edge) + depth
-    if y0 < 0 or y1 > height:           # no room outside: read just inside instead
-        y0, y1 = (edge, edge + depth) if inward > 0 else (edge - depth, edge)
-    return 0, max(0, min(height - 1, y0)), width, max(1, min(height, y1))
+    y0, y1 = max(0, edge - depth), min(height, edge + depth)
+    if y1 - y0 < 2:                     # degenerate band: read whatever is there
+        y0, y1 = max(0, min(height - 2, y0)), min(height, max(2, y1))
+    alpha = np.asarray(ramp, dtype=np.float32)
+    alpha = alpha.mean(axis=1) if alpha.ndim > 1 else alpha
+    peak  = max(float(alpha.max()), 1.0)
+    # The ramp is stored top-down over the band's own rows, so the band starts at
+    # the edge going down and ends at it going up.
+    start = edge if inward > 0 else edge - len(alpha)
+    into  = np.arange(y0, y1) - start
+    rows  = 1.0 - np.where(
+        (into >= 0) & (into < len(alpha)), alpha[np.clip(into, 0, len(alpha) - 1)], 0.0
+    ) / peak
+    return (0, y0, width, y1), rows.astype(np.float32)
 
 
 def _vignette_tint_band(
@@ -2233,7 +2259,7 @@ def build_poster(
             # The top band fades out downward, so its seam sits at top_height.
             _t_tint, _t_conf, _t_second = _vignette_band_colour(
                 _frost_color_src,
-                _vignette_seam_box(width, height, top_height, -1),
+                _vignette_seam(width, height, top_height, -1, top_overlay),
                 _whole_colour, cfg.vignette_color_local, cfg.vignette_color_ramp,
             )
             _vignette_frost_band(
@@ -2277,7 +2303,7 @@ def build_poster(
             # bottom_start.
             _b_tint, _b_conf, _b_second = _vignette_band_colour(
                 _frost_color_src,
-                _vignette_seam_box(width, height, bottom_start, +1),
+                _vignette_seam(width, height, bottom_start, +1, bottom_overlay),
                 _whole_colour, cfg.vignette_color_local, cfg.vignette_color_ramp,
             )
             _vignette_frost_band(
