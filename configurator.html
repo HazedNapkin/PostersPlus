@@ -2431,6 +2431,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   </div>
                 </div>
                 <div class="field">
+                  <label class="field-label" data-tip="How light the tint is. 1.00 is the tuned default; lower takes the band toward black, higher toward an airy wash of the same colour. It cannot lighten a band that has no colour — at Colour Saturation 0 the vignette is plain black whatever this says. Raising it does not raise the colour cap, so a much lighter band trades some of its colour away; raise Colour Saturation too if you want both.">Lightness</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-vignette-light" min="0.40" max="2.50" step="0.05" value="1.00" oninput="updateRange(this,'rng-vlight'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-vlight">1.00</span>
+                  </div>
+                </div>
+                <div class="field">
                   <label class="field-label" data-tip="Frosts the artwork inside the vignette and evens out the tint. Low leaves the art sharp and lets the colour follow it across the poster's width; high melts both into one soft wash of the dominant colour, and holds back how much of the art shows through so the band lands the same on a bright poster as on a dark one. Logos, badges and labels are never blurred.">Blur</label>
                   <div class="range-row">
                     <input type="range" id="cfg-vignette-blur" min="0.0" max="1.0" step="0.05" value="1.00" oninput="updateRange(this,'rng-vblur'); build(); queuePreviewReload()">
@@ -4399,6 +4406,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
     if (_vgTop || _vgBot) {
       params.set('vignette_color_saturation', n('cfg-vignette-sat').toFixed(2));
       params.set('vignette_color_blur',       n('cfg-vignette-blur').toFixed(2));
+      params.set('vignette_color_lightness',  n('cfg-vignette-light').toFixed(2));
       if (c('tog-vignette-ramp')) params.set('vignette_color_ramp', 'true');
       if (c('tog-vignette-local')) params.set('vignette_color_local', 'true');
     } }
@@ -5365,6 +5373,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     if (_vgBot !== null) _setEl('tog-vignette-color-bottom', _vgBot); }
   if (p.has('vignette_color_saturation')) _setEl('cfg-vignette-sat',  p.get('vignette_color_saturation'));
   if (p.has('vignette_color_blur'))       _setEl('cfg-vignette-blur', p.get('vignette_color_blur'));
+  if (p.has('vignette_color_lightness')) _setEl('cfg-vignette-light', p.get('vignette_color_lightness'));
   if (p.has('vignette_color_ramp'))       _setEl('tog-vignette-ramp', p.get('vignette_color_ramp'));
   if (p.has('vignette_color_local'))      _setEl('tog-vignette-local', p.get('vignette_color_local'));
   if (p.has('notch_vignette_color'))      _setEl('tog-notch-vignette-color', p.get('notch_vignette_color'));

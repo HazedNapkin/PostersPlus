@@ -892,6 +892,7 @@ class RequestConfig:
     # on; the two per-band toggles above stay off because tinting a vignette is a
     # transformative change to every poster on a shelf and belongs opted into.
     vignette_color_saturation: float = 2.5  # chroma of the tint (0 = plain black vignette)
+    vignette_color_lightness: float = 1.0   # scales the tint's Value (1.0 = tuned default)
     vignette_color_blur: float = 1.0        # 0 = follows the art, 1 = flat dominant colour
     vignette_color_ramp: bool = True        # ramp between the poster's two colours, not one flat tint
     vignette_color_local: bool = True       # weigh the band's own seam against the whole poster
@@ -1068,6 +1069,8 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.vignette_poster_color_bottom = _b("vignette_poster_color_bottom", _vpc_legacy)
     cfg.vignette_color_saturation = _f("vignette_color_saturation", cfg.vignette_color_saturation, 0.0, 3.0)
     cfg.vignette_color_blur       = _f("vignette_color_blur",       cfg.vignette_color_blur,       0.0, 1.0)
+    cfg.vignette_color_lightness  = _f("vignette_color_lightness",  cfg.vignette_color_lightness,
+                                       _VIGNETTE_LIGHT_MIN, _VIGNETTE_LIGHT_MAX)
     cfg.vignette_color_ramp    = _b("vignette_color_ramp",    cfg.vignette_color_ramp)
     cfg.vignette_color_local   = _b("vignette_color_local",   cfg.vignette_color_local)
     val_tgo = params.get("top_gradient_opacity")
@@ -1298,6 +1301,14 @@ _VIGNETTE_TINT_S = 1.00
 # Slider value at which the tint reaches that full strength.  This is the top of
 # the configurator's range, so the slider maps linearly onto 0 → full.
 _VIGNETTE_SAT_FULL = 3.0
+# The lightness slider scales _VIGNETTE_TINT_V and nothing else, so 1.0 is exactly
+# the tuned value above and the two ends are a near-black band and an airy wash of
+# the same hue.  It deliberately does *not* relax the chroma ceiling: that ceiling
+# exists to stop a band overpowering the art, and a lighter band overpowers more,
+# not less.  Raising lightness alone therefore lifts the band and lets the cap
+# take the colour back out of it — ask for both and you raise saturation too.
+_VIGNETTE_LIGHT_MIN = 0.4
+_VIGNETTE_LIGHT_MAX = 2.5
 # Noise gate on the sampled hue, in chroma (Value × Saturation): below _FLOOR the
 # sample is treated as colourless and the vignette stays black, reaching full
 # trust at _SOLID.  Deliberately generous — this exists only to reject greyscale
@@ -1826,6 +1837,7 @@ def _vignette_tint_band(
     saturation: float,
     blur: float,
     secondary: tuple[float, float, float] | None = None,
+    lightness: float = 1.0,
 ) -> Image.Image:
     """Colour field to paint one vignette band with, sampled from the poster art.
 
@@ -1854,6 +1866,13 @@ def _vignette_tint_band(
     Saturation together, so the band always darkens the poster as hard as a black
     vignette would: the slider changes how much hue shows, never how much light
     the vignette takes away.
+
+    ``lightness`` is the one control that does move it, scaling the tint's Value
+    alone — 1.0 is the tuned default, below it the band tends to black and above
+    it to an airy wash of the same hue.  It cannot lighten a band that has no
+    colour: Value is still multiplied by strength, so saturation 0 stays exactly
+    black however light this is set, and the guarantee that a colourless vignette
+    is pixel-identical to the untinted one survives.
     """
     band = src.crop(box).convert("RGB")
     bw, bh = band.size
@@ -1931,7 +1950,11 @@ def _vignette_tint_band(
     v_scale   = hue_ratio ** _VIGNETTE_LUMA_CORRECT
     s_scale   = np.minimum(1.0, hue_ratio) ** _VIGNETTE_LUMA_SAT_SHARE
     s_eff = _VIGNETTE_TINT_S * strength * s_scale
-    v_eff = np.minimum(1.0, _VIGNETTE_TINT_V * strength * v_scale)
+    v_eff = np.minimum(
+        1.0,
+        _VIGNETTE_TINT_V * strength * v_scale
+        * min(_VIGNETTE_LIGHT_MAX, max(_VIGNETTE_LIGHT_MIN, lightness)),
+    )
     # Both stay per-cell: strength is poster-level, but the hue correction varies
     # with each cell's own hue.
     tint  = 255.0 * v_eff[..., None] * (1.0 - s_eff[..., None] * (1.0 - full))
@@ -2337,6 +2360,7 @@ def build_poster(
             top_tinted = _vignette_tint_band(
                 _frost_color_src, (0, 0, width, top_height), _t_tint, _t_conf,
                 cfg.vignette_color_saturation, cfg.vignette_color_blur, _t_second,
+                cfg.vignette_color_lightness,
             ).convert("RGBA")
             if _t_conf >= _VIGNETTE_MATCH_MIN_CONF and _slider_amount > 0:
                 # Top band: strongest at the poster's edge, so row 0.
@@ -2384,6 +2408,7 @@ def build_poster(
             bottom_tinted = _vignette_tint_band(
                 _frost_color_src, (0, bottom_start, width, height), _b_tint, _b_conf,
                 cfg.vignette_color_saturation, cfg.vignette_color_blur, _b_second,
+                cfg.vignette_color_lightness,
             ).convert("RGBA")
             if _vignette_shown is None and _b_conf >= _VIGNETTE_MATCH_MIN_CONF and _slider_amount > 0:
                 # Bottom band: strongest at the poster's edge, so the last row.
