@@ -888,10 +888,13 @@ class RequestConfig:
     # sets both — see build_request_config.)
     vignette_poster_color_top: bool = False
     vignette_poster_color_bottom: bool = False
-    vignette_color_saturation: float = 1.5  # chroma of the tint (0 = plain black vignette)
-    vignette_color_blur: float = 0.5        # 0 = follows the art, 1 = flat dominant colour
-    vignette_color_ramp: bool = False       # ramp between the poster's two colours, not one flat tint
-    vignette_color_local: bool = False      # sample each band's own area, not the whole poster
+    # Defaults for the sliders and their two toggles are what the tuning settled
+    # on; the two per-band toggles above stay off because tinting a vignette is a
+    # transformative change to every poster on a shelf and belongs opted into.
+    vignette_color_saturation: float = 2.5  # chroma of the tint (0 = plain black vignette)
+    vignette_color_blur: float = 1.0        # 0 = follows the art, 1 = flat dominant colour
+    vignette_color_ramp: bool = True        # ramp between the poster's two colours, not one flat tint
+    vignette_color_local: bool = True       # weigh the band's own seam against the whole poster
     top_gradient_opacity: float | None = None
     top_gradient_height: float | None = None
     bottom_gradient_opacity: float | None = None
@@ -908,6 +911,10 @@ class RequestConfig:
     sash_badge_font_ratio:   float = 0.43  # font size as fraction of badge height
     sash_badge_frost_opacity: float = 0.75 # frosted overlay opacity (0.0–1.0)
     sash_badge_frost_saturation: float = 1.2 # frosted colour-cast strength (0 = grey)
+    # Take the frosted notch's colour from whatever a tinted vignette landed on,
+    # instead of from its own whole-poster sample.  Ignored when neither band is
+    # tinted, or when the band that is came out too near black to have a colour.
+    notch_vignette_color: bool = False
     # Reference colour mode: match the frosted tint to the poster's true colour
     # (bolder, un-pastel) instead of the saturation-scaled frosted tint. Global.
     frost_reference:         bool  = False
@@ -1095,6 +1102,7 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.sash_badge_font_ratio    = _f("sash_badge_font_ratio",    cfg.sash_badge_font_ratio,    0.10, 1.0)
     cfg.sash_badge_frost_opacity = _f("sash_badge_frost_opacity", cfg.sash_badge_frost_opacity, 0.0, 1.0)
     cfg.sash_badge_frost_saturation = _f("sash_badge_frost_saturation", cfg.sash_badge_frost_saturation, 0.0, 2.0)
+    cfg.notch_vignette_color        = _b("notch_vignette_color", cfg.notch_vignette_color)
     cfg.sash_badge_size_w       = _f("sash_badge_size_w",       cfg.sash_badge_size_w,       0.5, 2.0)
     cfg.sash_badge_size_h       = _f("sash_badge_size_h",       cfg.sash_badge_size_h,       0.5, 2.0)
     _style_raw = params.get("sash_badge_style", cfg.sash_badge_style)
@@ -1138,7 +1146,7 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.minimalist_mode_font_size_ratio = _f("minimalist_mode_font_size_ratio", cfg.minimalist_mode_font_size_ratio, 0.0, 0.5)
     cfg.minimalist_mode_font_x_offset = _f("minimalist_mode_font_x_offset", cfg.minimalist_mode_font_x_offset, 0.0, 1.0)
     cfg.minimalist_mode_font_y_offset = _f("minimalist_mode_font_y_offset", cfg.minimalist_mode_font_y_offset, 0.0, 1.0)
-    cfg.minimalist_append_mode = _i("minimalist_append_mode", cfg.minimalist_append_mode, 0, 2)
+    cfg.minimalist_append_mode = _i("minimalist_append_mode", cfg.minimalist_append_mode, 0, 3)
     cfg.minimalist_score_out_of_10 = _b("minimalist_score_out_of_10", cfg.minimalist_score_out_of_10)
 
     cfg.bar_height_ratio        = _f("bar_height_ratio",        cfg.bar_height_ratio,        0.04, 0.20)
@@ -1343,6 +1351,11 @@ _VIGNETTE_SUPPORT_FULL = 0.028
 # which is the honest answer to "what colour is this" when there are two.
 _VIGNETTE_RIVAL_HUE   = 0.15   # hue distance at which a rival is a *different* colour
 _VIGNETTE_RIVAL_CLEAR = 0.75   # rival/peak below this is a clear win, above it fades
+# Confidence a band has to reach before a frosted notch is allowed to match it.
+# The colour a low-confidence band paints is mostly black however vivid the hue it
+# was found from, and a notch matching that hue would be the one thing on the
+# poster wearing it — the opposite of the agreement the option is asking for.
+_VIGNETTE_MATCH_MIN_CONF = 0.35
 # Perceived brightness of a fully saturated hue swings roughly 8x between blue
 # and yellow at one HSV Value, so matching Value alone still leaves a shelf
 # uneven — it only moves which posters shout.  Pull each hue part of the way
@@ -2267,6 +2280,11 @@ def build_poster(
     # what the top of the poster does.
     _top_enabled    = cfg.vignette_poster_color_top and not _sash_shown
     _bottom_enabled = cfg.vignette_poster_color_bottom
+    # What colour a tinted band actually landed on, kept for the frosted notch to
+    # match if it is asked to (see _frost_tint below).  Only a band that is really
+    # carrying colour is recorded: the top band's is preferred when both are tinted,
+    # since that is the one a notch sits on.
+    _vignette_shown: tuple[float, float, float] | None = None
 
     # --- TOP GRADIENT (vectorised) ---
     # Darkens the top of the poster so the age-rating numeral and quality
@@ -2308,6 +2326,8 @@ def build_poster(
                 _frost_color_src, (0, 0, width, top_height), _t_tint, _t_conf,
                 cfg.vignette_color_saturation, cfg.vignette_color_blur, _t_second,
             ).convert("RGBA")
+            if _t_conf >= _VIGNETTE_MATCH_MIN_CONF and _slider_amount > 0:
+                _vignette_shown = _t_tint
         else:
             top_tinted = Image.new("RGBA", (width, top_height), (0, 0, 0, 0))
         top_tinted.putalpha(top_overlay)
@@ -2348,6 +2368,8 @@ def build_poster(
             _vignette_level_band(
                 image, (0, bottom_start, width, height), bottom_overlay, _level_amount
             )
+            if _vignette_shown is None and _b_conf >= _VIGNETTE_MATCH_MIN_CONF and _slider_amount > 0:
+                _vignette_shown = _b_tint
             bottom_tinted = _vignette_tint_band(
                 _frost_color_src, (0, bottom_start, width, height), _b_tint, _b_conf,
                 cfg.vignette_color_saturation, cfg.vignette_color_blur, _b_second,
@@ -2600,6 +2622,16 @@ def build_poster(
         (_strict_tint if _strict_tint is not None else dominant_frost_rgb(_frost_color_src))
         if (_bar_frosted or _notch_frosted or _sash_poster) else None
     )
+    # A tinted vignette and a frosted notch sample the same artwork but answer
+    # different questions — the vignette asks what the band's own stretch of art is
+    # made of, the notch what colour the poster is — so they can land some way
+    # apart, which reads as two elements disagreeing.  This option settles it in
+    # the vignette's favour.  It can only ever adopt a colour the vignette is
+    # actually wearing: a band that came out black has no colour to match, and the
+    # notch keeps its own logic rather than tinting from a hue nothing else on the
+    # poster shows.  The frosted bar follows, as it already follows the notch.
+    if cfg.notch_vignette_color and _notch_frosted and _vignette_shown is not None:
+        _frost_tint = _vignette_shown
     # One saturation for every frosted element: a frosted notch owns it (its slider
     # lives in the sash panel); otherwise the rating bar's slider drives it. Sharing
     # it keeps the bar and any sash/notch identical.
@@ -2713,6 +2745,11 @@ def build_poster(
             # Mode 0 ("Year"): genre [rating-pip] year
             # Mode 1 ("Rating"): genre ★ score
             # Mode 2 ("Year + Rating"): genre [pip] year ★ score
+            # Mode 3 ("Split"): genre [pip] year ......................... score
+            #   The same left-hand group as mode 2 with the score moved to the
+            #   opposite margin, where it needs no star to say what it is — the
+            #   separator earns its place between things that would otherwise run
+            #   together, and nothing runs together across the poster's width.
             _has_score = score not in ("N/A", None)
             # Score formatting matches the other modes: out of 100 by default,
             # one decimal out of 10 ("8.7"), with a bare "10" at the top.
@@ -2721,12 +2758,17 @@ def build_poster(
             else:
                 _score_str = str(score)
             parts = [(genre_label, None)] if genre_label else []
+            left_parts: list[tuple[str, str | None]] = []
             if cfg.minimalist_append_mode == 0:
                 if release_year:
                     parts.append((str(release_year), "rpip" if parts else None))
             elif cfg.minimalist_append_mode == 1:
                 if _has_score:
                     parts.append((_score_str, "star" if parts else None))
+            elif cfg.minimalist_append_mode == 3:   # Split
+                if release_year:
+                    parts.append((str(release_year), "pip" if parts else None))
+                left_parts, parts = parts, ([(_score_str, None)] if _has_score else [])
             else:  # 2 — Year + Rating
                 if release_year:
                     parts.append((str(release_year), "pip" if parts else None))
@@ -2740,8 +2782,8 @@ def build_poster(
             star_w  = draw.textlength("★", font=font_meta)
 
             # Lay out right-to-left: each segment, with its separator to its left.
-            cursor = right_edge
             ops    = []   # (kind, x[, text]); kind in text|pip|rpip|star
+            cursor = right_edge
             for i in range(len(parts) - 1, -1, -1):
                 seg, sep = parts[i]
                 seg_x = int(cursor - draw.textlength(seg, font=font_meta))
@@ -2753,6 +2795,16 @@ def build_poster(
                     sep_x  = cursor - sep_w
                     ops.append((sep, sep_x))
                     cursor = sep_x - pip_gap
+            # ...and the split mode's left-hand group the same way but forwards,
+            # off the opposite margin, so the two groups sit symmetrically.
+            cursor = width - right_edge
+            for seg, sep in left_parts:
+                if sep:
+                    cursor += pip_gap
+                    ops.append((sep, int(cursor)))
+                    cursor += (star_w if sep == "star" else pip_w) + pip_gap
+                ops.append(("text", int(cursor), seg))
+                cursor += draw.textlength(seg, font=font_meta)
 
             for op in ops:
                 kind, ox = op[0], op[1]

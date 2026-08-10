@@ -2412,29 +2412,29 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <div class="toggle-row">
                   <span class="toggle-label" data-tip="Ramps the vignette between the poster's two main colours across its width, instead of using one flat colour. Falls back to flat when the art has only one colour.">Two-Tone</span>
                   <label class="toggle-switch">
-                    <input type="checkbox" id="tog-vignette-ramp" onchange="build(); queuePreviewReload()">
+                    <input type="checkbox" id="tog-vignette-ramp" checked onchange="build(); queuePreviewReload()">
                     <div class="toggle-track"><div class="toggle-thumb"></div></div>
                   </label>
                 </div>
                 <div class="toggle-row">
                   <span class="toggle-label" data-tip="Takes each vignette's colour from the strip of art it fades out into, rather than from the whole poster, so the band reads as that art deepening instead of a new colour arriving. The top and bottom can differ. Falls back to the whole poster when the art at the join has no colour of its own.">Blend Into Nearby Art</span>
                   <label class="toggle-switch">
-                    <input type="checkbox" id="tog-vignette-local" onchange="build(); queuePreviewReload()">
+                    <input type="checkbox" id="tog-vignette-local" checked onchange="build(); queuePreviewReload()">
                     <div class="toggle-track"><div class="toggle-thumb"></div></div>
                   </label>
                 </div>
                 <div class="field">
                   <label class="field-label" data-tip="How much colour the tint carries. 0 is a plain black vignette; the vignette darkens the poster by the same amount either way.">Colour Saturation</label>
                   <div class="range-row">
-                    <input type="range" id="cfg-vignette-sat" min="0.0" max="3.0" step="0.05" value="1.50" oninput="updateRange(this,'rng-vsat'); build(); queuePreviewReload()">
-                    <span class="range-val" id="rng-vsat">1.50</span>
+                    <input type="range" id="cfg-vignette-sat" min="0.0" max="3.0" step="0.05" value="2.50" oninput="updateRange(this,'rng-vsat'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-vsat">2.50</span>
                   </div>
                 </div>
                 <div class="field">
                   <label class="field-label" data-tip="Frosts the artwork inside the vignette and evens out the tint. Low leaves the art sharp and lets the colour follow it across the poster's width; high melts both into one soft wash of the dominant colour, and holds back how much of the art shows through so the band lands the same on a bright poster as on a dark one. Logos, badges and labels are never blurred.">Blur</label>
                   <div class="range-row">
-                    <input type="range" id="cfg-vignette-blur" min="0.0" max="1.0" step="0.05" value="0.50" oninput="updateRange(this,'rng-vblur'); build(); queuePreviewReload()">
-                    <span class="range-val" id="rng-vblur">0.50</span>
+                    <input type="range" id="cfg-vignette-blur" min="0.0" max="1.0" step="0.05" value="1.00" oninput="updateRange(this,'rng-vblur'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-vblur">1.00</span>
                   </div>
                 </div>
               </div>
@@ -2564,6 +2564,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                     <option value="0" selected>Year</option>
                     <option value="1">Rating</option>
                     <option value="2">Year + Rating</option>
+                    <option value="3">Split</option>
                   </select>
                   <div class="segmented" data-for="cfg-min-append"></div>
                 </div>
@@ -2874,6 +2875,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </div>
               <!-- Frosted-notch only. Its dependent slider (Colour Saturation)
                    stays in the Notch Size group with the other sliders. -->
+              <div class="toggle-row" id="sash-vignette-color-row" style="display:none;">
+                <span class="toggle-label" data-tip="Takes the notch's colour from whatever a tinted vignette landed on, so the two agree. Keeps its usual colour when neither vignette is tinted, or when the tinted one came out too near black to have a colour of its own. Frosted notch only.">Match Tinted Vignette</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-notch-vignette-color" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
               <div class="toggle-row" id="sash-reference-row" style="display:none;">
                 <span class="toggle-label" data-tip="Match the poster's true colour instead of the saturation tint. Frosted notch only.">Reference Colour</span>
                 <label class="toggle-switch">
@@ -4498,6 +4506,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
       if (vEl('cfg-sash-badge-style') === 'frosted') {
         params.set('sash_badge_frost_opacity', n('cfg-sash-badge-frost-opacity').toFixed(2));
         params.set('sash_badge_frost_saturation', n('cfg-sash-badge-frost-sat').toFixed(2));
+        if (c('tog-notch-vignette-color')) params.set('notch_vignette_color', 'true');
       }
     } else {  // diagonal sash
       params.set('muted',              c('tog-muted') ? 'true' : 'false');
@@ -4746,6 +4755,7 @@ function updateBadgeStyleFields() {
   const ref = c('tog-sash-frost-reference');
   document.getElementById('sash-badge-opacity-field').style.display = isFrosted ? '' : 'none';
   document.getElementById('sash-reference-row').style.display = isFrosted ? '' : 'none';
+  document.getElementById('sash-vignette-color-row').style.display = isFrosted ? '' : 'none';
   document.getElementById('sash-badge-saturation-field').style.display = (isFrosted && !ref) ? '' : 'none';
   // A frosted notch takes over the colour controls, so refresh the Rating
   // section's own toggle/slider (they hide while a frosted notch is shown).
@@ -5343,6 +5353,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('vignette_color_blur'))       _setEl('cfg-vignette-blur', p.get('vignette_color_blur'));
   if (p.has('vignette_color_ramp'))       _setEl('tog-vignette-ramp', p.get('vignette_color_ramp'));
   if (p.has('vignette_color_local'))      _setEl('tog-vignette-local', p.get('vignette_color_local'));
+  if (p.has('notch_vignette_color'))      _setEl('tog-notch-vignette-color', p.get('notch_vignette_color'));
   if (p.has('hide_genre')) _setEl('tog-hide-genre', p.get('hide_genre'));
   // Presence of either anime placeholder re-arms the toggle, so pasting a
   // previously generated URL round-trips it (and so does the localStorage
