@@ -1748,16 +1748,26 @@ def draw_award_badge(
 
 
 def _frosted_tint(
-    dr: float, dg: float, db: float, saturation: float = 1.2, reference: bool = False
+    dr: float, dg: float, db: float, saturation: float = 1.2,
+    reference: bool | str = False,
 ) -> tuple[int, int, int]:
     """Poster dominant RGB → the frosted tint shared by the bar, notch and sash so
     they stay consistent.
 
-    Two modes:
+    Three modes:
 
     • Saturation (default) — a light "frosted glass" pastel. ``saturation`` scales
       the source S (1.2 = historical default; 0 = neutral grey). The colour is
       lifted to ~60 %+ Value and mixed 60/40 with white.
+
+    • Match (``reference="match"``) — the frost is standing in for a colour that
+      is already on the poster (a tinted vignette), so it has to look like the
+      same colour rather than like the same hue.  A frosted panel has to be light
+      to keep dark text readable, and lifting a dark colour's Value while keeping
+      its Saturation is what makes a muted olive band come back as bright yellow:
+      chroma is S x V, so tripling V triples the colourfulness.  This mode lifts
+      Value to the panel's floor and takes S down in the same proportion, holding
+      chroma where the source had it.  ``saturation`` is ignored.
 
     • Reference (``reference=True``) — hew to the poster's *true* hue and
       saturation, dropping the pastel whitening so the frost closely matches the
@@ -1775,11 +1785,27 @@ def _frosted_tint(
     # (near-black/grey noise), full by 0.18 (a clear hue, however dark).
     conf = max(0.0, min(1.0, (v * s - 0.05) / 0.13))
 
-    if reference:
+    _PANEL_V = 0.85   # how light the frosted panel has to be for its dark text
+
+    if reference == "match":
+        # Same colour, not just the same hue: hold S x V where the source had it
+        # while raising V to the panel floor.  No `conf` fade — the caller has
+        # already decided this colour is worth matching, and a source that is
+        # genuinely near-neutral should come back near-neutral rather than being
+        # faded twice.
+        v_out = max(v, _PANEL_V)
+        s_out = min(1.0, s * v / v_out)
+        br, bg, bb = (c * 255 for c in colorsys.hsv_to_rgb(h, s_out, v_out))
+    elif reference:
         # True poster hue + saturation at a bright value, then just enough white
         # to reach a luminance floor for the dark text — vivid, not pastel.
         s_eff = min(1.0, s) * conf
-        br, bg, bb = (c * 255 for c in colorsys.hsv_to_rgb(h, s_eff, max(v, 0.85)))
+        br, bg, bb = (c * 255 for c in colorsys.hsv_to_rgb(h, s_eff, max(v, _PANEL_V)))
+
+    if reference:
+        # Both colour-true modes share the legibility backstop: white is added
+        # only as far as the dark text needs, and an already-light colour keeps
+        # all of its own.
         lum = (0.299 * br + 0.587 * bg + 0.114 * bb) / 255
         _FLOOR = 0.60
         w = (_FLOOR - lum) / (1.0 - lum) if lum < _FLOOR else 0.0
