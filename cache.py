@@ -59,7 +59,14 @@ def _apply_conn_pragmas(conn: sqlite3.Connection) -> None:
     and auto_vacuum are DB-level and persist in the file, so they're set once in
     init_db.)"""
     conn.execute("PRAGMA synchronous=NORMAL")       # safe with WAL; avoids unnecessary fsyncs
-    conn.execute("PRAGMA cache_size=-32000")        # 32 MB in-process page cache
+    # 4 MB in-process page cache.  This is PER CONNECTION and connections are
+    # per-thread (see above), so the real cost is this figure times every thread
+    # that touches the DB — the asyncio default executor alone is
+    # min(32, cpu_count+4) threads, plus the loop thread and the OCR workers.
+    # At the old 32 MB that ceiling was ~350 MB on a 4-core host, nearly all of
+    # it redundant: the same pages are already in the host's OS page cache, so
+    # copies two-through-eleven only save a memcpy, never a disk read.
+    conn.execute("PRAGMA cache_size=-4000")
     conn.execute("PRAGMA temp_store=MEMORY")        # temp tables/indices stay in RAM
     conn.execute("PRAGMA busy_timeout=15000")       # wait up to 15s if another worker holds the write lock
     conn.execute("PRAGMA wal_autocheckpoint=1000")  # fold WAL back into main DB at 1000 pages (~4 MB)

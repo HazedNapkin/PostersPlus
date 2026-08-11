@@ -11,9 +11,11 @@ import httpx
 import numpy as np
 from datetime import datetime, timedelta, timezone
 import zoneinfo
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
+from functools import lru_cache
 from urllib.parse import parse_qsl, urlencode
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, HTMLResponse
@@ -2619,16 +2621,48 @@ def build_poster(
         # high to low and take the first fit. Text fallbacks use the same hard
         # width/height envelope as image logos, including the absolute height cap
         # and bottom-anchor baseline semantics.
+        _sizes = list(range(int(height * 0.26), 7, -2))
+
+        def _widest_word(current_font) -> int:
+            """Width of the widest single word at this size (0 for empty input)."""
+            return max(
+                (_line_width(word, current_font) for word in fallback_title.split()),
+                default=0,
+            )
+
+        def _first_viable_index() -> int:
+            """Index into _sizes of the largest size not ruled out on width alone.
+
+            _wrap_lines places a word on a line even when it alone exceeds max_w
+            (the `or not current` branch), so any size whose widest word overflows
+            is guaranteed to produce a block wider than max_w and fail the test
+            below.  Unlike the full fit test — which is *not* monotone, because a
+            larger font can push a word onto line two and make the block narrower
+            — single-word width rises monotonically with size, so the first
+            viable size can be found by bisection.  Skipping straight to it avoids
+            measuring dozens of oversized candidates that cannot possibly fit,
+            which used to dominate the cost of rendering a text fallback.
+            """
+            lo, hi, first = 0, len(_sizes) - 1, 0
+            while lo <= hi:
+                mid = (lo + hi) // 2
+                _fs = _sizes[mid]
+                if _widest_word(_load_font(FONT_PATH, _fs)) + max(2, int(_fs * 0.04)) <= max_w:
+                    first, hi = mid, mid - 1
+                else:
+                    lo = mid + 1
+            return first
+
         try:
             font_size = MIN_FONT_SIZE
-            font      = ImageFont.truetype(FONT_PATH, font_size)
+            font      = _load_font(FONT_PATH, font_size)
             lines     = _wrap_lines(fallback_title, font)
             shadow_offset = max(2, int(font_size * 0.04))
             block_w, block_h, line_boxes = _measure_block(
                 lines, font, max(1, int(font_size * 0.12))
             )
-            for _fs in range(int(height * 0.26), 7, -2):
-                _f  = ImageFont.truetype(FONT_PATH, _fs)
+            for _fs in _sizes[_first_viable_index():]:
+                _f  = _load_font(FONT_PATH, _fs)
                 _ls = _wrap_lines(fallback_title, _f)
                 if len(_ls) > MAX_LINES:
                     continue
@@ -3613,24 +3647,29 @@ async def lifespan(app: FastAPI):
     _configurator_html = _load_configurator_html()
     load_languages()   # poster-output translations (English fallback if absent)
     _render_assets_signature = _compute_render_assets_signature()
-    # Warm the genre fallback backgrounds into memory so no-art posters render
-    # with zero extra latency (same idea as the badge cache warm-up).
+    # Count the genre fallback backgrounds without decoding them.  These are only
+    # used when a title has no usable art at all, so warming the whole set into
+    # memory cost ~172 MB resident for a path most requests never touch; they now
+    # load on demand into a bounded LRU (see _load_genre_background).  The count
+    # still logs, because "no art found" is worth telling the operator about.
     try:
-        _warmed = 0
+        _available = 0
         for _style in _GENRE_BG_STYLES:
             _sdir = os.path.join(_GENRE_BG_DIR, _style)
             if not os.path.isdir(_sdir):
                 continue
-            for _fn in os.listdir(_sdir):
-                if _fn.lower().endswith(".png"):
-                    if _load_genre_background(_fn[:-4], _style) is not None:
-                        _warmed += 1
-        if _warmed:
-            logger.info(f"Genre backgrounds warmed: {_warmed} entries")
+            _available += sum(
+                1 for _fn in os.listdir(_sdir) if _fn.lower().endswith(".png")
+            )
+        if _available:
+            logger.info(
+                f"Genre backgrounds available: {_available} entries "
+                f"(loaded on demand, cache limit {_GENRE_BG_CACHE_MAX})"
+            )
         else:
             logger.info("No genre background art found — using gradient fallbacks")
     except Exception as exc:
-        logger.warning(f"Genre background warm-up skipped: {exc}")
+        logger.warning(f"Genre background scan skipped: {exc}")
     # Burned-in-text detection: fetch + load PP-OCRv5 Mobile in the background so
     # the first textless request isn't blocked by the one-time ~4.6 MB
     # download.  On by default; skipped when the operator has opted out.
@@ -3694,6 +3733,15 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 _FONTS_DIR = os.path.join(BASE_DIR, "fonts")
 
 
+# Font objects are immutable once built and re-parsing the TTF per size adds up
+# fast in the fallback-title fit loop, which probes many sizes for one title.
+# Shared across render threads, matching what quality.py and age_badge.py
+# already do with their own font caches.
+@lru_cache(maxsize=256)
+def _load_font(path: str, size: int) -> ImageFont.FreeTypeFont:
+    return ImageFont.truetype(path, size)
+
+
 # ── Genre fallback backgrounds ────────────────────────────────────────────
 # Atmospheric 500x750 PNGs (procedurally generated by genre_backgrounds.py, or
 # hand-made overrides dropped into the same folder) used as the base for no-art
@@ -3704,7 +3752,16 @@ _GENRE_BG_DIR = os.path.join(BASE_DIR, "static", "genre_bg")
 # fallback_bg_style: "minimal" (procedural textured) or "photoreal" (hand-made
 # photographic art that blends with real posters).
 _GENRE_BG_STYLES = ("minimal", "photoreal")
-_genre_bg_cache: dict[str, "Image.Image | None"] = {}   # keyed "style/genre"
+# Bounded LRU, keyed "style/genre", holding decoded RGBA at canvas size.
+#
+# Both bounds matter.  Decoded, the full set is ~172 MB (the photoreal art ships
+# at 1024x1536, 6 MB each as RGBA), and it used to be loaded in full at startup
+# and held forever — a permanent cost for a path that only fires when a title has
+# no usable art at all.  Capping the cache keeps the resident set to the handful
+# of genres a given library actually hits; entries are cheap to reload (one PNG
+# decode) on the rare miss.
+_GENRE_BG_CACHE_MAX = 8
+_genre_bg_cache: "OrderedDict[str, Image.Image | None]" = OrderedDict()
 
 
 def _genre_bg_path(style: str, name: str) -> "str | None":
@@ -3718,11 +3775,18 @@ def _load_genre_background(genre: str, style: str = "minimal") -> "Image.Image |
     None if none exists.  A missing image degrades gracefully: the style's
     default.png → the minimal set's genre/default → None (caller then renders the
     procedural gradient canvas).  So selecting a not-yet-populated style never
-    breaks — it just falls back to minimal."""
+    breaks — it just falls back to minimal.
+
+    The returned canvas is always POSTER_WIDTH x POSTER_HEIGHT.  build_poster
+    takes its geometry from the canvas it is handed, so returning the photoreal
+    art at its native 1024x1536 made those fallbacks render at a different size
+    from every other poster — and paid a 4x encode for the privilege."""
     if style not in _GENRE_BG_STYLES:
         style = "minimal"
     key = f"{style}/{genre}"
-    if key not in _genre_bg_cache:
+    if key in _genre_bg_cache:
+        _genre_bg_cache.move_to_end(key)
+    else:
         path = (
             _genre_bg_path(style, genre)
             or _genre_bg_path(style, "default")
@@ -3730,11 +3794,34 @@ def _load_genre_background(genre: str, style: str = "minimal") -> "Image.Image |
             or _genre_bg_path("minimal", "default")
         )
         try:
-            _genre_bg_cache[key] = Image.open(path).convert("RGBA") if path else None
+            _genre_bg_cache[key] = (
+                _normalise_fallback_canvas(Image.open(path)) if path else None
+            )
         except Exception:
             _genre_bg_cache[key] = None
+        while len(_genre_bg_cache) > _GENRE_BG_CACHE_MAX:
+            _evicted = _genre_bg_cache.popitem(last=False)[1]
+            if _evicted is not None:
+                _evicted.close()
     base = _genre_bg_cache[key]
     return base.copy() if base is not None else None
+
+
+def _normalise_fallback_canvas(image: Image.Image) -> Image.Image:
+    """Fit-cover a fallback background to the poster canvas, as RGBA.
+
+    Fit-cover rather than a plain resize so a background authored at some other
+    aspect ratio is centre-cropped instead of squashed.  The shipped art is
+    already 2:3, for which this is just the resize."""
+    target_w, target_h = _cfg.POSTER_WIDTH, _cfg.POSTER_HEIGHT
+    src_w, src_h = image.size
+    if (src_w, src_h) != (target_w, target_h):
+        scale = max(target_w / src_w, target_h / src_h)
+        new_w, new_h = round(src_w * scale), round(src_h * scale)
+        image = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        left, top = round((new_w - target_w) / 2), round((new_h - target_h) / 2)
+        image = image.crop((left, top, left + target_w, top + target_h))
+    return image.convert("RGBA")
 
 
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
@@ -3798,7 +3885,10 @@ _configurator_html: str | None = None
 # which is what made sliders / dropdowns drift out of sync with the new
 # defaults until a manual Reset.
 _configurator_etag: str | None = None
-_RENDER_CACHE_VERSION = "2"
+# "3": photoreal genre fallback backgrounds now render at the poster canvas size
+# rather than their native 1024x1536, so previously cached oversized composites
+# must be re-rendered.
+_RENDER_CACHE_VERSION = "3"
 _render_assets_signature = "startup"
 
 
@@ -4284,6 +4374,26 @@ async def get_poster(
             tmdb_id = anime_key
         canonical_id = imdb_id or anime_key
     else:
+        # The ordinary TMDB path needs both ids, so report a missing one as
+        # missing.  Handing the empty string to the format checks reported it as
+        # a malformed id, and named whichever param happened to be checked first
+        # — so a caller who sent only tmdb_id was told "Invalid imdb_id" and a
+        # caller who sent only imdb_id was told "Invalid tmdb_id", both pointing
+        # away from what was actually wrong.
+        _missing = [
+            _name for _name, _value in (("tmdb_id", tmdb_id), ("imdb_id", imdb_id))
+            if not _value
+        ]
+        if _missing:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Missing required parameter(s): {', '.join(_missing)}. "
+                    "/poster needs both tmdb_id and imdb_id: tmdb_id selects the "
+                    "artwork and metadata, imdb_id keys the rating, awards and "
+                    "quality lookups."
+                ),
+            )
         _check_tmdb_id(tmdb_id)
         _check_imdb_id(imdb_id)
         has_tmdb_id = True
