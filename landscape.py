@@ -89,10 +89,10 @@ _SEPARATOR       = (255, 255, 255, 90)
 _GOLD            = (201, 168, 76)
 _BORDER_RATIO    = 0.045  # hairline width as a fraction of pill height
 _BORDER_ALPHA    = 200
-# Channel multipliers that push the smoked glass toward that gold without
-# lightening it — the gold's own channel ratio, eased back so the tint reads as
-# warmth rather than as a yellow filter.
-_GLASS_TINT      = np.array([1.0, 0.91, 0.66], dtype=np.float32)
+
+# How the badge takes the poster's colour — see _glass_pill.  True is the
+# frosted notch's reference mode; "match" holds the art's own lightness.
+_LANDSCAPE_FROST_MODE: bool | str = True
 
 
 def _font(name: str, size: int) -> ImageFont.FreeTypeFont:
@@ -147,42 +147,49 @@ def _draw_vignette(image: Image.Image, art: Image.Image, cfg) -> None:
     image.paste(tinted, (0, band_y), mask=tinted)
 
 
-def _glass_pill(image: Image.Image, box: tuple[int, int, int, int]) -> None:
-    """Smoked-gold glass, sampled from whatever it is sitting on.
+def _glass_pill(image: Image.Image, box: tuple[int, int, int, int],
+                art: Image.Image, cfg) -> tuple[int, int, int]:
+    """Frosted pill carrying the poster's own colour.  Returns its ink colour.
 
-    Adapts to its backing: a bright region gets a darker glass so the label
-    keeps contrast without needing a second visible gradient behind it.  That
-    is what lets the badge survive a top corner we do not control.
+    Same construction as the portrait frosted notch, and deliberately the same
+    helpers: a blurred crop of what the pill sits on, under a tint layer whose
+    colour comes from the art rather than from the crop.  Sampling the whole
+    frame rather than the region under the pill is what keeps it agreeing with
+    the vignette — a local sample would put a different colour under a top-left
+    badge than under a bottom-left one on the same poster.
 
-    Deliberately dark enough to read as privacy glass rather than as a frosted
-    highlight — the art stays legible through it as shape and movement, not as
-    detail, which is what keeps a white label on top readable over anything.
+    ``_LANDSCAPE_FROST_MODE`` picks how that colour is used:
+      True    — reference: the poster's true hue and saturation, lifted to a
+                legibility floor.  Light panel, dark ink.
+      "match" — the colour as it came, lightness included, floored short of
+                black.  Keeps a dark poster dark, so the pill still reads as
+                smoked glass rather than becoming a bright chip.
     """
+    from awards import dominant_frost_rgb, _frosted_tint, _frost_ink
+    from ratings import _cairo_pill_mask
+
     x0, y0, x1, y1 = box
     w, h = x1 - x0, y1 - y0
     if w <= 0 or h <= 0:
-        return
+        return (255, 255, 255)
 
-    region = image.crop(box).convert("RGB").filter(ImageFilter.GaussianBlur(9))
-    arr = np.asarray(region, dtype=np.float32)
-    # Rec. 709 luma of the backing, 0-255.
-    luma = float((arr[:, :, 0] * .2126 + arr[:, :, 1] * .7152 + arr[:, :, 2] * .0722).mean())
-    # Bright backing -> pull down hard; dark backing -> lift slightly so the
-    # pill reads as glass rather than as a hole.
-    gain, lift = (0.30, 4.0) if luma > 120 else (0.48, 12.0)
-    arr = np.clip(arr * gain + lift, 0, 255) * _GLASS_TINT
+    blurred = (image.crop(box).convert("RGB")
+               .filter(ImageFilter.GaussianBlur(max(4, int(h * 0.35))))
+               .convert("RGBA"))
 
-    # Cairo rasterises the pill at ANTIALIAS_BEST; PIL's rounded_rectangle has
-    # no antialiasing at all, which on a 2px gold hairline is the difference
-    # between an edge and a staircase.  The border is the difference of two of
-    # those masks rather than a stroked outline, so both of its edges are
-    # smooth — stroking would only smooth the outer one.
-    from ratings import _cairo_pill_mask
+    tint = _frosted_tint(*dominant_frost_rgb(art),
+                         cfg.sash_badge_frost_saturation, _LANDSCAPE_FROST_MODE)
 
-    glass = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("RGBA")
+    # Cairo rasterises at ANTIALIAS_BEST; PIL's rounded_rectangle has no
+    # antialiasing at all, which on a hairline border is the difference between
+    # an edge and a staircase.  The border is the difference of two masks rather
+    # than a stroked outline, so both of its edges are smooth — stroking would
+    # only smooth the outer one.
     mask = _cairo_pill_mask(w, h, h // 2)
-    glass.putalpha(mask)
-    image.alpha_composite(glass, (x0, y0))
+    blurred.putalpha(mask)
+    frost = Image.new("RGBA", (w, h), (*tint, 0))
+    frost.putalpha(mask.point(lambda a: int(a * cfg.sash_badge_frost_opacity)))
+    image.alpha_composite(Image.alpha_composite(blurred, frost), (x0, y0))
 
     bw = max(1, round(h * _BORDER_RATIO))
     iw, ih = max(1, w - 2 * bw), max(1, h - 2 * bw)
@@ -194,9 +201,11 @@ def _glass_pill(image: Image.Image, box: tuple[int, int, int, int]) -> None:
     border.putalpha(ring.point(lambda a: a * _BORDER_ALPHA // 255))
     image.alpha_composite(border, (x0, y0))
 
+    return _frost_ink(*tint)
 
-def _draw_badge(image: Image.Image, text: str, position: str,
-                logo_height: int = 0, plain: bool = False) -> None:
+
+def _draw_badge(image: Image.Image, text: str, position: str, art: Image.Image,
+                cfg, logo_height: int = 0, plain: bool = False) -> None:
     width, height = image.size
     draw = ImageDraw.Draw(image)
 
@@ -228,9 +237,9 @@ def _draw_badge(image: Image.Image, text: str, position: str,
     else:  # top_left
         x, y = int(width * _SIDE_PAD), int(height * _BADGE_TOP)
 
-    _glass_pill(image, (x, y, x + bw, y + bh))
+    ink = _glass_pill(image, (x, y, x + bw, y + bh), art, cfg)
     draw.text((x + _BADGE_PAD_X, y + _BADGE_PAD_Y - 2), text, font=font,
-              fill=(255, 255, 255, 242))
+              fill=(*ink, 245))
 
 
 def _draw_logo(image: Image.Image, logo: Image.Image) -> int:
@@ -372,7 +381,7 @@ def build_landscape(
             label, _sash_type = sash_result
             position = getattr(cfg, "landscape_badge_pos", "top_left")
             _draw_badge(image, translate_sash(label, cfg.logo_language).upper(),
-                        position, logo_height=logo_height,
+                        position, art, cfg, logo_height=logo_height,
                         # Only the original-art stacked slot lands inside the
                         # band.  Stacked over a logo the badge often clears the
                         # band's top edge, and the top corners are bare art, so
