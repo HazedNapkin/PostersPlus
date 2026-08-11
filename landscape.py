@@ -79,7 +79,7 @@ _BADGE_FONT      = 0.042
 _BADGE_PAD_X     = 22
 _BADGE_PAD_Y     = 11
 
-_INFO_FONT       = 0.072  # "Genre | Year | Score" strip
+_INFO_FONT       = 0.058  # "Genre | Year | Score" strip
 _TITLE_FONT      = 0.085  # fallback when no logo is available
 
 _MUTED           = (255, 255, 255, 170)
@@ -168,10 +168,21 @@ def _glass_pill(image: Image.Image, box: tuple[int, int, int, int]) -> None:
 
 
 def _draw_badge(image: Image.Image, text: str, position: str,
-                logo_height: int = 0) -> None:
+                logo_height: int = 0, plain: bool = False) -> None:
     width, height = image.size
-    font = _font("Inter-Bold.ttf", int(height * _BADGE_FONT))
     draw = ImageDraw.Draw(image)
+
+    if plain:
+        # The stacked slot sits inside the band, so the glass would be a second
+        # surface doing a job the vignette has already done.  Set at the info
+        # strip's size and on its baseline, so the two read as one bottom row
+        # rather than as a label that happens to be near some metadata.
+        _plain_font = _font("Inter-Bold.ttf", int(height * _INFO_FONT))
+        draw.text((int(width * _SIDE_PAD), int(height * _BASELINE)), text,
+                  font=_plain_font, fill=(255, 255, 255, 242), anchor="ls")
+        return
+
+    font = _font("Inter-Bold.ttf", int(height * _BADGE_FONT))
     tw = draw.textlength(text, font=font)
     th = int(height * _BADGE_FONT)
     bw, bh = int(tw + _BADGE_PAD_X * 2), int(th + _BADGE_PAD_Y * 2)
@@ -321,8 +332,10 @@ def build_landscape(
     # The upstream logo gate already passes logo=None for original art, but the
     # text fallback is guarded here too: printing our own title over art that
     # carries its own is the one failure this mode exists to avoid.
+    original_art = getattr(cfg, "landscape_art", "textless") == "original"
+
     logo_height = 0
-    if getattr(cfg, "landscape_art", "textless") != "original":
+    if not original_art:
         if logo is not None:
             logo_height = _draw_logo(image, logo)
         elif fallback_title:
@@ -336,8 +349,13 @@ def build_landscape(
         sash_result = pick_sash(discovery_meta, cfg.sash_priority)
         if sash_result is not None:
             label, _sash_type = sash_result
+            position = getattr(cfg, "landscape_badge_pos", "top_left")
             _draw_badge(image, translate_sash(label, cfg.logo_language).upper(),
-                        getattr(cfg, "landscape_badge_pos", "top_left"),
-                        logo_height=logo_height)
+                        position, logo_height=logo_height,
+                        # Only the original-art stacked slot lands inside the
+                        # band.  Stacked over a logo the badge often clears the
+                        # band's top edge, and the top corners are bare art, so
+                        # those keep the glass that makes them readable.
+                        plain=(original_art and position == "logo"))
 
     return image
