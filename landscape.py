@@ -365,10 +365,17 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
     font = _font("Inter-Bold.ttf", int(height * _INFO_FONT))
     draw = ImageDraw.Draw(image)
 
-    if isinstance(score, str):
-        score_text = score if score.isdigit() else "—"
-    else:
+    # No rating is not a rating of nothing: a title MDBList has no score for
+    # drops out of the row entirely, taking its separator with it, rather than
+    # printing a placeholder that reads as a value.
+    if isinstance(score, bool):
+        score_text = None
+    elif isinstance(score, int):
         score_text = str(score)
+    elif isinstance(score, str) and score.strip().isdigit():
+        score_text = score.strip()
+    else:
+        score_text = None
 
     # The score takes the same weight as the genre and the year rather than a
     # score-banded colour.  Here the three are one line of metadata, and one
@@ -378,7 +385,10 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
         parts.append((genre_label, _MUTED))
     if release_year:
         parts.append((str(release_year), _MUTED))
-    parts.append((score_text, _MUTED))
+    if score_text:
+        parts.append((score_text, _MUTED))
+    if not parts:
+        return
 
     sep = "  •  "
     sep_w = draw.textlength(sep, font=font)
