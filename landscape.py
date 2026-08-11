@@ -85,14 +85,18 @@ _TITLE_FONT      = 0.085  # fallback when no logo is available
 _MUTED           = (255, 255, 255, 170)
 _SEPARATOR       = (255, 255, 255, 90)
 
-# The configurator's gold, so the badge reads as the same product.
-_GOLD            = (201, 168, 76)
+# Black, not a colour of its own.  The panel already carries the poster's hue,
+# and any tinted border competes with it — a gold one disappeared outright on
+# posters whose dominant colour was itself gold.  Black reads as an edge against
+# every panel the art can produce.
+_BORDER_RGB      = (0, 0, 0)
 _BORDER_RATIO    = 0.045  # hairline width as a fraction of pill height
 _BORDER_ALPHA    = 200
 
-# How the badge takes the poster's colour — see _glass_pill.  True is the
-# frosted notch's reference mode; "match" holds the art's own lightness.
-_LANDSCAPE_FROST_MODE: bool | str = True
+# How the badge takes the poster's colour — see _glass_pill.  "match" holds the
+# art's own lightness, so a dark poster keeps a dark panel; True is the frosted
+# notch's reference mode, which lifts Value and always lands light.
+_LANDSCAPE_FROST_MODE: bool | str = "match"
 
 
 def _font(name: str, size: int) -> ImageFont.FreeTypeFont:
@@ -159,11 +163,11 @@ def _glass_pill(image: Image.Image, box: tuple[int, int, int, int],
     badge than under a bottom-left one on the same poster.
 
     ``_LANDSCAPE_FROST_MODE`` picks how that colour is used:
-      True    — reference: the poster's true hue and saturation, lifted to a
-                legibility floor.  Light panel, dark ink.
       "match" — the colour as it came, lightness included, floored short of
                 black.  Keeps a dark poster dark, so the pill still reads as
                 smoked glass rather than becoming a bright chip.
+      True    — reference: the poster's true hue and saturation, lifted to a
+                legibility floor.  Light panel, dark ink.
     """
     from awards import dominant_frost_rgb, _frosted_tint, _frost_ink
     from ratings import _cairo_pill_mask
@@ -197,7 +201,7 @@ def _glass_pill(image: Image.Image, box: tuple[int, int, int, int],
     inner.paste(_cairo_pill_mask(iw, ih, ih // 2), (bw, bw))
     ring = ImageChops.subtract(mask, inner)
 
-    border = Image.new("RGBA", (w, h), (*_GOLD, 255))
+    border = Image.new("RGBA", (w, h), (*_BORDER_RGB, 255))
     border.putalpha(ring.point(lambda a: a * _BORDER_ALPHA // 255))
     image.alpha_composite(border, (x0, y0))
 
