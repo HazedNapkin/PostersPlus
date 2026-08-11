@@ -385,9 +385,10 @@ def draw_tier_bar(
         bar_mask = bar_mask.point(lambda v: v * bar_alpha // 255)
     bar_strip = Image.new("RGBA", (bw, bh), colors["primary"][:3] + (0,))
     bar_strip.putalpha(bar_mask)
-    bar_layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
-    bar_layer.paste(bar_strip, (x, y))
-    image.alpha_composite(bar_layer)
+    # Composite at the offset instead of via a full-canvas transparent layer —
+    # same result (transparent pixels are a no-op), a fraction of the pixels.
+    # This is the form the glow above already uses.
+    image.alpha_composite(bar_strip, dest=(x, y))
 
     # ── 3. Highlight sheen ────────────────────────────────────────────────
     hl_w    = max(1, bw // 2)
@@ -397,6 +398,4 @@ def draw_tier_bar(
         hl_mask = hl_mask.point(lambda v: v * hl_fill[3] // 255)
     hl_strip = Image.new("RGBA", (hl_w, bh), hl_fill[:3] + (0,))
     hl_strip.putalpha(hl_mask)
-    hl_layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
-    hl_layer.paste(hl_strip, (x, y))
-    image.alpha_composite(hl_layer)
+    image.alpha_composite(hl_strip, dest=(x, y))

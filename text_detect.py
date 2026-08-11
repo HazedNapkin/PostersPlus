@@ -16,6 +16,8 @@ import urllib.request
 
 import numpy as np
 
+from config import EFFECTIVE_CPUS, TEXTLESS_DETECTION_CONCURRENCY as _CONCURRENCY
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -109,12 +111,26 @@ except (TypeError, ValueError):
     _SCAN_TOP = 0.08
 _SCAN_TOP = max(0.0, min(0.9, _SCAN_TOP))
 
+# NOTE: RapidOCR does not actually honour this — the detector receives the poster
+# at its native size rounded up to multiples of 32 (a 500x750 poster arrives as
+# 736x512, ~377 kpx, not the 352x512 / ~180 kpx this value implies).  Leave it.
+# Forcing the configured limit through a pre-resize is ~1.37x faster but loses
+# 7 of 26 detections on known-positive posters, and recall is the whole point of
+# the feature.  It is kept here because DETECT_RES_SIG embeds it, so cached
+# verdicts stay tied to the value that was in force when they were written.
 _LIMIT_SIDE_LEN = 512
-_MODEL_SESSIONS = max(1, min(
-    4, os.cpu_count() or 1,
-    int(os.environ.get("TEXTLESS_DETECTION_CONCURRENCY", "2")),
-))
-_ORT_THREADS = max(1, min(4, (os.cpu_count() or 1) // _MODEL_SESSIONS))
+
+# Sizing is driven by the cores this process may actually use, not the host's
+# core count — see config.effective_cpus().  Sessions divide the thread budget
+# between them, and ONNX throughput degrades sharply once the total exceeds the
+# real budget, so the split has to come out of a correct figure.
+_MODEL_SESSIONS = max(1, min(EFFECTIVE_CPUS, _CONCURRENCY))
+# No arbitrary ceiling: scaling was still near-linear at 4 threads on 4 cores
+# (3.2x vs one thread) with no sign of saturation, so a 16-core host should get
+# 16.  The floor of 1 matters more than any cap — oversubscription is far more
+# expensive than undersubscription (on a 2-CPU budget: 135 ms at 2 threads,
+# 299 ms at 6, 409 ms at 8).
+_ORT_THREADS = max(1, EFFECTIVE_CPUS // _MODEL_SESSIONS)
 DETECT_RES_SIG = (
     f"ppocrv5m-r7-s{_LIMIT_SIDE_LEN}-c{int(round(_BOX_THRESHOLD * 100))}"
     f"-wc{int(round(_WIDE_BOX_THRESHOLD * 100))}"

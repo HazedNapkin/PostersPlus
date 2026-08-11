@@ -8,6 +8,45 @@
 #     or the project README for a ready-made sample.
 import os
 
+
+def effective_cpus() -> int:
+    """Cores this process may actually use.
+
+    os.cpu_count() reports the HOST's cores, and a Docker `--cpus=` / compose
+    `cpus:` limit is enforced through the CFS quota rather than CPU affinity, so
+    neither os.cpu_count() nor sched_getaffinity sees it.  A container limited to
+    2 CPUs on a 4-core host reports 4 from both.
+
+    That matters because ONNX thread scaling falls off a cliff past the real
+    budget: measured on the detector's production input, a 2-CPU container runs
+    135 ms at 2 threads, 153 ms at 4, 299 ms at 6 and 409 ms at 8.  Oversizing is
+    far more expensive than undersizing, so take the *smallest* figure any source
+    reports.
+    """
+    limits = []
+    try:  # cgroup v2
+        raw = open("/sys/fs/cgroup/cpu.max").read().split()
+        if raw[0] != "max":
+            limits.append(int(raw[0]) / int(raw[1]))
+    except Exception:
+        pass
+    try:  # cgroup v1
+        quota  = int(open("/sys/fs/cgroup/cpu/cpu.cfs_quota_us").read())
+        period = int(open("/sys/fs/cgroup/cpu/cpu.cfs_period_us").read())
+        if quota > 0 and period > 0:
+            limits.append(quota / period)
+    except Exception:
+        pass
+    try:
+        limits.append(len(os.sched_getaffinity(0)))
+    except Exception:
+        pass
+    limits.append(os.cpu_count() or 1)
+    return max(1, int(min(limits)))
+
+
+EFFECTIVE_CPUS = effective_cpus()
+
 # Storage
 
 DB_PATH               = "/app/cache/cache.db"
@@ -369,14 +408,33 @@ TEXTLESS_FAKE_REPORT_PATH  = os.environ.get(
 PPOCR_BOX_THRESHOLD        = max(0.0, min(
     1.0, float(os.environ.get("PPOCR_BOX_THRESHOLD", "0.70"))
 ))
-# Independent PP-OCR sessions used for parallel cold-cache scans. Sessions run in
-# a dedicated executor and split available ONNX threads between them. Each extra
-# session costs roughly 25-40 MB with the bundled mobile model. Capped at four and at the detected CPU count.
-# Default 2 suits typical 3+ core hosts; use 1 on smaller hosts. Across worker
-# processes, keep WORKERS x this value at or below available CPU cores.
+# Independent PP-OCR sessions used for parallel cold-cache scans, run in a
+# dedicated executor.  Across worker processes, keep WORKERS x this value at or
+# below EFFECTIVE_CPUS.
+#
+# Default 1, because raising it is a throughput-for-latency trade that usually
+# loses.  Sessions SPLIT the ONNX thread budget rather than adding to it, so on
+# 4 cores 1 session gets 4 intra-op threads and 2 sessions get 2 each.  Measured
+# on real poster art: a single scan is ~88 ms at 1 session but ~139 ms at 2,
+# while bulk throughput moves the other way, 8.9 -> 11.0 scans/s.  Neither
+# setting measurably slows concurrent compositing (0.98x vs 1.09x render latency
+# under saturated OCR), so contention is not the deciding factor.
+#
+# The queue decides it, and the queue is usually not busy: the background scan
+# worker is a single task that drains one item at a time and waits for foreground
+# idle, so it can never occupy a second session.  Extra sessions only earn their
+# keep when many low-vote titles need FOREGROUND scans at once — a cold-cache
+# sweep of a large new library.  Once text_detection_cache is populated, scans
+# are occasional and latency-visible (someone is waiting on that poster), which
+# is exactly where 1 session wins.
+#
+# Memory (measured, bundled mobile model): the first session is ~115 MB, mostly
+# the onnxruntime instance itself, so that is the price of having detection on at
+# all.  Each additional session adds ~50 MB — going 1 -> 2 cost ~86 MB more peak
+# RSS under sustained scanning.
 TEXTLESS_DETECTION_CONCURRENCY = max(1, min(
-    4, os.cpu_count() or 1,
-    int(os.environ.get("TEXTLESS_DETECTION_CONCURRENCY", "2")),
+    EFFECTIVE_CPUS,
+    int(os.environ.get("TEXTLESS_DETECTION_CONCURRENCY", "1")),
 ))
 
 # Rating Score Weight Defaults

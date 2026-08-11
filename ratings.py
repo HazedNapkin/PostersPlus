@@ -329,9 +329,11 @@ def draw_score_bar(
     track_mask = track_mask.point(lambda v: v * 45 // 255)   # scale to fill alpha
     track_strip = Image.new("RGBA", (bar_w, bar_h), (255, 255, 255, 0))
     track_strip.putalpha(track_mask)
-    track = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    track.paste(track_strip, (x0, y0))
-    image.alpha_composite(track)
+    # Composite the strip where it belongs rather than pasting it into a
+    # full-canvas transparent layer first: fully transparent pixels contribute
+    # nothing to an alpha composite, so the result is identical and the work is
+    # proportional to the bar (360x9) instead of the whole poster (500x750).
+    image.alpha_composite(track_strip, dest=(x0, y0))
 
     if fill_w <= 0:
         return
@@ -362,18 +364,19 @@ def draw_score_bar(
         full_msk = _cairo_pill_mask(mask_w, bar_h, radius)
         mask_img = full_msk.crop((0, 0, fill_w, bar_h))
 
-    fill_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    fill_layer.paste(grad, (x0, y0), mask_img)
-    image.alpha_composite(fill_layer)
+    fill_layer = Image.new("RGBA", (bar_w, bar_h), (0, 0, 0, 0))
+    fill_layer.paste(grad, (0, 0), mask_img)
+    image.alpha_composite(fill_layer, dest=(x0, y0))
 
     # ── Highlight sliver ─────────────────────────────────────────────────
-    hl = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    # Drawn in bar-local coordinates; the strip is composited at (x0, y0).
+    hl = Image.new("RGBA", (bar_w, bar_h), (0, 0, 0, 0))
     ImageDraw.Draw(hl).line(
-        [(x0 + radius, y0 + 1), (x0 + fill_w - 1, y0 + 1)],
+        [(radius, 1), (fill_w - 1, 1)],
         fill=(255, 255, 255, 60),
         width=1,
     )
-    image.alpha_composite(hl)
+    image.alpha_composite(hl, dest=(x0, y0))
 
     # ── Glow ─────────────────────────────────────────────────────────────
     if score >= glow_threshold:
@@ -430,9 +433,11 @@ def _draw_solid_pip(
     pip_mask  = _cairo_pill_mask(width, height, radius)
     pip_strip = Image.new("RGBA", (width, height), (*color, 0))
     pip_strip.putalpha(pip_mask)
-    pip_layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
-    pip_layer.paste(pip_strip, (int(x), y0))
-    image.alpha_composite(pip_layer)
+    # Offset composite rather than a full-canvas transparent layer.  y0 can fall
+    # outside the canvas for a pip near the edge; alpha_composite clips exactly
+    # as paste did (verified pixel-identical across negative and overflowing
+    # offsets), so the edge cases behave the same.
+    image.alpha_composite(pip_strip, dest=(int(x), y0))
 
 
 def draw_score_bar_vertical(
