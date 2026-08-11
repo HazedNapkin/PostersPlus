@@ -604,7 +604,6 @@ from ratings import (
     calculate_weighted_score,
     draw_frosted_bar,
     draw_score_bar,
-    draw_score_bar_vertical,
     fetch_rating,
     parse_custom_score_palette,
     score_color_for_mode,
@@ -823,11 +822,14 @@ class RequestConfig:
     # so it sits under the logo (which is centred).  No effect under Split,
     # whose two groups are defined by the margins they sit on.
     minimalist_center: bool = False
-    # Glyph for the separator: "pip" (the silver bar) or "bullet".  Applies to
-    # the Year mode's score-coloured separator as well, where the bullet takes
-    # the score colour the bar would have had.  Defaults to the bar so existing
-    # posters don't change under anyone.
+    # Separator glyphs.  The field separator (genre | year) is "pip" — the
+    # silver bar — or "bullet"; it covers Year mode's score-coloured separator
+    # too, which takes the same shape in the score's colour.  The rating
+    # separator, immediately before a printed score, adds "star" and defaults
+    # to it.  Both default to what the mode already drew, so nothing changes
+    # for anyone who doesn't ask.
     minimalist_separator: str = "pip"
+    minimalist_rating_separator: str = "star"
 
     # Frosted bar (rating_display_mode == 4)
     bar_height_ratio:        float = 0.080
@@ -1194,6 +1196,11 @@ def build_request_config(params: dict) -> RequestConfig:
     _msep = (params.get("minimalist_separator") or "").strip().lower()
     if _msep in ("pip", "bullet"):
         cfg.minimalist_separator = _msep
+    # "star" only here: it labels the score it sits in front of, so it has
+    # nothing to say between a genre and a year.
+    _mrsep = (params.get("minimalist_rating_separator") or "").strip().lower()
+    if _mrsep in ("pip", "bullet", "star"):
+        cfg.minimalist_rating_separator = _mrsep
 
     cfg.bar_height_ratio        = _f("bar_height_ratio",        cfg.bar_height_ratio,        0.04, 0.20)
     cfg.bar_font_size_ratio     = _f("bar_font_size_ratio",     cfg.bar_font_size_ratio,     0.15, 0.70)
@@ -2885,19 +2892,25 @@ def build_poster(
             right_edge = width - int(width * cfg.minimalist_mode_font_x_offset)
             _ink = (*cfg.rating_text_color, 255) if cfg.rating_text_color else (235, 235, 235, 255)
 
-            # Segments, each tagged with the SEPARATOR that precedes it:
-            #   "pip"  — silver vertical pip (before the year)
-            #   "star" — ★ glyph (before the rating/score)
-            #   "rpip" — pip COLOURED by score (mode 0 only: the rating shown
-            #            purely by colour, no number)
-            # Mode 0 ("Year"): genre [rating-pip] year
-            # Mode 1 ("Rating"): genre ★ score
-            # Mode 2 ("Year + Rating"): genre [pip] year ★ score
-            # Mode 3 ("Split"): genre [pip] year ......................... score
-            #   The same left-hand group as mode 2 with the score moved to the
-            #   opposite margin, where it needs no star to say what it is — the
-            #   separator earns its place between things that would otherwise run
-            #   together, and nothing runs together across the poster's width.
+            # Segments, each tagged with the ROLE of the separator that precedes
+            # it.  The role says what the separator divides; the configured
+            # style says what it is drawn as.  Keeping those apart is what lets
+            # every mode's separator be restyled without the layout knowing:
+            #   "field"  — between two plain fields (genre | year).  Silver.
+            #   "rfield" — the same slot in Year mode, where the separator IS
+            #              the rating: it takes the score's colour, because
+            #              nothing else in that layout shows the score at all.
+            #   "rating" — immediately before a printed score.  Defaults to the
+            #              ★, which labels the number rather than dividing it
+            #              off, but can be a plain separator instead.
+            # Mode 0 ("Year"):   genre [rfield] year
+            # Mode 1 ("Rating"): genre [rating] score
+            # Mode 2 ("Both"):   genre [field] year [rating] score
+            # Mode 3 ("Split"):  genre [field] year .................... score
+            #   The same left-hand group as Both with the score moved to the
+            #   opposite margin, where it needs nothing to say what it is — a
+            #   separator earns its place between things that would otherwise
+            #   run together, and nothing runs together across a poster's width.
             _has_score = score not in ("N/A", None)
             # Score formatting matches the other modes: out of 100 by default,
             # one decimal out of 10 ("8.7"), with a bare "10" at the top.
@@ -2909,45 +2922,55 @@ def build_poster(
             left_parts: list[tuple[str, str | None]] = []
             if cfg.minimalist_append_mode == 0:
                 if release_year:
-                    parts.append((str(release_year), "rpip" if parts else None))
+                    parts.append((str(release_year), "rfield" if parts else None))
             elif cfg.minimalist_append_mode == 1:
                 if _has_score:
-                    parts.append((_score_str, "star" if parts else None))
+                    parts.append((_score_str, "rating" if parts else None))
             elif cfg.minimalist_append_mode == 3:   # Split
                 if release_year:
-                    parts.append((str(release_year), "pip" if parts else None))
+                    parts.append((str(release_year), "field" if parts else None))
                 left_parts, parts = parts, ([(_score_str, None)] if _has_score else [])
-            else:  # 2 — Year + Rating
+            else:  # 2 — Both
                 if release_year:
-                    parts.append((str(release_year), "pip" if parts else None))
+                    parts.append((str(release_year), "field" if parts else None))
                 if _has_score:
-                    parts.append((_score_str, "star" if parts else None))
+                    parts.append((_score_str, "rating" if parts else None))
 
             pip_gap = int(font_size * 0.55)
             pip_w   = max(4, int(font_size * 0.18))
             pip_h   = int(font_size * 1.4)
             pip_cy  = round(y + font_size * 0.60)
-            star_w  = draw.textlength("★", font=font_meta)
 
-            # The separator can be the silver bar or a bullet.  A bullet sits
-            # better beside the ★ — both are glyphs on the same baseline, where
-            # the bar reads as a rule borrowed from somewhere else — but it
-            # reserves its own glyph width rather than the bar's fixed one, so
-            # the choice has to reach the layout below, not just the drawing.
-            #
-            # This covers "rpip" too — the Year mode's separator-as-rating.  A
-            # dot is a much weaker gauge than a bar, but it still carries the
-            # score's colour (see the draw loop), so the rating is dimmer rather
-            # than absent, and that is a look to have an opinion about rather
-            # than a thing to forbid.
-            _bullet_sep = cfg.minimalist_separator == "bullet"
-            _pip_sep_w  = draw.textlength("•", font=font_meta) if _bullet_sep else pip_w
+            # Style resolution.  The two field roles share one setting because
+            # they are the same slot in different layouts; the rating role has
+            # its own, since the ★ only makes sense in front of a number and
+            # would be nonsense between a genre and a year.  A glyph reserves
+            # its own width where the bar has a fixed one, so the choice has to
+            # reach the layout below and not just the drawing.
+            _SEP_GLYPH = {"pip": None, "bullet": "•", "star": "★"}
 
-            def _sep_width(sep: str) -> float:
-                return star_w if sep == "star" else _pip_sep_w
+            def _sep_style(role: str) -> str:
+                return (cfg.minimalist_rating_separator if role == "rating"
+                        else cfg.minimalist_separator)
+
+            def _sep_glyph(role: str) -> str | None:
+                # Unknown styles fall back to the bar rather than raising: this
+                # runs per poster, and a bad value is a config problem, not a
+                # reason to fail the render.
+                return _SEP_GLYPH.get(_sep_style(role))
+
+            def _sep_width(role: str) -> float:
+                glyph = _sep_glyph(role)
+                return pip_w if glyph is None else draw.textlength(glyph, font=font_meta)
+
+            def _score_int(value) -> "int | None":
+                try:
+                    return max(0, min(int(value), 100))
+                except (TypeError, ValueError):
+                    return None
 
             # Lay out right-to-left: each segment, with its separator to its left.
-            ops    = []   # (kind, x[, text]); kind in text|pip|rpip|star
+            ops    = []   # (kind, x[, text]); kind in text|field|rfield|rating
             cursor = right_edge
             for i in range(len(parts) - 1, -1, -1):
                 seg, sep = parts[i]
@@ -2990,34 +3013,34 @@ def build_poster(
                 kind, ox = op[0], op[1]
                 if kind == "text":
                     draw.text((ox, y), op[2], font=font_meta, fill=_ink)
-                elif kind == "star":
-                    draw.text((ox, y), "★", font=font_meta, fill=_ink)
-                elif kind == "rpip" and _bullet_sep:
-                    # Keeps the score's colour: in this mode the separator IS
-                    # the rating, so a silver dot would drop it off the poster
-                    # rather than restyle it.  Skipped entirely when there is no
-                    # usable score, which is what the bar does too.
-                    try:
-                        _sc = max(0, min(int(score), 100))
-                    except (TypeError, ValueError):
-                        _sc = None
-                    if _sc is not None:
-                        _fill = score_color_for_mode(
-                            _sc, cfg.score_color_mode, cfg.score_custom_palette)[0]
-                        draw.text((ox, y), "•", font=font_meta, fill=(*_fill, 255))
-                elif kind == "rpip":
-                    draw_score_bar_vertical(image, score, x=ox, y_center=pip_cy,
-                                            height=pip_h, width=pip_w,
-                                            color_mode=cfg.score_color_mode,
-                                            custom_palette=cfg.score_custom_palette)
-                elif kind == "pip" and _bullet_sep:
-                    # The bar's silver, not the text ink: the separator stays a
-                    # shade quieter than the fields it divides, which is the one
-                    # thing about the bar worth keeping.
-                    draw.text((ox, y), "•", font=font_meta, fill=(192, 192, 200, 255))
-                else:  # "pip"
+                    continue
+
+                glyph = _sep_glyph(kind)
+                if kind == "rfield":
+                    # The rating shown as a colour.  Both shapes take the same
+                    # score lookup, and both are skipped when there is no score
+                    # to colour them with — a neutral mark in this slot would
+                    # read as a rating rather than as the absence of one.
+                    _sc = _score_int(score)
+                    if _sc is None:
+                        continue
+                    _fill = score_color_for_mode(
+                        _sc, cfg.score_color_mode, cfg.score_custom_palette)[0]
+                elif glyph == "★":
+                    # The star labels the number it precedes rather than
+                    # dividing anything, so it matches the text, not the rules.
+                    _fill = _ink[:3]
+                else:
+                    # Every plain separator stays a shade quieter than the
+                    # fields it divides — the one thing about the bar worth
+                    # keeping whatever shape it is drawn in.
+                    _fill = (192, 192, 200)
+
+                if glyph is None:
                     _draw_solid_pip(image, x=ox, y_center=pip_cy,
-                                    width=pip_w, height=pip_h, color=(192, 192, 200))
+                                    width=pip_w, height=pip_h, color=_fill)
+                else:
+                    draw.text((ox, y), glyph, font=font_meta, fill=(*_fill, 255))
 
         elif cfg.rating_display_mode == 4:
             # Frosted bar — centred dot-separated label at the bottom.

@@ -2576,12 +2576,21 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <div class="segmented" data-for="cfg-min-append"></div>
                 </div>
                 <div class="field" id="minimalist-separator-field">
-                  <label class="field-label" data-tip="Glyph between the fields. In Year mode the bullet still takes the score's colour, so the rating survives — it just reads more quietly than the bar does.">Separator</label>
+                  <label class="field-label" id="minimalist-separator-label" data-tip="Glyph between the genre and the year. In Year mode it still takes the score's colour whichever shape you pick, so the rating survives — a bullet just reads more quietly than the bar.">Separator</label>
                   <select class="segmented-source" id="cfg-min-separator" onchange="build(); queuePreviewReload()">
                     <option value="pip" selected>Bar</option>
                     <option value="bullet">Bullet</option>
                   </select>
                   <div class="segmented" data-for="cfg-min-separator"></div>
+                </div>
+                <div class="field" id="minimalist-rating-separator-field">
+                  <label class="field-label" id="minimalist-rating-separator-label" data-tip="Glyph immediately before the score. The star labels the number rather than dividing it off, which is why it is only offered here.">Rating Separator</label>
+                  <select class="segmented-source" id="cfg-min-rating-separator" onchange="build(); queuePreviewReload()">
+                    <option value="star" selected>Star</option>
+                    <option value="pip">Bar</option>
+                    <option value="bullet">Bullet</option>
+                  </select>
+                  <div class="segmented" data-for="cfg-min-rating-separator"></div>
                 </div>
                 <div class="field">
                   <label class="field-label" data-tip="Hex colour for the genre/rating text. Leave blank for the mode default.">Text Colour</label>
@@ -4470,7 +4479,13 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
       // about what is actually in effect.
       if (ni('cfg-min-append') !== 3)
         params.set('minimalist_center',             c('tog-minimalist-center') ? 'true' : 'false');
-      params.set('minimalist_separator',           vEl('cfg-min-separator') || 'pip');
+      // Each only where the layout actually draws it, so the URL says what is
+      // in effect rather than what happens to be sitting in the form.
+      const _mAppend = ni('cfg-min-append');
+      if (_mAppend !== 1)
+        params.set('minimalist_separator',        vEl('cfg-min-separator') || 'pip');
+      if (_mAppend === 1 || _mAppend === 2)
+        params.set('minimalist_rating_separator', vEl('cfg-min-rating-separator') || 'star');
     } else if (ratingMode === 4) {
       params.set('bar_style',           vEl('cfg-bar-style') || 'frosted');
       const _bs = vEl('cfg-bar-style') || '';
@@ -5070,16 +5085,37 @@ function initSegmented() {
 })();
 
 /** Minimalist controls that depend on the Append mode as well as the rating
- *  mode.  Centre is hidden under Split because Split has no single group to
- *  centre — the two halves are defined by the opposite margins they hang off,
- *  so there is no behaviour to give it, which is a different thing from a
- *  combination somebody might not like the look of.  Separator is deliberately
- *  NOT gated: every mode that draws one can restyle it, taste included. */
+ *  mode.  Nothing here is hidden on taste — a control only disappears when the
+ *  layout has no separator for it to act on:
+ *    Year, Split — one separator (genre | year).
+ *    Rating      — one separator, the one in front of the score, so the star
+ *                  is on offer.
+ *    Both        — both of them, relabelled to say which is which.
+ *    Centre      — hidden under Split alone, which has no single group to
+ *                  centre: its two halves are defined by the opposite margins
+ *                  they hang off, so there is no behaviour to give it. */
 function _updateMinimalistRows() {
   const isMinimal = parseInt(document.getElementById('cfg-rating-mode').value) === 3;
   const append    = parseInt(vEl('cfg-min-append') || '0');
+  const both      = append === 2;
+
   const row = document.getElementById('minimalist-center-row');
   if (row) row.style.display = (isMinimal && append !== 3) ? '' : 'none';
+
+  // Year (0), Both (2) and Split (3) draw the genre|year separator; Rating (1)
+  // and Both draw the one before the score.
+  const showField  = isMinimal && append !== 1;
+  const showRating = isMinimal && (append === 1 || both);
+  const field  = document.getElementById('minimalist-separator-field');
+  const rating = document.getElementById('minimalist-rating-separator-field');
+  if (field)  field.style.display  = showField  ? '' : 'none';
+  if (rating) rating.style.display = showRating ? '' : 'none';
+
+  // With both on screen "Separator" twice says nothing; name the slots.
+  const fl = document.getElementById('minimalist-separator-label');
+  const rl = document.getElementById('minimalist-rating-separator-label');
+  if (fl) fl.textContent = both ? 'Genre / Year'  : 'Separator';
+  if (rl) rl.textContent = both ? 'Year / Rating' : 'Separator';
 }
 
 function updateRatingFields() {
@@ -5503,6 +5539,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('minimalist_score_out_of_10'))     _setEl('tog-minimalist-score-10', p.get('minimalist_score_out_of_10'));
   if (p.has('minimalist_center'))              _setEl('tog-minimalist-center', p.get('minimalist_center'));
   if (p.has('minimalist_separator'))           _setEl('cfg-min-separator', p.get('minimalist_separator'));
+  if (p.has('minimalist_rating_separator'))    _setEl('cfg-min-rating-separator', p.get('minimalist_rating_separator'));
   if (p.has('bar_style'))           { _setEl('cfg-bar-style',  p.get('bar_style')); _updateBarRatingRows(); }
   if (p.has('bar_accent'))            _setEl('cfg-bar-accent', p.get('bar_accent'));
   if (p.has('bar_append'))            _setEl('cfg-bar4-append', p.get('bar_append'));
