@@ -2567,7 +2567,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <div id="rating-mode3-fields" style="display:none;">
                 <div class="field">
                   <label class="field-label" data-tip="If rating is not chosen, the separator colour gives an approximation of it.">Append</label>
-                  <select class="segmented-source" id="cfg-min-append" onchange="build(); queuePreviewReload()">
+                  <select class="segmented-source" id="cfg-min-append" onchange="_updateMinimalistRows(); build(); queuePreviewReload()">
                     <option value="0" selected>Year</option>
                     <option value="1">Rating</option>
                     <option value="2">Year + Rating</option>
@@ -2737,6 +2737,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <span class="toggle-label">Display score out of 10</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-minimalist-score-10" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
+              <div class="toggle-row score10-row" id="minimalist-center-row" style="display:none;">
+                <span class="toggle-label" data-tip="Centre the strip under the logo instead of hanging it off the right margin. The X Position slider stops applying.">Centre under logo</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-minimalist-center" onchange="build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
@@ -4451,6 +4458,10 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
       params.set('minimalist_mode_font_x_offset',   n('cfg-x-mode3').toFixed(3));
       params.set('minimalist_mode_font_y_offset',   n('cfg-y-mode3').toFixed(3));
       params.set('minimalist_score_out_of_10',      c('tog-minimalist-score-10') ? 'true' : 'false');
+      // Split ignores it server-side too; leaving it out keeps the URL honest
+      // about what is actually in effect.
+      if (ni('cfg-min-append') !== 3)
+        params.set('minimalist_center',             c('tog-minimalist-center') ? 'true' : 'false');
     } else if (ratingMode === 4) {
       params.set('bar_style',           vEl('cfg-bar-style') || 'frosted');
       const _bs = vEl('cfg-bar-style') || '';
@@ -5049,6 +5060,17 @@ function initSegmented() {
   window.addEventListener('resize', hide);
 })();
 
+/** Minimalist rows that depend on the Append mode as well as the rating mode.
+ *  Split anchors its two groups on opposite margins, so there is no single
+ *  group to centre — the option is hidden rather than shown doing nothing. */
+function _updateMinimalistRows() {
+  const row = document.getElementById('minimalist-center-row');
+  if (!row) return;
+  const isMinimal = parseInt(document.getElementById('cfg-rating-mode').value) === 3;
+  const isSplit   = parseInt(vEl('cfg-min-append') || '0') === 3;
+  row.style.display = (isMinimal && !isSplit) ? '' : 'none';
+}
+
 function updateRatingFields() {
   const mode = parseInt(document.getElementById('cfg-rating-mode').value);
   document.getElementById('rating-mode1-fields').style.display      = mode === 1 ? '' : 'none';
@@ -5060,6 +5082,7 @@ function updateRatingFields() {
   document.getElementById('numeric-score10-row').style.display      = mode === 2 ? '' : 'none';
   document.getElementById('minimalist-score10-row').style.display   = mode === 3 ? '' : 'none';
   document.getElementById('bar-score10-row').style.display          = mode === 4 ? '' : 'none';
+  _updateMinimalistRows();
   // Hidden mode has no per-mode fields, so the Style group would otherwise be
   // a heading and a rule with nothing under them.
   document.getElementById('rating-style-group').style.display       = mode === 0 ? 'none' : '';
@@ -5467,6 +5490,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('minimalist_mode_font_x_offset'))  _setEl('cfg-x-mode3',      p.get('minimalist_mode_font_x_offset'));
   if (p.has('minimalist_mode_font_y_offset'))  _setEl('cfg-y-mode3',      p.get('minimalist_mode_font_y_offset'));
   if (p.has('minimalist_score_out_of_10'))     _setEl('tog-minimalist-score-10', p.get('minimalist_score_out_of_10'));
+  if (p.has('minimalist_center'))              _setEl('tog-minimalist-center', p.get('minimalist_center'));
   if (p.has('bar_style'))           { _setEl('cfg-bar-style',  p.get('bar_style')); _updateBarRatingRows(); }
   if (p.has('bar_accent'))            _setEl('cfg-bar-accent', p.get('bar_accent'));
   if (p.has('bar_append'))            _setEl('cfg-bar4-append', p.get('bar_append'));

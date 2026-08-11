@@ -573,6 +573,7 @@ from cache import (
     set_cached_rating,
     delete_cached_tmdb_metadata,
     prune_caches,
+    release_status_ttl_seconds,
     get_cache_stats,
     get_app_state,
     set_app_state,
@@ -815,8 +816,13 @@ class RequestConfig:
     #   0 = Year (Genre + year, rating as a colour-coded pip — the original look)
     #   1 = Rating (Genre | Score, score printed as text)
     #   2 = Year + Rating (Genre | Year | Score)
+    #   3 = Split (the mode-2 group split across both margins)
     minimalist_append_mode: int = 0
     minimalist_score_out_of_10: bool = False
+    # Centre the strip on the poster instead of hanging it off the right margin,
+    # so it sits under the logo (which is centred).  No effect under Split,
+    # whose two groups are defined by the margins they sit on.
+    minimalist_center: bool = False
 
     # Frosted bar (rating_display_mode == 4)
     bar_height_ratio:        float = 0.080
@@ -1179,6 +1185,7 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.minimalist_mode_font_y_offset = _f("minimalist_mode_font_y_offset", cfg.minimalist_mode_font_y_offset, 0.0, 1.0)
     cfg.minimalist_append_mode = _i("minimalist_append_mode", cfg.minimalist_append_mode, 0, 3)
     cfg.minimalist_score_out_of_10 = _b("minimalist_score_out_of_10", cfg.minimalist_score_out_of_10)
+    cfg.minimalist_center = _b("minimalist_center", cfg.minimalist_center)
 
     cfg.bar_height_ratio        = _f("bar_height_ratio",        cfg.bar_height_ratio,        0.04, 0.20)
     cfg.bar_font_size_ratio     = _f("bar_font_size_ratio",     cfg.bar_font_size_ratio,     0.15, 0.70)
@@ -2928,6 +2935,21 @@ def build_poster(
                     sep_x  = cursor - sep_w
                     ops.append((sep, sep_x))
                     cursor = sep_x - pip_gap
+
+            # Optional centre anchor.  The logo above is centred on the poster,
+            # so the metadata line can be too; the x offset then stops being a
+            # right margin and simply stops applying.  The loop above leaves
+            # `cursor` on the group's left edge, so its exact drawn extent is
+            # known here and the whole thing can just be slid into the middle —
+            # measured after layout rather than predicted before it, because the
+            # per-segment rounding above would otherwise push the result a pixel
+            # or two off centre.  Split is excluded: its two groups are DEFINED
+            # by the opposite margins they hang off, so there is no single group
+            # left to centre, and the option is hidden in the configurator.
+            if cfg.minimalist_center and cfg.minimalist_append_mode != 3 and ops:
+                _shift = round(width / 2 - (cursor + right_edge) / 2)
+                ops = [(op[0], op[1] + _shift, *op[2:]) for op in ops]
+
             # ...and the split mode's left-hand group the same way but forwards,
             # off the opposite margin, so the two groups sit symmetrically.
             cursor = width - right_edge
@@ -4724,15 +4746,26 @@ async def get_poster(
     # the settings it needs — AIOStreams URL + auth, SCRAPER_URL, or QUALICACHE_URL.
     _has_quality_source = quality_source_configured()
     _quality_cooldown_active = _has_quality_source and _quality_backoff_remaining() > 0
+
+    # The landscape renderer has no quality badges — build_landscape drops the
+    # tokens — so fetching them buys nothing and costs plenty: wait_for_quality
+    # would block every landscape request on a provider whose answer is thrown
+    # away, and a pending fetch would keep the composite out of the cache, so a
+    # slow source turned every request into a fresh render.
+    _is_landscape = rcfg.shape == "landscape"
+
     quality_needs_fetch = (
         rcfg.badge_display_mode in (1, 2, 4, 5)
         and not quality
         and cached_tokens is None
         and _has_quality_source
         and not _quality_cooldown_active
+        and not _is_landscape
     )
 
-    quality_pending = bool(_quality_cooldown_active and cached_tokens is None)
+    quality_pending = bool(
+        _quality_cooldown_active and cached_tokens is None and not _is_landscape
+    )
     if quality_needs_fetch and not rcfg.wait_for_quality:
         # Fire-and-forget background fetch — poster is served immediately
         # without badges; the cache will be warm on the next request.
@@ -5047,8 +5080,14 @@ async def get_poster(
         #   original — the highest-voted language-tagged one, title treatment
         #              already in the art, so is_textless stays False and every
         #              existing gate skips our logo for us
+        #
+        # Both modes fall back, and the fallback flips that: a title with no
+        # text-bearing backdrop lands on the neutral one (or the genre canvas),
+        # which carries no title, so is_textless goes True and our logo IS
+        # wanted.  is_textless — not the requested mode — is what the renderer
+        # must key off; deciding it from cfg.landscape_art downstream is how
+        # these fallbacks ended up rendering with no title at all.
         # ------------------------------------------------------------------
-        _is_landscape = rcfg.shape == "landscape"
         if _is_landscape:
             _ls_text_bd = tmdb_data.get("text_backdrop_path")
             if rcfg.landscape_art == "original":
@@ -5794,12 +5833,24 @@ async def get_poster(
         if (final_cache_key is not None and not quality_pending and not _detection_deferred
                 and not rating_failed and not _rating_backoff_active
                 and not _anime_art_missing):
+            # A composite must not outlive the facts baked into it.  Trending
+            # rank turns over daily; release status has its own tier (Cinema and
+            # Production re-check every day, Physical every 90).  Without this
+            # the render kept a "Cinema" sash — and the greyscale treatment that
+            # keys off the same field — for the flat 7-day composite TTL, long
+            # after the status row it came from had moved on.
             _ttl_override = None
             if discovery_meta is not None:
                 _sash_result = pick_sash(discovery_meta, _sash_priority)
                 if _sash_result and _sash_result[1] in ("trending", "trending_broad"):
                     _ttl_override = 86400
-                    
+            if _release_status:
+                _status_ttl = release_status_ttl_seconds(_release_status)
+                _ttl_override = (
+                    _status_ttl if _ttl_override is None
+                    else min(_ttl_override, _status_ttl)
+                )
+
             set_cached_final_poster(
                 final_cache_key,
                 img_bytes,

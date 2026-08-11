@@ -109,9 +109,9 @@ Default: `500`
 
 ### `DISABLE_COMPOSITE_CACHE`
 
-Disable composite poster caching entirely. Every request re-renders from scratch. Only use this during development — never in production.
+Disable composite poster caching entirely. Every request re-renders from scratch. Only use this during development — never in production. Set to `true` to disable; caching is on unless you do.
 
-Default: `true`
+Default: `false`
 
 ---
 
@@ -121,7 +121,7 @@ Default: `true`
 
 Optionally align steady-state warm cycles to a fixed local hour of day (e.g. "4" or "4:30"), instead of running exactly CACHE_WARM_INTERVAL_HOURS after the previous cycle. Useful for scheduling the OCR-heavy cycle off-peak. Uses the container's TZ (UTC if unset). Empty = old behaviour.
 
-Default: `4`
+Default: unset (interval-based scheduling)
 
 ### `CACHE_WARM_QUALITY_ENABLED`
 

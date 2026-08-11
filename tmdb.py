@@ -5,7 +5,9 @@ import hashlib
 import io
 import logging
 import re
+import time
 from datetime import date as _date, datetime as _datetime, time as _time
+from urllib.parse import urlsplit
 import httpx
 import numpy as np
 
@@ -1267,9 +1269,12 @@ _trending_inflight: dict[str, asyncio.Event] = {}
 # ---------------------------------------------------------------------------
 
 # An MDBList list page. The site serves the same list as JSON from a /json
-# suffix with no API key, so a pasted human URL can be used directly.
+# suffix with no API key, so a pasted human URL can be used directly.  The list
+# path is captured whole rather than to a fixed depth: truncating it would point
+# a deeper URL at a DIFFERENT list instead of failing, which is the one outcome
+# worse than not accepting it.
 _MDBLIST_LIST_RE = re.compile(
-    r"^https?://(?:www\.)?mdblist\.com/lists/[^/\s]+/[^/\s?#]+", re.I
+    r"^https?://(?:www\.)?mdblist\.com/lists/(?P<path>[^\s?#]+)", re.I
 )
 
 
@@ -1278,20 +1283,65 @@ def trending_source_url(media_type: str) -> str:
     return TRENDING_SOURCE_TV if media_type in ("tv", "series") else TRENDING_SOURCE_MOVIE
 
 
+def sanitise_source_url(url: str) -> str:
+    """Scheme, host and path only — safe to log.
+
+    A trending source is an arbitrary operator-supplied URL, so it can carry an
+    api key, a bearer token, a signed query, or basic-auth credentials in the
+    userinfo.  Only the query and the userinfo are dropped, which leaves enough
+    to identify which configured source a message is about.
+    """
+    try:
+        parsed = urlsplit(url.strip())
+    except ValueError:
+        return "<unparseable url>"
+    host = parsed.hostname or ""
+    if not host:
+        return "<invalid url>"
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    return f"{parsed.scheme}://{host}{parsed.path}"
+
+
 def trending_source_signature(media_type: str) -> str:
     """Identity of the trending source, so a cached snapshot from a different
-    one is discarded rather than served until its TTL lapses."""
+    one is discarded rather than served until its TTL lapses.
+
+    Hashed rather than stored verbatim: this value is written to the cache DB,
+    and the URL it identifies may contain credentials.  All the signature has to
+    do is differ when the configured source differs.
+    """
     url = _normalise_trending_url(trending_source_url(media_type))
-    return f"url:{url}" if url else "tmdb"
+    if not url:
+        return "tmdb"
+    return "url:" + hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
 
 
 def _normalise_trending_url(url: str) -> str:
-    """Rewrite an MDBList list page to its JSON export; leave anything else be."""
-    match = _MDBLIST_LIST_RE.match(url.strip())
+    """Rewrite an MDBList list page to its JSON export; leave anything else be.
+
+    The host is rebuilt canonically rather than echoed back: mdblist.com 301s
+    both ``http://`` and ``www.`` to ``https://mdblist.com``, and the fetch that
+    uses this needs the redirect not to matter.
+    """
+    url = url.strip()
+    match = _MDBLIST_LIST_RE.match(url)
     if not match:
-        return url.strip()
-    base = match.group(0).rstrip("/")
-    return base if base.endswith("/json") else f"{base}/json"
+        return url
+    path = match.group("path").strip("/")
+    if path.endswith("/json"):
+        path = path[: -len("/json")]
+    if not path:
+        return url
+    return f"https://mdblist.com/lists/{path}/json"
+
+
+# A source that just failed is not re-fetched on the next poster request: the
+# rank lookup runs per title, so without this one bad URL means one outbound
+# request (and one error line) per poster served.  Short enough that a blip
+# clears well inside the snapshot TTL.
+_TRENDING_SOURCE_RETRY_SECS = 300
+_trending_source_failed_at: dict[str, float] = {}
 
 
 def _parse_trending_payload(payload, media_type: str) -> list[str]:
@@ -1363,25 +1413,39 @@ async def fetch_trending_source_ids(
     if not url:
         return None
     resolved = _normalise_trending_url(url)
+    # Only ever log the sanitised form: the configured URL can carry a token or
+    # basic-auth credentials, and this runs on the request path.
+    shown = sanitise_source_url(resolved)
+
+    failed_at = _trending_source_failed_at.get(media_type)
+    if failed_at is not None and time.monotonic() - failed_at < _TRENDING_SOURCE_RETRY_SECS:
+        return []
+
     try:
-        logger.info(f"External API Call: trending source for {media_type} ({resolved})")
-        resp = await client.get(resolved, timeout=20.0)
+        logger.info(f"External API Call: trending source for {media_type} ({shown})")
+        # Redirects are followed here specifically: an operator pastes whatever
+        # their browser showed them, and a host that answers on a canonical
+        # form should not read as a broken config.
+        resp = await client.get(resolved, timeout=20.0, follow_redirects=True)
         resp.raise_for_status()
         ids = _parse_trending_payload(resp.json(), media_type)
     except Exception as exc:
+        _trending_source_failed_at[media_type] = time.monotonic()
         logger.error(
-            f"Trending source fetch failed ({resolved}): {exc} — "
+            f"Trending source fetch failed ({shown}): {exc} — "
             f"no trending data will be served for {media_type} this cycle"
         )
         return []
     if not ids:
+        _trending_source_failed_at[media_type] = time.monotonic()
         logger.error(
-            f"Trending source for {media_type} ({resolved}) yielded no usable "
+            f"Trending source for {media_type} ({shown}) yielded no usable "
             "TMDB ids — check the list is not empty and its entries carry "
             "numeric TMDB ids. No trending data will be served this cycle."
         )
         return []
-    logger.info(f"Trending source for {media_type}: {len(ids)} titles from {resolved}")
+    _trending_source_failed_at.pop(media_type, None)
+    logger.info(f"Trending source for {media_type}: {len(ids)} titles from {shown}")
     return ids
 
 
@@ -1409,11 +1473,18 @@ async def fetch_trending_rank(
             
             try:
                 # An operator-configured source replaces TMDB's list entirely.
-                # A configured-but-broken source returns [] and is cached as an
-                # empty snapshot, so the sash goes quiet for the cycle instead of
-                # falling back to TMDB and looking like the config worked.
+                # A configured-but-broken source serves no ranks, so the sash
+                # goes quiet instead of falling back to TMDB and looking like
+                # the config worked.
                 source_ids = await fetch_trending_source_ids(client, endpoint)
                 if source_ids is not None:
+                    if not source_ids:
+                        # Deliberately NOT cached.  Writing an empty snapshot
+                        # would pin "no trending" for the full TTL on what is
+                        # usually a transient fetch failure; the source's own
+                        # retry cooldown already stops this from re-fetching per
+                        # request.  Nothing to rank against this time round.
+                        return None
                     rankings = {
                         entry_id: position
                         for position, entry_id in enumerate(source_ids, start=1)
@@ -1502,6 +1573,20 @@ async def fetch_trending_candidates(
             fetch_trending_source_ids(client, "tv"),
         ),
     ))
+
+    # The ranking snapshot and the warm list are the same fetch.  Writing it here
+    # is what makes the scheduled refresh actually refresh the ranks: without it
+    # the warm cycle pulled the operator's list, threw the order away, and the
+    # next /poster request fetched the identical list again to rebuild it — and
+    # a title warmed this cycle could be rendered against yesterday's ranks.
+    # An empty list means the fetch failed; leave the existing snapshot alone.
+    for _media_type, _ids in sources.items():
+        if _ids:
+            set_cached_trending_snapshot(
+                _media_type,
+                {entry_id: position for position, entry_id in enumerate(_ids, start=1)},
+                trending_source_signature(_media_type),
+            )
 
     async def _source_or_tmdb(media_type: str, window: str) -> list[dict]:
         ids = sources.get(media_type)
@@ -1992,24 +2077,22 @@ async def fetch_release_status(
     Determine the current release status for the info sash.
 
     TV shows: mapped from the TMDB ``status`` field (already fetched as part
-    of poster metadata, so no extra API call is needed).
+    of poster metadata, so no extra API call is needed).  That mapping wins over
+    the cached row, which exists only for requests that arrive without a status.
 
     Movies: consults ``/movie/{id}/release_dates`` to determine whether the
     film is on physical media (Physical), digital/streaming (Streaming), still
-    theatrical-only (Cinema), or not yet released (Production).  Result is
-    cached for 7 days via the ``release_status_cache`` table.
+    theatrical-only (Cinema), or not yet released (Production).  The result is
+    cached in ``release_status_cache`` with a per-row deadline — the status tier,
+    or the film's next published release date when TMDB has told us one.
 
     Returns one of: "Physical" | "Streaming" | "Cinema" | "Production" |
                     "Returning" | "Ended" | "Cancelled" | None.
     """
     cache_key = f"{media_type}_{tmdb_id}"
-    cached = get_cached_release_status(cache_key)
-    if cached:
-        return cached
-
     result: str | None = None
-
     info: dict | None = None
+
     if media_type in ("tv", "series"):
         # No extra API call — map the TMDB status field we already have.
         # "Ended" and "Cancelled" both mean the show has fully aired; assume
@@ -2025,15 +2108,32 @@ async def fetch_release_status(
             "Cancelled":        "Cancelled",
             "Canceled":         "Cancelled",
         }
+        # Deliberately ahead of the cache read.  *tmdb_status* arrived with the
+        # poster metadata this request already fetched, so it is both free and
+        # newer than anything stored — and the cached value it replaces has a
+        # 60-90 day tier behind it, which is long enough for a revived show to
+        # sit at "Ended" for two months after TMDB says "Returning Series".
+        # The cache still covers the case where no status came with the request.
         result = _tv_map.get(tmdb_status or "")
-    else:
-        info = await fetch_movie_release_info(client, tmdb_id, tmdb_key, tmdb_status)
-        result = (info or {}).get("status")
+        cached = get_cached_release_status(cache_key)
+        if not result:
+            return cached
+        # Only written when it actually moved (or its row lapsed), so this stays
+        # a rare write rather than one per request.
+        if cached != result:
+            set_cached_release_status(cache_key, result)
+        return result
+
+    cached = get_cached_release_status(cache_key)
+    if cached:
+        return cached
+
+    info = await fetch_movie_release_info(client, tmdb_id, tmdb_key, tmdb_status)
+    result = (info or {}).get("status")
 
     if result:
         # Movies carry published dates, so the status row can be told exactly
-        # when it is next allowed to be wrong.  TV has no equivalent here, and
-        # falls back to the status tier.
+        # when it is next allowed to be wrong.
         set_cached_release_status(
             cache_key, result, _release_info_expiry(info) if info else None
         )

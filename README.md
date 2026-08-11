@@ -188,7 +188,7 @@ All configuration is done via environment variables. Copy `.env.example` to `.en
 | `PPOCR_WIDE_MIN_ASPECT` | `3.0` | Minimum width-to-height ratio for the lower-confidence title fallback |
 | `PPOCR_WIDE_MIN_AREA` | `0.01` | Minimum fraction of image area occupied by a lower-confidence title box |
 | `PPOCR_WIDE_MIN_Y` | `0.55` | Minimum vertical centre for the poster-only geometric fallback when OCR cannot read a centred title block |
-| `TEXTLESS_DETECTION_CONCURRENCY` | `2` | Independent PP-OCR sessions in a dedicated executor. Use `1` on small hosts; each extra session uses roughly 25-40 MB; capped at 4 and CPU count |
+| `TEXTLESS_DETECTION_CONCURRENCY` | `1` | Independent PP-OCR sessions in a dedicated executor. Sessions split the ONNX thread budget rather than adding to it, so raising this makes each scan slower and only pays off during a cold-cache sweep; each extra session costs roughly 50 MB. Capped at the container's real CPU budget |
 | `TEXTLESS_SCAN_TOP` | `0.08` | Fraction of poster height skipped from the top before counting text (covers top/middle/bottom titles; ignores top-edge logos) |
 | `BAKE_PPOCR_MODEL` | `true` | Build-time only. Bake the ~4.6MB PP-OCRv5 Mobile model into the image |
 | `DEFAULT_LOGO_LANGUAGE` | `en` | ISO language/locale code for title logos and poster language preference. `TMDB_LANGUAGE` is also accepted as a fallback alias. Region-qualified locales (`fr-fr`, `es-es`, `es-mx`, `pt-br`) select artwork tagged for that region only, falling back to English rather than to the bare language. |

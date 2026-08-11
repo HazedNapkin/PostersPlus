@@ -449,9 +449,13 @@ def _draw_title(image: Image.Image, title: str) -> int:
             consumed = len(" ".join(lines))
             remainder = title[consumed:].strip()
             if remainder:
-                lines[-1] = _ellipsize(draw, f"{lines[-1]} {remainder}", font, max_w)
-            else:
-                lines[-1] = _ellipsize(draw, lines[-1], font, max_w)
+                lines[-1] = f"{lines[-1]} {remainder}"
+            # Every line, not only the last.  The greedy pass above appends a
+            # word that is itself wider than the box untouched, and that word
+            # can land on any line — trimming the tail alone left the overlong
+            # one running off the canvas.  _ellipsize is a no-op on a line that
+            # already fits, so the lines that were fine stay untouched.
+            lines = [_ellipsize(draw, line, font, max_w) for line in lines]
         chosen = (font, lines or [_ellipsize(draw, title, font, max_w)], line_h)
 
     font, lines, line_h = chosen
@@ -546,19 +550,20 @@ def build_landscape(
 
     _draw_vignette(image, art, cfg)
 
-    # The upstream logo gate already passes logo=None for original art, but the
-    # text fallback is guarded here too: printing our own title over art that
-    # carries its own is the one failure this mode exists to avoid.
-    original_art = getattr(cfg, "landscape_art", "textless") == "original"
-
+    # What belongs in the logo slot was decided upstream, where the art actually
+    # got picked: a logo, or a title to stand in for one, or neither when the
+    # chosen art already carries its own title treatment.  Re-deriving that from
+    # cfg.landscape_art is what this used to do, and it was wrong in exactly the
+    # cases that matter — `original` falling back to the neutral backdrop or to
+    # the genre canvas passes a title precisely because that art has none, and
+    # suppressing it produced a completely untitled render.
     logo_height = 0
-    if not original_art:
-        if logo is not None:
-            logo_height = _draw_logo(image, logo)
-        elif fallback_title:
-            # Height comes back for the same reason it does from the logo: a
-            # badge stacked above needs something to clear.
-            logo_height = _draw_title(image, fallback_title)
+    if logo is not None:
+        logo_height = _draw_logo(image, logo)
+    elif fallback_title:
+        # Height comes back for the same reason it does from the logo: a
+        # badge stacked above needs something to clear.
+        logo_height = _draw_title(image, fallback_title)
 
     _draw_info_strip(image,
                      "" if cfg.hide_genre else (translate_genre(genre, cfg.logo_language) or genre),
@@ -571,10 +576,12 @@ def build_landscape(
             position = getattr(cfg, "landscape_badge_pos", "top_left")
             _draw_badge(image, translate_sash(label, cfg.logo_language).upper(),
                         position, art, cfg, logo_height=logo_height,
-                        # Only the original-art stacked slot lands inside the
-                        # band.  Stacked over a logo the badge often clears the
-                        # band's top edge, and the top corners are bare art, so
-                        # those keep the glass that makes them readable.
-                        plain=(original_art and position == "logo"))
+                        # Only a stacked badge with an empty logo slot lands
+                        # inside the band.  Stacked over a logo or a title it
+                        # often clears the band's top edge, and the top corners
+                        # are bare art, so those keep the glass that makes them
+                        # readable.  Keyed on what was drawn, not on the mode
+                        # that was asked for, for the same reason as above.
+                        plain=(logo_height == 0 and position == "logo"))
 
     return image

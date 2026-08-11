@@ -324,6 +324,13 @@ def init_db() -> None:
     for table in ("release_status_cache", "movie_release_info_cache"):
         _add_column_if_missing(conn, table, "expires_at", "INTEGER")
 
+    # Same treatment for composites.  A rendered poster is derived from facts
+    # that expire on their own schedules — a trending rank, a release status —
+    # and the flat COMPOSITE_CACHE_TTL let it outlive them.  The deadline is now
+    # computed at write time from whichever input expires soonest.  NULL rows
+    # predate the column and fall back to cached_at + TTL + jitter.
+    _add_column_if_missing(conn, "final_poster_cache", "expires_at", "INTEGER")
+
     # Which source a trending snapshot came from.  Without this, changing
     # TRENDING_SOURCE_* had no visible effect until the snapshot aged out on its
     # own — up to a day of an operator setting the variable, restarting, seeing
@@ -363,16 +370,24 @@ def _quality_ttl(release_date: str | None) -> int:
 # ---------------------------------------------------------------------------
 
 # L1: bounded in-memory LRU — most-recently-used composites served without
-# any SQLite read, keeping the hot set off the OS page cache.
-_composite_l1: OrderedDict[str, bytes] = OrderedDict()
+# any SQLite read, keeping the hot set off the OS page cache.  Each value is
+# (expires_at, jpeg_bytes): L1 carries the same deadline as its L2 row, because
+# an entry that never ages out in RAM would happily serve a Cinema sash for as
+# long as the LRU kept it resident.
+_composite_l1: OrderedDict[str, tuple[int, bytes]] = OrderedDict()
 _composite_l1_lock = threading.Lock()
 
 
 def composite_l1_stats() -> dict:
     with _composite_l1_lock:
         count = len(_composite_l1)
-        total_bytes = sum(len(v) for v in _composite_l1.values())
+        total_bytes = sum(len(data) for _expires_at, data in _composite_l1.values())
     return {"entries": count, "bytes": total_bytes}
+
+
+def _composite_expiry(cache_key: str, cached_at: float) -> float:
+    """Deadline for a composite row written before the expires_at column."""
+    return cached_at + COMPOSITE_CACHE_TTL + _ttl_jitter(cache_key, COMPOSITE_CACHE_TTL_JITTER)
 
 
 def get_cached_final_poster(cache_key: str) -> bytes | None:
@@ -381,26 +396,37 @@ def get_cached_final_poster(cache_key: str) -> bytes | None:
     Checks the in-memory LRU (L1) first; falls through to SQLite (L2) on miss
     and promotes the result to L1 so the next hit is served entirely from RAM.
     """
+    now = time.time()
+
     # L1: in-memory LRU — no disk I/O, no OS page-cache pressure
     if COMPOSITE_MEM_ENTRIES > 0:
         with _composite_l1_lock:
-            if cache_key in _composite_l1:
-                _composite_l1.move_to_end(cache_key)
-                return _composite_l1[cache_key]
+            entry = _composite_l1.get(cache_key)
+            if entry is not None:
+                expires_at, data = entry
+                if now <= expires_at:
+                    _composite_l1.move_to_end(cache_key)
+                    return data
+                # Nothing sweeps L1 on a timer, so an aged-out entry is dropped
+                # on the read that finds it and the L2 check below takes over.
+                del _composite_l1[cache_key]
 
     # L2: SQLite with TTL check
     try:
         row = get_db().execute(
-            "SELECT jpeg_bytes, cached_at FROM final_poster_cache WHERE cache_key = ?",
+            "SELECT jpeg_bytes, cached_at, expires_at FROM final_poster_cache WHERE cache_key = ?",
             (cache_key,),
         ).fetchone()
         if not row:
             return None
-        jpeg_bytes, cached_at = row
-        age_secs = time.time() - cached_at
-        effective_ttl = COMPOSITE_CACHE_TTL + _ttl_jitter(cache_key, COMPOSITE_CACHE_TTL_JITTER)
-        if age_secs > effective_ttl:
-            logger.info(f"Final poster cache expired for {cache_key} ({age_secs/86400:.1f}d old)")
+        jpeg_bytes, cached_at, expires_at = row
+        if expires_at is None:
+            expires_at = _composite_expiry(cache_key, cached_at)
+        if now > expires_at:
+            logger.info(
+                f"Final poster cache expired for {cache_key} "
+                f"({(now - cached_at)/86400:.1f}d old)"
+            )
             with _db_lock:
                 get_db().execute(
                     "DELETE FROM final_poster_cache WHERE cache_key = ?", (cache_key,)
@@ -411,7 +437,7 @@ def get_cached_final_poster(cache_key: str) -> bytes | None:
         # Promote to L1
         if COMPOSITE_MEM_ENTRIES > 0:
             with _composite_l1_lock:
-                _composite_l1[cache_key] = data
+                _composite_l1[cache_key] = (int(expires_at), data)
                 _composite_l1.move_to_end(cache_key)
                 while len(_composite_l1) > COMPOSITE_MEM_ENTRIES:
                     _composite_l1.popitem(last=False)
@@ -422,11 +448,24 @@ def get_cached_final_poster(cache_key: str) -> bytes | None:
 
 
 def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes, request_params: str = None, ttl_override: int = None) -> None:
-    """Store a fully composited JPEG poster into L1 (RAM) and L2 (SQLite)."""
+    """Store a fully composited JPEG poster into L1 (RAM) and L2 (SQLite).
+
+    *ttl_override* caps the lifetime, in seconds, for a render that depends on
+    something shorter-lived than COMPOSITE_CACHE_TTL — a trending rank, a
+    release status.  It is a cap on the jittered TTL rather than a value added
+    to it, so a one-day override really means one day and not one day plus up
+    to COMPOSITE_CACHE_TTL_JITTER.
+    """
+    now = int(time.time())
+    ttl = COMPOSITE_CACHE_TTL + _ttl_jitter(cache_key, COMPOSITE_CACHE_TTL_JITTER)
+    if ttl_override is not None:
+        ttl = min(ttl, ttl_override)
+    expires_at = now + int(ttl)
+
     # L1: always store the freshly-rendered composite so the next hit skips SQLite
     if COMPOSITE_MEM_ENTRIES > 0:
         with _composite_l1_lock:
-            _composite_l1[cache_key] = jpeg_bytes
+            _composite_l1[cache_key] = (expires_at, jpeg_bytes)
             _composite_l1.move_to_end(cache_key)
             while len(_composite_l1) > COMPOSITE_MEM_ENTRIES:
                 _composite_l1.popitem(last=False)
@@ -434,17 +473,13 @@ def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes, request_params: s
     # L2: persist to SQLite for warm restarts
     try:
         with _db_lock:
-            now = int(time.time())
-            cached_at = now
-            if ttl_override is not None and COMPOSITE_CACHE_TTL > ttl_override:
-                cached_at = now - (COMPOSITE_CACHE_TTL - ttl_override)
-                
             get_db().execute(
                 """
-                INSERT OR REPLACE INTO final_poster_cache (cache_key, jpeg_bytes, cached_at, request_params)
-                VALUES (?, ?, ?, ?)
+                INSERT OR REPLACE INTO final_poster_cache
+                    (cache_key, jpeg_bytes, cached_at, request_params, expires_at)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (cache_key, jpeg_bytes, cached_at, request_params),
+                (cache_key, jpeg_bytes, now, request_params, expires_at),
             )
             if COMPOSITE_MAX_ENTRIES > 0:
                 (count,) = get_db().execute(
@@ -580,10 +615,16 @@ def prune_caches() -> None:
         with _db_lock:
             db = get_db()
 
-            # Composites — fixed TTL in seconds
+            # Composites — per-row deadline (a render can be pinned to a
+            # trending rank or a release status that expires well before
+            # COMPOSITE_CACHE_TTL).  Rows predating the expires_at column fall
+            # back to the flat TTL plus the largest jitter any key can draw, so
+            # this never deletes one the read path would still call fresh.
             r = db.execute(
-                "DELETE FROM final_poster_cache WHERE cached_at < ?",
-                (now - COMPOSITE_CACHE_TTL,),
+                "DELETE FROM final_poster_cache WHERE "
+                "(expires_at IS NOT NULL AND expires_at < ?) OR "
+                "(expires_at IS NULL AND cached_at < ?)",
+                (now, now - COMPOSITE_CACHE_TTL - COMPOSITE_CACHE_TTL_JITTER // 2),
             )
             if r.rowcount:
                 logger.info(f"Pruned {r.rowcount} expired composite cache entries")
@@ -990,7 +1031,19 @@ def set_cached_trending_snapshot(
                 ),
             )
             get_db().commit()
-            
+
+        # A snapshot that went from populated to empty is an unreadable source
+        # far more often than a list that genuinely emptied overnight, and the
+        # diff below would flush every trending composite on the strength of it.
+        # Store it — a broken source should stay visible in the sash — but leave
+        # the composites for the next successful refresh to invalidate.
+        if not rankings and old_rankings:
+            logger.warning(
+                f"Trending snapshot for {media_type} is now empty (was "
+                f"{len(old_rankings)} entries) — not invalidating composites"
+            )
+            return
+
         # Invalidate final posters for items that changed trending rank or dropped out.
         changed_ids = set()
         for t_id, r in rankings.items():
@@ -1481,12 +1534,21 @@ _RELEASE_STATUS_TTL_FALLBACK_DAYS = 7
 _RELEASE_BOUNDARY_MAX_WAIT_DAYS = 14
 
 
+def release_status_ttl_seconds(status: str | None) -> int:
+    """How long a *status* is allowed to stand before it is re-checked.
+
+    Exported because a rendered composite is derived from this: a poster whose
+    sash or greyscale treatment came from a "Cinema" status must not outlive the
+    status row that produced it.
+    """
+    return _RELEASE_STATUS_TTL_DAYS.get(
+        status or "", _RELEASE_STATUS_TTL_FALLBACK_DAYS
+    ) * 86400
+
+
 def _release_row_expiry(status: str | None, cached_at: int) -> int:
     """Deadline for a release row that predates the expires_at column."""
-    days = _RELEASE_STATUS_TTL_DAYS.get(
-        status or "", _RELEASE_STATUS_TTL_FALLBACK_DAYS
-    )
-    return int(cached_at) + days * 86400
+    return int(cached_at) + release_status_ttl_seconds(status)
 
 
 def release_status_expiry(
@@ -1519,8 +1581,13 @@ def release_status_expiry(
     now = int(time.time() if now is None else now)
     future = sorted(ts for ts in (upcoming_dates or ()) if int(ts) > now)
     if future:
-        # +1 day so we re-check just after the date lands, never just before it.
-        deadline = int(future[0]) + 86400
+        # The boundary IS midnight at the start of the release day, and the
+        # status is computed against a local calendar date, so that instant is
+        # exactly when the row becomes wrong.  Expiring a day later — which this
+        # used to do — held a film at "Cinema" for the whole of its own digital
+        # release day.  The one-hour floor below stops a boundary that is
+        # minutes away from turning into a re-fetch loop.
+        deadline = int(future[0])
         deadline = min(deadline, now + _RELEASE_BOUNDARY_MAX_WAIT_DAYS * 86400)
     else:
         deadline = _release_row_expiry(status, now)
