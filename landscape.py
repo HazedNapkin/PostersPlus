@@ -37,6 +37,7 @@ for tmdb internals — to keep this module free of a circular import.
 """
 from __future__ import annotations
 
+import colorsys
 import os
 
 import numpy as np
@@ -92,6 +93,26 @@ _SEPARATOR       = (255, 255, 255, 90)
 _BORDER_RGB      = (0, 0, 0)
 _BORDER_RATIO    = 0.045  # hairline width as a fraction of pill height
 _BORDER_ALPHA    = 200
+_BORDER          = False  # borderless: the lift below is what separates it
+
+# Borderless lift.  The panel takes the colour of the art directly under it and
+# raises its Value, so it reads as a lit surface sitting above that art rather
+# than a hole cut into it.  Whichever of the two lifts is larger wins: the
+# multiplier carries mid-tones, the addend rescues near-black backings that a
+# multiplier would leave black.  Saturation eases off slightly — a lit surface
+# scatters, so holding full chroma reads as paint rather than glass.
+_LIFT_MUL        = 1.85
+_LIFT_ADD        = 0.34
+_LIFT_SAT        = 0.82
+_LIFT_OPACITY    = 0.86  # frost layer alpha; higher than the bordered pill used
+# Minimum luma the panel has to stand off its backing by, 0-255.  Lifting alone
+# cannot always reach it: a backing that is already bright has no headroom left,
+# and the panel lands on the same tone it is sitting on.  Where that happens the
+# same colour is taken downward instead — still the art's own hue, still no
+# border, just separated in the direction that had room.
+_MIN_SEPARATION  = 30.0
+_DROP_MUL        = 0.45
+_DROP_SUB        = 0.28
 
 # How the badge takes the poster's colour — see _glass_pill.  "match" holds the
 # art's own lightness, so a dark poster keeps a dark panel; True is the frosted
@@ -151,6 +172,34 @@ def _draw_vignette(image: Image.Image, art: Image.Image, cfg) -> None:
     image.paste(tinted, (0, band_y), mask=tinted)
 
 
+def _luma(rgb) -> float:
+    """Rec. 709 relative luminance, 0-255."""
+    r, g, b = rgb
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _lift(rgb: tuple[float, float, float], backing: float) -> tuple[int, int, int]:
+    """Move a colour off its backing in Value, keeping its hue.
+
+    Up by preference — a lit surface above the art is the effect being aimed at.
+    But a bright backing leaves nowhere to go: on a stadium crowd at luma 126 the
+    lifted panel measured 128, a separation of 2, which the eye reads as a hole
+    rather than a surface.  When the lift cannot clear ``_MIN_SEPARATION`` the
+    same hue is taken down instead, which always has room because the floor is
+    black.
+    """
+    h, s, v = colorsys.rgb_to_hsv(*(c / 255 for c in rgb))
+    s *= _LIFT_SAT
+
+    up = colorsys.hsv_to_rgb(h, s, min(1.0, max(v * _LIFT_MUL, v + _LIFT_ADD)))
+    up = tuple(c * 255 for c in up)
+    if _luma(up) - backing >= _MIN_SEPARATION:
+        return tuple(round(c) for c in up)
+
+    down = colorsys.hsv_to_rgb(h, s, max(0.0, min(v * _DROP_MUL, v - _DROP_SUB)))
+    return tuple(round(c * 255) for c in down)
+
+
 def _glass_pill(image: Image.Image, box: tuple[int, int, int, int],
                 art: Image.Image, cfg) -> tuple[int, int, int]:
     """Frosted pill carrying the poster's own colour.  Returns its ink colour.
@@ -181,8 +230,20 @@ def _glass_pill(image: Image.Image, box: tuple[int, int, int, int],
                .filter(ImageFilter.GaussianBlur(max(4, int(h * 0.35))))
                .convert("RGBA"))
 
-    tint = _frosted_tint(*dominant_frost_rgb(art),
-                         cfg.sash_badge_frost_saturation, _LANDSCAPE_FROST_MODE)
+    if _BORDER:
+        tint = _frosted_tint(*dominant_frost_rgb(art),
+                             cfg.sash_badge_frost_saturation, _LANDSCAPE_FROST_MODE)
+        opacity = cfg.sash_badge_frost_opacity
+    else:
+        # Borderless: the colour comes from the art *under the pill* rather than
+        # from the whole frame, because separation is a local judgement — what
+        # matters is the panel standing off the pixels it actually covers.
+        # dominant_frost_rgb's fallback handles the case where those pixels are
+        # too dark or too washed to carry a hue, borrowing the frame's instead.
+        backing = np.asarray(blurred.convert("RGB"), dtype=np.float32)
+        tint = _lift(dominant_frost_rgb(image.crop(box), fallback=art),
+                     _luma(backing.reshape(-1, 3).mean(axis=0)))
+        opacity = _LIFT_OPACITY
 
     # Cairo rasterises at ANTIALIAS_BEST; PIL's rounded_rectangle has no
     # antialiasing at all, which on a hairline border is the difference between
@@ -192,18 +253,19 @@ def _glass_pill(image: Image.Image, box: tuple[int, int, int, int],
     mask = _cairo_pill_mask(w, h, h // 2)
     blurred.putalpha(mask)
     frost = Image.new("RGBA", (w, h), (*tint, 0))
-    frost.putalpha(mask.point(lambda a: int(a * cfg.sash_badge_frost_opacity)))
+    frost.putalpha(mask.point(lambda a: int(a * opacity)))
     image.alpha_composite(Image.alpha_composite(blurred, frost), (x0, y0))
 
-    bw = max(1, round(h * _BORDER_RATIO))
-    iw, ih = max(1, w - 2 * bw), max(1, h - 2 * bw)
-    inner = Image.new("L", (w, h), 0)
-    inner.paste(_cairo_pill_mask(iw, ih, ih // 2), (bw, bw))
-    ring = ImageChops.subtract(mask, inner)
+    if _BORDER:
+        bw = max(1, round(h * _BORDER_RATIO))
+        iw, ih = max(1, w - 2 * bw), max(1, h - 2 * bw)
+        inner = Image.new("L", (w, h), 0)
+        inner.paste(_cairo_pill_mask(iw, ih, ih // 2), (bw, bw))
+        ring = ImageChops.subtract(mask, inner)
 
-    border = Image.new("RGBA", (w, h), (*_BORDER_RGB, 255))
-    border.putalpha(ring.point(lambda a: a * _BORDER_ALPHA // 255))
-    image.alpha_composite(border, (x0, y0))
+        border = Image.new("RGBA", (w, h), (*_BORDER_RGB, 255))
+        border.putalpha(ring.point(lambda a: a * _BORDER_ALPHA // 255))
+        image.alpha_composite(border, (x0, y0))
 
     return _frost_ink(*tint)
 
