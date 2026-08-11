@@ -80,8 +80,19 @@ _BADGE_FONT      = 0.042
 _BADGE_PAD_X     = 22
 _BADGE_PAD_Y     = 11
 
-_INFO_FONT       = 0.058  # "Genre | Year | Score" strip
-_TITLE_FONT      = 0.085  # fallback when no logo is available
+_INFO_FONT       = 0.058  # "Genre • Year • Score" strip
+
+# Fallback title, used when a title has no logo.  A range rather than a size:
+# it is set as large as fits and stepped down before anything is cut, because a
+# title is content and losing it should be the last resort.  Two lines are
+# allowed for the same reason — the logo box is 0.30 h and one line of text uses
+# about a third of that, so the second line is free and lands the text nearer the
+# optical weight of the logos it shares a row with.
+_TITLE_FONT_MAX  = 0.085
+_TITLE_FONT_MIN  = 0.050
+_TITLE_FONT_STEP = 0.005
+_TITLE_LINE      = 1.12   # line height as a multiple of font size
+_TITLE_MAX_LINES = 2
 
 _MUTED           = (255, 255, 255, 170)
 _SEPARATOR       = (255, 255, 255, 90)
@@ -339,18 +350,118 @@ def _draw_logo(image: Image.Image, logo: Image.Image) -> int:
     return drawn.height
 
 
-def _draw_title(image: Image.Image, title: str) -> None:
+def _wrap(draw, text: str, font, max_w: float, max_lines: int) -> list[str] | None:
+    """Greedy word wrap.  None when it will not fit in ``max_lines`` — including
+    the case of a single word too long for one line, which no wrap can help."""
+    words = text.split()
+    if not words:
+        return None
+    lines, current = [], words[0]
+    for word in words[1:]:
+        trial = f"{current} {word}"
+        if draw.textlength(trial, font=font) <= max_w:
+            current = trial
+        else:
+            lines.append(current)
+            current = word
+            if len(lines) >= max_lines:
+                return None
+    lines.append(current)
+    if any(draw.textlength(line, font=font) > max_w for line in lines):
+        return None
+    return lines
+
+
+def _ellipsize(draw, text: str, font, max_w: float) -> str:
+    """Trim to fit, measuring *with* the ellipsis so the result is inside max_w.
+
+    Whole words go first — "Marvelous…" reads as a title cut short, where the
+    character-wise version, "Marvelous Mornin…", reads as a bug.  Characters are
+    only cut when a single word is itself too long.
+    """
+    if draw.textlength(text, font=font) <= max_w:
+        return text
+    words = text.split()
+    while len(words) > 1:
+        words.pop()
+        candidate = " ".join(words) + "…"
+        if draw.textlength(candidate, font=font) <= max_w:
+            return candidate
+    stem = words[0] if words else text
+    while stem and draw.textlength(stem + "…", font=font) > max_w:
+        stem = stem[:-1]
+    return f"{stem}…" if stem else ""
+
+
+def _draw_title(image: Image.Image, title: str) -> int:
+    """Left-aligned, bottom-anchored text stand-in for a missing logo.
+
+    Shares the logo's box, and returns the drawn height the same way, so a badge
+    stacked above it clears the text rather than landing on it.
+    """
     width, height = image.size
-    font = _font("Inter-Bold.ttf", int(height * _TITLE_FONT))
     draw = ImageDraw.Draw(image)
+
     max_w = int(width * _LOGO_MAX_W)
-    text = title
-    while draw.textlength(text, font=font) > max_w and len(text) > 1:
-        text = text[:-1]
-    if text != title:
-        text = text.rstrip() + "…"
-    draw.text((int(width * _SIDE_PAD), int(height * _BASELINE)), text,
-              font=font, fill=(255, 255, 255, 245), anchor="ls")
+    band_top = height * (1 - _BAND_RATIO) + height * _BAND_CLEAR
+    max_h = min(int(height * _LOGO_MAX_H), int(height * _BASELINE - band_top))
+
+    # Largest size that fits, one line preferred over two at every size — a
+    # single line beside a logo reads better than a wrapped one a size larger.
+    chosen: tuple[object, list[str], int] | None = None
+    ratio = _TITLE_FONT_MAX
+    while ratio >= _TITLE_FONT_MIN - 1e-9 and chosen is None:
+        size = max(1, int(height * ratio))
+        font = _font("Inter-Bold.ttf", size)
+        line_h = round(size * _TITLE_LINE)
+        for count in range(1, _TITLE_MAX_LINES + 1):
+            if line_h * count > max_h:
+                break
+            lines = _wrap(draw, title, font, max_w, count)
+            if lines is not None and len(lines) == count:
+                chosen = (font, lines, line_h)
+                break
+        ratio -= _TITLE_FONT_STEP
+
+    if chosen is None:
+        # Nothing fits whole: set at the smallest size and cut the last line.
+        size = max(1, int(height * _TITLE_FONT_MIN))
+        font = _font("Inter-Bold.ttf", size)
+        line_h = round(size * _TITLE_LINE)
+        count = max(1, min(_TITLE_MAX_LINES, int(max_h // line_h) or 1))
+        lines = _wrap(draw, title, font, max_w, count) or []
+        if len(lines) < count:
+            # Rebuild greedily, keeping whatever fits, then trim the tail.
+            words, lines, current = title.split(), [], ""
+            for word in words:
+                trial = f"{current} {word}".strip()
+                if current and draw.textlength(trial, font=font) > max_w:
+                    lines.append(current)
+                    current = word
+                    if len(lines) == count:
+                        break
+                else:
+                    current = trial
+            if len(lines) < count and current:
+                lines.append(current)
+        lines = lines[:count]
+        if lines:
+            consumed = len(" ".join(lines))
+            remainder = title[consumed:].strip()
+            if remainder:
+                lines[-1] = _ellipsize(draw, f"{lines[-1]} {remainder}", font, max_w)
+            else:
+                lines[-1] = _ellipsize(draw, lines[-1], font, max_w)
+        chosen = (font, lines or [_ellipsize(draw, title, font, max_w)], line_h)
+
+    font, lines, line_h = chosen
+    baseline = int(height * _BASELINE)
+    for i, line in enumerate(reversed(lines)):
+        draw.text((int(width * _SIDE_PAD), baseline - i * line_h), line,
+                  font=font, fill=(255, 255, 255, 245), anchor="ls")
+
+    ascent = font.getmetrics()[0]
+    return line_h * (len(lines) - 1) + ascent
 
 
 def _draw_info_strip(image: Image.Image, genre_label: str,
@@ -445,7 +556,9 @@ def build_landscape(
         if logo is not None:
             logo_height = _draw_logo(image, logo)
         elif fallback_title:
-            _draw_title(image, fallback_title)
+            # Height comes back for the same reason it does from the logo: a
+            # badge stacked above needs something to clear.
+            logo_height = _draw_title(image, fallback_title)
 
     _draw_info_strip(image,
                      "" if cfg.hide_genre else (translate_genre(genre, cfg.logo_language) or genre),
