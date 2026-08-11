@@ -128,6 +128,8 @@ docker compose up -d --build
 
 All configuration is done via environment variables. Copy `.env.example` to `.env` and fill in your values. Every variable is optional - API keys can be omitted from the server and passed per-request as URL parameters instead.
 
+`.env.example` covers the settings most instances actually set. Tuning knobs — OCR thresholds, cache TTLs, logo sizing, anime providers, poster selection — live in [ADVANCED.md](ADVANCED.md), which you should not need to read to run PostersPlus.
+
 | Variable | Default | Description |
 |---|---|---|
 | `TMDB_API_KEY` | - | TMDB API key for poster/metadata fetching |
