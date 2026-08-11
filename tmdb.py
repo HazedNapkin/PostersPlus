@@ -4,7 +4,7 @@ import colorsys
 import hashlib
 import io
 import logging
-from datetime import date as _date
+from datetime import date as _date, datetime as _datetime, time as _time
 import httpx
 import numpy as np
 
@@ -49,6 +49,7 @@ from cache import (
     set_cached_release_status,
     get_cached_movie_release_info,
     set_cached_movie_release_info,
+    release_status_expiry,
 )
 
 from config import (
@@ -1690,6 +1691,23 @@ def _compute_movie_status_from_dates(
         return "Production"
 
 
+def _release_info_expiry(info: dict) -> int:
+    """Expiry for a release row, clamped to the title's next published date.
+
+    TMDB usually knows a film's digital date before the film gets there, so a
+    title "releasing soon" does not need predicting — it needs its cache row to
+    expire on the day it moves.  Anything already in the past is ignored: it is
+    baked into the status.
+    """
+    upcoming: list[int] = []
+    today = _date.today()
+    for key in ("theatrical_date", "digital_date", "physical_date"):
+        parsed = _parse_tmdb_date(info.get(key))
+        if parsed is not None and parsed > today:
+            upcoming.append(int(_datetime.combine(parsed, _time.min).timestamp()))
+    return release_status_expiry(info.get("status"), upcoming_dates=upcoming)
+
+
 async def fetch_movie_release_info(
     client: httpx.AsyncClient,
     tmdb_id: str,
@@ -1780,7 +1798,7 @@ async def fetch_movie_release_info(
         "physical_date": earliest_physical.isoformat() if earliest_physical else None,
         "digital_latest_date": latest_digital.isoformat() if latest_digital else None,
     }
-    set_cached_movie_release_info(cache_key, info)
+    set_cached_movie_release_info(cache_key, info, _release_info_expiry(info))
     return info
 
 
@@ -1833,6 +1851,7 @@ async def fetch_release_status(
 
     result: str | None = None
 
+    info: dict | None = None
     if media_type in ("tv", "series"):
         # No extra API call — map the TMDB status field we already have.
         # "Ended" and "Cancelled" both mean the show has fully aired; assume
@@ -1854,7 +1873,12 @@ async def fetch_release_status(
         result = (info or {}).get("status")
 
     if result:
-        set_cached_release_status(cache_key, result)
+        # Movies carry published dates, so the status row can be told exactly
+        # when it is next allowed to be wrong.  TV has no equivalent here, and
+        # falls back to the status tier.
+        set_cached_release_status(
+            cache_key, result, _release_info_expiry(info) if info else None
+        )
     return result
 
 

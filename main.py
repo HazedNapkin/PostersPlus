@@ -2242,6 +2242,7 @@ def build_poster(
     release_year: str | None = None,
     age_rating: int | None = None,
     no_poster: bool = False,
+    has_burned_in_text: bool = False,
 ) -> Image.Image:
 
     width, height = image.size
@@ -2314,7 +2315,10 @@ def build_poster(
     _poster_conf = 0.0
     _poster_tint2: tuple[float, float, float] | None = None
     _poster_support = np.zeros(_VIGNETTE_HUE_BINS)
-    if cfg.vignette_poster_color_top or cfg.vignette_poster_color_bottom:
+    # Skipped entirely on burned-in-text posters: neither band will be tinted
+    # (see _top_enabled below), so the hue histogram would be thrown away.
+    if ((cfg.vignette_poster_color_top or cfg.vignette_poster_color_bottom)
+            and not has_burned_in_text):
         _strict_tint, _poster_tint, _poster_conf = _vignette_dominant_rgb(_frost_color_src)
         if cfg.vignette_color_ramp and _poster_conf > 0:
             _poster_tint2 = _vignette_secondary_rgb(_frost_color_src, _poster_tint)
@@ -2337,8 +2341,20 @@ def build_poster(
     # black whenever one is shown; the bottom band is unaffected. Same reasoning as
     # the existing "Vignette Only On Sash" option, which also lets the sash decide
     # what the top of the poster does.
-    _top_enabled    = cfg.vignette_poster_color_top and not _sash_shown
-    _bottom_enabled = cfg.vignette_poster_color_bottom
+    #
+    # Burned-in text is the other case that has to opt out. The tinted vignette
+    # frosts the art it sits on (see _vignette_frost_band), and it knows to leave
+    # OUR logo alone because we composite that afterwards — but a poster whose
+    # title is baked into the artwork has no separate layer to protect, so the
+    # blur lands squarely on the title and smears it into an unreadable mush.
+    # Text detection has already told us which posters those are, so when it
+    # confirms burned-in text both bands fall back to plain black. Only a
+    # confirmed detection counts: has_burned_in_text is False both for a clean
+    # poster and for one that was never scanned, and an unscanned poster should
+    # keep the tint it has always had rather than be penalised for the gap.
+    _top_enabled    = (cfg.vignette_poster_color_top and not _sash_shown
+                       and not has_burned_in_text)
+    _bottom_enabled = cfg.vignette_poster_color_bottom and not has_burned_in_text
     # What colour a tinted band actually *paints*, kept for the frosted notch to
     # match if it is asked to (see _frost_tint below).  Read off the band's own
     # tint field at its deepest row rather than taken from the sample the hue was
@@ -3886,9 +3902,11 @@ _configurator_html: str | None = None
 # defaults until a manual Reset.
 _configurator_etag: str | None = None
 # "3": photoreal genre fallback backgrounds now render at the poster canvas size
-# rather than their native 1024x1536, so previously cached oversized composites
-# must be re-rendered.
-_RENDER_CACHE_VERSION = "3"
+#      rather than their native 1024x1536, so previously cached oversized
+#      composites must be re-rendered.
+# "4": the tinted vignette no longer frosts posters with confirmed burned-in
+#      text, so composites cached with a blurred-over title must be re-rendered.
+_RENDER_CACHE_VERSION = "4"
 _render_assets_signature = "startup"
 
 
@@ -5742,6 +5760,11 @@ async def get_poster(
             release_year=release_year,
             age_rating=age_rating,
             no_poster=is_no_poster,
+            # Only a confirmed True suppresses the tinted vignette. _suppress_overlay
+            # is None when the scan was skipped or unavailable, which must not be
+            # read as "clean" or as "has text" — it means we do not know, and an
+            # unknown poster keeps its existing appearance.
+            has_burned_in_text=(_suppress_overlay is True),
         )
 
         def _composite_and_encode() -> bytes:

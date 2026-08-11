@@ -316,6 +316,14 @@ def init_db() -> None:
     ):
         _add_column_if_missing(conn, "tmdb_metadata_cache", col, definition)
 
+    # Per-row expiry for the release caches.  Their TTL is no longer a single
+    # constant — it depends on the status and on when TMDB says the title next
+    # moves — so the deadline is computed at write time and stored.  Rows written
+    # before this column existed have expires_at NULL and fall back to the
+    # status-tiered TTL measured from cached_at (see _release_row_expiry).
+    for table in ("release_status_cache", "movie_release_info_cache"):
+        _add_column_if_missing(conn, table, "expires_at", "INTEGER")
+
     conn.commit()
 
 
@@ -605,18 +613,25 @@ def prune_caches() -> None:
             if r.rowcount:
                 logger.info(f"Pruned {r.rowcount} expired digital release cache entries")
 
-            release_status_cutoff = now - _RELEASE_STATUS_TTL_DAYS * 86400
-            r = db.execute(
-                "DELETE FROM release_status_cache WHERE cached_at < ?", (release_status_cutoff,)
-            )
-            if r.rowcount:
-                logger.info(f"Pruned {r.rowcount} expired release status cache entries")
-
-            r = db.execute(
-                "DELETE FROM movie_release_info_cache WHERE cached_at < ?", (release_status_cutoff,)
-            )
-            if r.rowcount:
-                logger.info(f"Pruned {r.rowcount} expired movie release info cache entries")
+            # Expiry is per-row now (see release_status_expiry), so prune on the
+            # stored deadline.  Rows predating the expires_at column are only
+            # dropped once they are past the LONGEST tier, since their real
+            # deadline depends on a status this SQL cannot evaluate — the read
+            # path tiers them correctly in the meantime and rewrites them with a
+            # deadline as soon as they are refreshed.
+            legacy_cutoff = now - max(_RELEASE_STATUS_TTL_DAYS.values()) * 86400
+            for table, label in (
+                ("release_status_cache",     "release status"),
+                ("movie_release_info_cache", "movie release info"),
+            ):
+                r = db.execute(
+                    f"DELETE FROM {table} WHERE "
+                    "(expires_at IS NOT NULL AND expires_at < ?) OR "
+                    "(expires_at IS NULL AND cached_at < ?)",
+                    (now, legacy_cutoff),
+                )
+                if r.rowcount:
+                    logger.info(f"Pruned {r.rowcount} expired {label} cache entries")
 
             detection_cutoff = now - 180 * 86400
             r = db.execute(
@@ -1410,42 +1425,127 @@ def add_digital_releases(entries: list[tuple[str, int]]) -> int:
 # ---------------------------------------------------------------------------
 # Cached separately from main metadata so the extra TMDB /release_dates call
 # only happens for users who have enabled the "release_status" sash slot.
-# TTL: 7 days — status changes slowly (Cinema → Streaming → BluRay is one-way).
+#
+# TTL is tiered by status rather than flat, because the progression
+# Cinema -> Streaming -> Physical is one-way and slows down as it goes.  A film
+# that reached Physical two years ago cannot change again, so re-asking TMDB
+# every week was pure waste; a film still in cinemas can flip to Streaming any
+# day TMDB publishes a digital date, and a weekly TTL meant showing "Cinema" for
+# up to a week after it was wrong.
+_RELEASE_STATUS_TTL_DAYS = {
+    # Terminal or near-terminal — nothing further to observe.
+    "Physical":   90,
+    "Cancelled":  90,
+    "Ended":      60,
+    # Can still gain a physical date, but not urgently.
+    "Streaming":  30,
+    # Actively awaiting a transition TMDB may publish at any time.
+    "Cinema":      1,
+    "Production":  1,
+    # TV that is still running: episode-level facts move faster than film status.
+    "Airing":      3,
+    "Returning":   3,
+}
+_RELEASE_STATUS_TTL_FALLBACK_DAYS = 7
+# Longest a row may sleep on the strength of a published future date.  TMDB
+# revises dates, and a film dated six months out should not go unverified that
+# whole time, so a known boundary buys at most this much quiet.
+_RELEASE_BOUNDARY_MAX_WAIT_DAYS = 14
 
-_RELEASE_STATUS_TTL_DAYS = 7
+
+def _release_row_expiry(status: str | None, cached_at: int) -> int:
+    """Deadline for a release row that predates the expires_at column."""
+    days = _RELEASE_STATUS_TTL_DAYS.get(
+        status or "", _RELEASE_STATUS_TTL_FALLBACK_DAYS
+    )
+    return int(cached_at) + days * 86400
+
+
+def release_status_expiry(
+    status: str | None,
+    *,
+    upcoming_dates: "list[int] | None" = None,
+    now: int | None = None,
+) -> int:
+    """When a cached release status should next be re-checked, as a unix time.
+
+    Starts from the status tier, then clamps to the soonest *future* release date
+    TMDB has already told us about.  That is what makes "releasing soon" cheap to
+    handle: we do not have to predict anything, because a film with a digital
+    date next Friday is a film whose status is known to change next Friday, so
+    the row is simply set to expire then.  A leak that beats the published date
+    is still invisible to us — that is what the r/movieleaks feed in
+    digital_release.py is for — but the *scheduled* transitions land on time.
+
+    ``upcoming_dates`` are unix timestamps of known future boundaries
+    (theatrical / digital / physical).  Past dates should not be passed; they
+    have already been folded into the status.
+
+    A known boundary REPLACES the tier rather than being min'd with it, which is
+    the whole point: the short "Cinema" tier exists because TMDB might publish a
+    digital date any day, so once it has published one there is nothing left to
+    poll for and the row can simply sleep until that date.  Min'ing the two
+    would keep re-asking daily for an answer we already have.  The wait is still
+    capped, because published dates do get revised.
+    """
+    now = int(time.time() if now is None else now)
+    future = sorted(ts for ts in (upcoming_dates or ()) if int(ts) > now)
+    if future:
+        # +1 day so we re-check just after the date lands, never just before it.
+        deadline = int(future[0]) + 86400
+        deadline = min(deadline, now + _RELEASE_BOUNDARY_MAX_WAIT_DAYS * 86400)
+    else:
+        deadline = _release_row_expiry(status, now)
+    # Never thrash: a boundary that is hours away still gets a minimum dwell.
+    return max(deadline, now + 3600)
 
 
 def get_cached_movie_release_info(cache_key: str) -> dict | None:
     """Return cached movie release info JSON, or None if absent / expired."""
     try:
         row = get_db().execute(
-            "SELECT info_json, cached_at FROM movie_release_info_cache WHERE cache_key = ?",
+            "SELECT info_json, cached_at, expires_at FROM movie_release_info_cache WHERE cache_key = ?",
             (cache_key,),
         ).fetchone()
         if not row:
             return None
-        info_json, cached_at = row
-        age_days = (time.time() - cached_at) / 86400
-        if age_days > _RELEASE_STATUS_TTL_DAYS:
-            logger.info(f"Movie release info cache expired for {cache_key} ({age_days:.1f}d old)")
+        info_json, cached_at, expires_at = row
+        info = json.loads(info_json or "{}")
+        # The stored status is only a snapshot; callers recompute it from the
+        # dates.  Tier this row's TTL off that same stored status so a finished
+        # title is not re-fetched weekly for dates that can no longer move.
+        deadline = expires_at or _release_row_expiry(info.get("status"), cached_at)
+        if time.time() > deadline:
+            logger.info(
+                f"Movie release info cache expired for {cache_key} "
+                f"({(time.time() - cached_at) / 86400:.1f}d old)"
+            )
             return None
-        return json.loads(info_json or "{}")
+        return info
     except Exception as exc:
         logger.error(f"Movie release info cache read error: {exc}")
         return None
 
 
-def set_cached_movie_release_info(cache_key: str, info: dict) -> None:
+def set_cached_movie_release_info(
+    cache_key: str, info: dict, expires_at: int | None = None
+) -> None:
     """Upsert richer TMDB movie release-date information."""
     try:
+        now = int(time.time())
+        if expires_at is None:
+            expires_at = _release_row_expiry(info.get("status"), now)
         with _db_lock:
             get_db().execute(
                 """
-                INSERT INTO movie_release_info_cache (cache_key, info_json, cached_at)
-                VALUES (?, ?, ?)
-                ON CONFLICT(cache_key) DO UPDATE SET info_json=excluded.info_json, cached_at=excluded.cached_at
+                INSERT INTO movie_release_info_cache (cache_key, info_json, cached_at, expires_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(cache_key) DO UPDATE SET
+                    info_json=excluded.info_json,
+                    cached_at=excluded.cached_at,
+                    expires_at=excluded.expires_at
                 """,
-                (cache_key, json.dumps(info), int(time.time())),
+                (cache_key, json.dumps(info), now, int(expires_at)),
             )
             get_db().commit()
     except Exception as exc:
@@ -1456,15 +1556,18 @@ def get_cached_release_status(cache_key: str) -> str | None:
     """Return the cached release status string, or None if absent / expired."""
     try:
         row = get_db().execute(
-            "SELECT status, cached_at FROM release_status_cache WHERE cache_key = ?",
+            "SELECT status, cached_at, expires_at FROM release_status_cache WHERE cache_key = ?",
             (cache_key,),
         ).fetchone()
         if not row:
             return None
-        status, cached_at = row
-        age_days = (time.time() - cached_at) / 86400
-        if age_days > _RELEASE_STATUS_TTL_DAYS:
-            logger.info(f"Release status cache expired for {cache_key} ({age_days:.1f}d old)")
+        status, cached_at, expires_at = row
+        deadline = expires_at or _release_row_expiry(status, cached_at)
+        if time.time() > deadline:
+            logger.info(
+                f"Release status cache expired for {cache_key} "
+                f"({(time.time() - cached_at) / 86400:.1f}d old, status={status})"
+            )
             return None
         return status
     except Exception as exc:
@@ -1472,17 +1575,29 @@ def get_cached_release_status(cache_key: str) -> str | None:
         return None
 
 
-def set_cached_release_status(cache_key: str, status: str) -> None:
-    """Upsert a release status entry."""
+def set_cached_release_status(
+    cache_key: str, status: str, expires_at: int | None = None
+) -> None:
+    """Upsert a release status entry.
+
+    *expires_at* comes from release_status_expiry() at the call site, which knows
+    the title's upcoming release dates; omitting it falls back to the status tier.
+    """
     try:
+        now = int(time.time())
+        if expires_at is None:
+            expires_at = _release_row_expiry(status, now)
         with _db_lock:
             get_db().execute(
                 """
-                INSERT INTO release_status_cache (cache_key, status, cached_at)
-                VALUES (?, ?, ?)
-                ON CONFLICT(cache_key) DO UPDATE SET status=excluded.status, cached_at=excluded.cached_at
+                INSERT INTO release_status_cache (cache_key, status, cached_at, expires_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(cache_key) DO UPDATE SET
+                    status=excluded.status,
+                    cached_at=excluded.cached_at,
+                    expires_at=excluded.expires_at
                 """,
-                (cache_key, status, int(time.time())),
+                (cache_key, status, now, int(expires_at)),
             )
             get_db().commit()
     except Exception as exc:
