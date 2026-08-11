@@ -324,6 +324,12 @@ def init_db() -> None:
     for table in ("release_status_cache", "movie_release_info_cache"):
         _add_column_if_missing(conn, table, "expires_at", "INTEGER")
 
+    # Which source a trending snapshot came from.  Without this, changing
+    # TRENDING_SOURCE_* had no visible effect until the snapshot aged out on its
+    # own — up to a day of an operator setting the variable, restarting, seeing
+    # the old rankings and concluding the feature was broken.
+    _add_column_if_missing(conn, "trending_cache", "source_sig", "TEXT")
+
     conn.commit()
 
 
@@ -916,11 +922,21 @@ def set_cached_quality(
 # All callers use get_cached_trending_snapshot / set_cached_trending_snapshot.
 # ---------------------------------------------------------------------------
 
-def get_cached_trending_snapshot(media_type: str) -> dict[str, int] | None:
+def get_cached_trending_snapshot(
+    media_type: str, source_sig: str | None = None
+) -> dict[str, int] | None:
+    """Cached rankings for *media_type*, or None if absent, stale, or from a
+    different source.
+
+    *source_sig* identifies where the snapshot came from (see
+    tmdb.trending_source_signature).  A mismatch is treated as expired so that
+    changing TRENDING_SOURCE_* takes effect on the next request rather than
+    whenever the day-long TTL happens to lapse.
+    """
     try:
         row = get_db().execute(
             """
-            SELECT rankings_json, cached_at
+            SELECT rankings_json, cached_at, source_sig
             FROM trending_cache
             WHERE media_type = ?
             """,
@@ -930,10 +946,17 @@ def get_cached_trending_snapshot(media_type: str) -> dict[str, int] | None:
         if not row:
             return None
 
-        rankings_json, cached_at = row
+        rankings_json, cached_at, stored_sig = row
         age_days = (time.time() - cached_at) / 86400
 
         if age_days > TRENDING_CACHE_DURATION:
+            return None
+
+        if source_sig is not None and (stored_sig or "") != source_sig:
+            logger.info(
+                f"Trending snapshot for {media_type} discarded: source changed "
+                f"({stored_sig or 'unset'!r} -> {source_sig!r})"
+            )
             return None
 
         return json.loads(rankings_json)
@@ -945,20 +968,25 @@ def get_cached_trending_snapshot(media_type: str) -> dict[str, int] | None:
 def set_cached_trending_snapshot(
     media_type: str,
     rankings: dict[str, int],
+    source_sig: str | None = None,
 ) -> None:
+    # Deliberately read without the signature: the point of this is to diff
+    # against whatever was there before so changed titles get invalidated, and a
+    # source switch changes the most ranks of all.
     old_rankings = get_cached_trending_snapshot(media_type) or {}
     try:
         with _db_lock:
             get_db().execute(
                 """
                 INSERT OR REPLACE INTO trending_cache
-                (media_type, rankings_json, cached_at)
-                VALUES (?, ?, ?)
+                (media_type, rankings_json, cached_at, source_sig)
+                VALUES (?, ?, ?, ?)
                 """,
                 (
                     media_type,
                     json.dumps(rankings),
                     int(time.time()),
+                    source_sig or "",
                 ),
             )
             get_db().commit()

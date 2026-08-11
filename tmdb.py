@@ -1278,6 +1278,13 @@ def trending_source_url(media_type: str) -> str:
     return TRENDING_SOURCE_TV if media_type in ("tv", "series") else TRENDING_SOURCE_MOVIE
 
 
+def trending_source_signature(media_type: str) -> str:
+    """Identity of the trending source, so a cached snapshot from a different
+    one is discarded rather than served until its TTL lapses."""
+    url = _normalise_trending_url(trending_source_url(media_type))
+    return f"url:{url}" if url else "tmdb"
+
+
 def _normalise_trending_url(url: str) -> str:
     """Rewrite an MDBList list page to its JSON export; leave anything else be."""
     match = _MDBLIST_LIST_RE.match(url.strip())
@@ -1386,14 +1393,15 @@ async def fetch_trending_rank(
 ) -> int | None:
 
     endpoint = "tv" if media_type in ("tv", "series") else "movie"
+    source_sig = trending_source_signature(endpoint)
 
-    snapshot = get_cached_trending_snapshot(endpoint)
+    snapshot = get_cached_trending_snapshot(endpoint, source_sig)
 
     if snapshot is None:
         inflight_event = _trending_inflight.get(endpoint)
         if inflight_event is not None:
             await inflight_event.wait()
-            snapshot = get_cached_trending_snapshot(endpoint)
+            snapshot = get_cached_trending_snapshot(endpoint, source_sig)
         
         if snapshot is None:
             event_to_set = asyncio.Event()
@@ -1434,7 +1442,7 @@ async def fetch_trending_rank(
                             rankings[str(item["id"])] = rank
                             rank += 1
 
-                set_cached_trending_snapshot(endpoint, rankings)
+                set_cached_trending_snapshot(endpoint, rankings, source_sig)
                 snapshot = rankings
             finally:
                 event_to_set.set()
