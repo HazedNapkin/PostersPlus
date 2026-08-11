@@ -85,6 +85,13 @@ _TITLE_FONT      = 0.085  # fallback when no logo is available
 _MUTED           = (255, 255, 255, 170)
 _SEPARATOR       = (255, 255, 255, 90)
 
+# The configurator's gold, so the badge reads as the same product.
+_GOLD            = (201, 168, 76)
+# Channel multipliers that push the smoked glass toward that gold without
+# lightening it — the gold's own channel ratio, eased back so the tint reads as
+# warmth rather than as a yellow filter.
+_GLASS_TINT      = np.array([1.0, 0.91, 0.66], dtype=np.float32)
+
 
 def _font(name: str, size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(os.path.join(_FONTS_DIR, name), max(1, size))
@@ -139,11 +146,15 @@ def _draw_vignette(image: Image.Image, art: Image.Image, cfg) -> None:
 
 
 def _glass_pill(image: Image.Image, box: tuple[int, int, int, int]) -> None:
-    """Frosted rounded rect, sampled from whatever it is sitting on.
+    """Smoked-gold glass, sampled from whatever it is sitting on.
 
     Adapts to its backing: a bright region gets a darker glass so the label
     keeps contrast without needing a second visible gradient behind it.  That
     is what lets the badge survive a top corner we do not control.
+
+    Deliberately dark enough to read as privacy glass rather than as a frosted
+    highlight — the art stays legible through it as shape and movement, not as
+    detail, which is what keeps a white label on top readable over anything.
     """
     x0, y0, x1, y1 = box
     w, h = x1 - x0, y1 - y0
@@ -156,15 +167,15 @@ def _glass_pill(image: Image.Image, box: tuple[int, int, int, int]) -> None:
     luma = float((arr[:, :, 0] * .2126 + arr[:, :, 1] * .7152 + arr[:, :, 2] * .0722).mean())
     # Bright backing -> pull down hard; dark backing -> lift slightly so the
     # pill reads as glass rather than as a hole.
-    gain, lift = (0.55, 8.0) if luma > 120 else (0.85, 26.0)
-    arr = np.clip(arr * gain + lift, 0, 255)
+    gain, lift = (0.30, 4.0) if luma > 120 else (0.48, 12.0)
+    arr = np.clip(arr * gain + lift, 0, 255) * _GLASS_TINT
 
-    glass = Image.fromarray(arr.astype(np.uint8)).convert("RGBA")
+    glass = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("RGBA")
     mask = Image.new("L", (w, h), 0)
     ImageDraw.Draw(mask).rounded_rectangle([0, 0, w - 1, h - 1], h // 2, fill=255)
     glass.putalpha(mask)
     image.alpha_composite(glass, (x0, y0))
-    ImageDraw.Draw(image).rounded_rectangle(box, h // 2, outline=(255, 255, 255, 56), width=2)
+    ImageDraw.Draw(image).rounded_rectangle(box, h // 2, outline=(*_GOLD, 200), width=2)
 
 
 def _draw_badge(image: Image.Image, text: str, position: str,
@@ -284,7 +295,7 @@ def _draw_info_strip(image: Image.Image, cfg, genre_label: str,
         parts.append((str(release_year), _MUTED))
     parts.append((score_text, score_fill))
 
-    sep = "  |  "
+    sep = "  •  "
     sep_w = draw.textlength(sep, font=font)
 
     def total(items) -> float:
