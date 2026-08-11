@@ -4,6 +4,7 @@ import colorsys
 import hashlib
 import io
 import logging
+import re
 from datetime import date as _date, datetime as _datetime, time as _time
 import httpx
 import numpy as np
@@ -67,6 +68,9 @@ from config import (
     TMDB_POSTER_MIN_VOTES,
     TMDB_POSTER_MAX_SCORE_DROP,
     CINEMA_MAX_AGE_YEARS,
+    TRENDING_SOURCE_MOVIE,
+    TRENDING_SOURCE_TV,
+    TRENDING_SOURCE_MAX_ITEMS,
 )
 
 
@@ -1258,6 +1262,122 @@ async def fetch_logo(
 
 _trending_inflight: dict[str, asyncio.Event] = {}
 
+# ---------------------------------------------------------------------------
+# Operator-supplied trending sources
+# ---------------------------------------------------------------------------
+
+# An MDBList list page. The site serves the same list as JSON from a /json
+# suffix with no API key, so a pasted human URL can be used directly.
+_MDBLIST_LIST_RE = re.compile(
+    r"^https?://(?:www\.)?mdblist\.com/lists/[^/\s]+/[^/\s?#]+", re.I
+)
+
+
+def trending_source_url(media_type: str) -> str:
+    """Configured trending source for *media_type*, or "" when unset."""
+    return TRENDING_SOURCE_TV if media_type in ("tv", "series") else TRENDING_SOURCE_MOVIE
+
+
+def _normalise_trending_url(url: str) -> str:
+    """Rewrite an MDBList list page to its JSON export; leave anything else be."""
+    match = _MDBLIST_LIST_RE.match(url.strip())
+    if not match:
+        return url.strip()
+    base = match.group(0).rstrip("/")
+    return base if base.endswith("/json") else f"{base}/json"
+
+
+def _parse_trending_payload(payload, media_type: str) -> list[str]:
+    """Extract an ordered list of TMDB ids from a trending payload.
+
+    Handles the two shapes documented on TRENDING_SOURCE_MOVIE: TMDB's
+    ``{"results": [...]}`` (ranked by array order) and MDBList's bare array
+    (ranked by its own ``rank`` field, which is ascending but not contiguous —
+    real lists step 1000, 2000, 3000).
+
+    MDBList rows carry ``mediatype`` ("movie"/"show"), so a mixed list is
+    filtered down to the type being asked for.  TMDB's own multi-type payloads
+    use the same key with the same values, so one filter covers both.
+    """
+    if isinstance(payload, dict):
+        items = payload.get("results")
+        ranked = False
+    else:
+        items = payload
+        ranked = True
+    if not isinstance(items, list):
+        return []
+
+    wanted = "show" if media_type in ("tv", "series") else "movie"
+    rows: list[tuple[float, str]] = []
+    for position, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("mediatype") or item.get("media_type") or "").lower()
+        # "tv" appears where TMDB is the source, "show" where MDBList is.
+        if kind:
+            if kind in ("tv", "series"):
+                kind = "show"
+            if kind != wanted:
+                continue
+        raw = item.get("id", item.get("tmdb_id", item.get("tmdbid")))
+        # Reject anything that is not a bare TMDB id — an IMDb id here means the
+        # payload is keyed on a different id space and silently importing it
+        # would produce a snapshot that never matches a request.
+        if raw is None or not str(raw).isdigit():
+            continue
+        order = item.get("rank") if ranked else None
+        rows.append((float(order) if isinstance(order, (int, float)) else position, str(raw)))
+
+    rows.sort(key=lambda row: row[0])
+    seen: set[str] = set()
+    out: list[str] = []
+    for _order, tmdb_id in rows:
+        if tmdb_id not in seen:
+            seen.add(tmdb_id)
+            out.append(tmdb_id)
+        if len(out) >= TRENDING_SOURCE_MAX_ITEMS:
+            break
+    return out
+
+
+async def fetch_trending_source_ids(
+    client: httpx.AsyncClient,
+    media_type: str,
+) -> list[str] | None:
+    """Ordered TMDB ids from the operator's trending source.
+
+    Returns None when no source is configured (caller falls back to TMDB), and
+    an empty list when a source IS configured but could not be used — the caller
+    must treat that as "no trending this cycle" rather than reverting to TMDB,
+    so a broken config is visible instead of silently working.
+    """
+    url = trending_source_url(media_type)
+    if not url:
+        return None
+    resolved = _normalise_trending_url(url)
+    try:
+        logger.info(f"External API Call: trending source for {media_type} ({resolved})")
+        resp = await client.get(resolved, timeout=20.0)
+        resp.raise_for_status()
+        ids = _parse_trending_payload(resp.json(), media_type)
+    except Exception as exc:
+        logger.error(
+            f"Trending source fetch failed ({resolved}): {exc} — "
+            f"no trending data will be served for {media_type} this cycle"
+        )
+        return []
+    if not ids:
+        logger.error(
+            f"Trending source for {media_type} ({resolved}) yielded no usable "
+            "TMDB ids — check the list is not empty and its entries carry "
+            "numeric TMDB ids. No trending data will be served this cycle."
+        )
+        return []
+    logger.info(f"Trending source for {media_type}: {len(ids)} titles from {resolved}")
+    return ids
+
+
 async def fetch_trending_rank(
     client: httpx.AsyncClient,
     tmdb_id: str,
@@ -1280,28 +1400,39 @@ async def fetch_trending_rank(
             _trending_inflight[endpoint] = event_to_set
             
             try:
-                logger.info("External API Call: Refreshing TMDB trending snapshot (pages 1-5 concurrent)")
+                # An operator-configured source replaces TMDB's list entirely.
+                # A configured-but-broken source returns [] and is cached as an
+                # empty snapshot, so the sash goes quiet for the cycle instead of
+                # falling back to TMDB and looking like the config worked.
+                source_ids = await fetch_trending_source_ids(client, endpoint)
+                if source_ids is not None:
+                    rankings = {
+                        entry_id: position
+                        for position, entry_id in enumerate(source_ids, start=1)
+                    }
+                else:
+                    logger.info("External API Call: Refreshing TMDB trending snapshot (pages 1-5 concurrent)")
 
-                async def _fetch_page(page: int) -> list[dict]:
-                    resp = await client.get(
-                        f"https://api.themoviedb.org/3/trending/{endpoint}/day",
-                        params={"api_key": tmdb_key, "page": page},
-                    )
-                    resp.raise_for_status()
-                    return resp.json().get("results", [])
+                    async def _fetch_page(page: int) -> list[dict]:
+                        resp = await client.get(
+                            f"https://api.themoviedb.org/3/trending/{endpoint}/day",
+                            params={"api_key": tmdb_key, "page": page},
+                        )
+                        resp.raise_for_status()
+                        return resp.json().get("results", [])
 
-                try:
-                    pages = await asyncio.gather(*(_fetch_page(page) for page in range(1, 6)))
-                except Exception as exc:
-                    logger.error(f"TMDB trending fetch error: {exc}")
-                    return None
+                    try:
+                        pages = await asyncio.gather(*(_fetch_page(page) for page in range(1, 6)))
+                    except Exception as exc:
+                        logger.error(f"TMDB trending fetch error: {exc}")
+                        return None
 
-                rankings: dict[str, int] = {}
-                rank = 1
-                for results in pages:
-                    for item in results:
-                        rankings[str(item["id"])] = rank
-                        rank += 1
+                    rankings = {}
+                    rank = 1
+                    for results in pages:
+                        for item in results:
+                            rankings[str(item["id"])] = rank
+                            rank += 1
 
                 set_cached_trending_snapshot(endpoint, rankings)
                 snapshot = rankings
@@ -1353,11 +1484,30 @@ async def fetch_trending_candidates(
                 results.append({"tmdb_id": str(item["id"]), "media_type": media_type})
         return results
 
+    # Resolve each media type's custom source once. The day/week split is a TMDB
+    # concept; a custom source is a single list, so it stands in for the "day"
+    # pass and the "week" pass contributes nothing rather than duplicating it.
+    sources = dict(zip(
+        ("movie", "tv"),
+        await asyncio.gather(
+            fetch_trending_source_ids(client, "movie"),
+            fetch_trending_source_ids(client, "tv"),
+        ),
+    ))
+
+    async def _source_or_tmdb(media_type: str, window: str) -> list[dict]:
+        ids = sources.get(media_type)
+        if ids is None:
+            return await _fetch_list(media_type, window)
+        if window != "day":
+            return []
+        return [{"tmdb_id": tmdb_id, "media_type": media_type} for tmdb_id in ids]
+
     lists = await asyncio.gather(
-        _fetch_list("movie", "day"),
-        _fetch_list("tv", "day"),
-        _fetch_list("movie", "week"),
-        _fetch_list("tv", "week"),
+        _source_or_tmdb("movie", "day"),
+        _source_or_tmdb("tv", "day"),
+        _source_or_tmdb("movie", "week"),
+        _source_or_tmdb("tv", "week"),
     )
 
     # Round-robin merge so the result mixes movie/tv and prioritises the

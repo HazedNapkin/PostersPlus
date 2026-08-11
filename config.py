@@ -244,6 +244,41 @@ TRENDING_FETCH_TIME          = os.environ.get("TRENDING_FETCH_TIME", "").strip()
 TRENDING_FETCH_TIMEZONE      = os.environ.get("TRENDING_FETCH_TIMEZONE", "UTC").strip()
 TRENDING_FETCH_COUNT         = int(os.environ.get("TRENDING_FETCH_COUNT", "40"))
 TRENDING_BROAD_FETCH_COUNT   = int(os.environ.get("TRENDING_BROAD_FETCH_COUNT", "100"))
+
+# Where "trending" comes from.  Unset (the default) means TMDB's own global
+# trending endpoint, which is US-weighted and not configurable.  Point these at a
+# URL instead and that list becomes the trending set for its media type — both
+# the sash's ranking and the titles the cache warmer pre-renders.
+#
+# Two payload shapes are accepted, which between them cover almost everything:
+#
+#   TMDB-shaped   {"results": [{"id": 1061474}, ...]}   ranked by array order.
+#                 Any TMDB endpoint works, which is how you get a regional list
+#                 TMDB's /trending cannot express:
+#                   https://api.themoviedb.org/3/discover/movie
+#                     ?api_key=KEY&region=FR&sort_by=popularity.desc
+#
+#   MDBList       a plain array of {"id": <tmdb id>, "rank": n, "mediatype": ...}
+#                 ranked by "rank".  Paste the human list URL and it is converted
+#                 for you — https://mdblist.com/lists/snoak/trending-movies
+#                 becomes .../json automatically, and needs no MDBList API key.
+#                 MDBList aggregates Trakt, Letterboxd, IMDb and others, so this
+#                 is the practical way to seed trending from a service PostersPlus
+#                 does not integrate with directly.
+#
+# The list's own order is the ranking; PostersPlus does not re-sort it. Nothing
+# validates that the list is *actually* trending data — a list of your favourite
+# westerns will be accepted and treated as the trending set.
+#
+# If a configured source fails (unreachable, malformed, or empty after parsing)
+# the error is logged and NO trending data is served for that media type on that
+# refresh, so the trending sash disappears rather than silently reverting to
+# TMDB's list and looking like it worked.
+TRENDING_SOURCE_MOVIE        = os.environ.get("TRENDING_SOURCE_MOVIE", "").strip()
+TRENDING_SOURCE_TV           = os.environ.get("TRENDING_SOURCE_TV", "").strip()
+# Cap on how many entries are taken from a custom source, so a 10k-item list
+# cannot balloon the snapshot held in memory and in trending_cache.
+TRENDING_SOURCE_MAX_ITEMS    = max(1, int(os.environ.get("TRENDING_SOURCE_MAX_ITEMS", "500")))
 # Quality (AIOStreams) TTL — separate from rating TTL because stream availability
 # for older titles is very stable.  New content keeps the 1-day window so fresh
 # encodes are picked up quickly; old content is cached for much longer.
