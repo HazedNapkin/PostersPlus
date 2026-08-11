@@ -54,6 +54,8 @@ from cache import (
 from config import (
     POSTER_WIDTH,
     POSTER_HEIGHT,
+    LANDSCAPE_WIDTH,
+    LANDSCAPE_HEIGHT,
     LOGO_MAX_W_RATIO,
     LOGO_MAX_H_RATIO,
     LOGO_BOTTOM_RATIO,
@@ -888,6 +890,59 @@ async def fetch_backdrop_image(
     image = await asyncio.get_running_loop().run_in_executor(
         None, _crop_and_normalise_backdrop, image, tmdb_id, avoid_text
     )
+
+    buf = io.BytesIO()
+    image.convert("RGB").save(buf, format="JPEG", quality=92)
+    set_cached_tmdb_poster(cache_key, buf.getvalue())
+
+    return image
+
+
+def normalise_landscape(image: Image.Image) -> Image.Image:
+    """Fit-cover an image to the landscape canvas.
+
+    Backdrops are already 16:9, so this is effectively a resize; the cover maths
+    is kept so the odd 1.85:1 or 2:1 source is centred rather than squashed.
+    """
+    target_w, target_h = LANDSCAPE_WIDTH, LANDSCAPE_HEIGHT
+    src_w, src_h = image.size
+    scale = max(target_w / src_w, target_h / src_h)
+    new_w, new_h = round(src_w * scale), round(src_h * scale)
+    image = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+    left = round((new_w - target_w) / 2)
+    top  = round((new_h - target_h) / 2)
+    return image.crop((left, top, left + target_w, top + target_h))
+
+
+async def fetch_landscape_image(
+    client: httpx.AsyncClient,
+    tmdb_id: str,
+    backdrop_path: str,
+) -> Image.Image:
+    """
+    Fetch a TMDB backdrop and fit it to the landscape canvas, uncropped.
+
+    The portrait pipeline's expensive part — saliency and face detection to pick
+    a 2:3 strip out of a 16:9 frame — has nothing to do here: the source and the
+    target are the same shape, so the whole crop stage is skipped.
+
+    Cached separately from the portrait backdrop crop of the same asset; the two
+    are different images and must not share a key.
+    """
+    cache_key = f"landscape_{tmdb_id}_{backdrop_path.strip('/')}_{LANDSCAPE_WIDTH}x{LANDSCAPE_HEIGHT}"
+    cached_bytes = get_cached_tmdb_poster(cache_key)
+
+    if cached_bytes:
+        logger.info(f"TMDB landscape cache hit for {tmdb_id}")
+        image = Image.open(io.BytesIO(cached_bytes)).convert("RGBA")
+        if image.size != (LANDSCAPE_WIDTH, LANDSCAPE_HEIGHT):
+            image = normalise_landscape(image)
+        return image
+
+    logger.info(f"External API Call: Requested landscape backdrop from TMDB for {tmdb_id}")
+    img_resp = await client.get(f"https://image.tmdb.org/t/p/w1280{backdrop_path}")
+    img_resp.raise_for_status()
+    image = normalise_landscape(Image.open(io.BytesIO(img_resp.content)).convert("RGBA"))
 
     buf = io.BytesIO()
     image.convert("RGB").save(buf, format="JPEG", quality=92)

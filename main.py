@@ -552,6 +552,7 @@ async def _background_quality_fetch(
 
 # Local imports
 from age_badge import draw_quality_age_badge, draw_tier_bar, _score_points
+from landscape import build_landscape
 from awards import _dominant_cluster, _is_skin_tone, dominant_frost_rgb
 from awards import FETCH_FAILED, _RateLimited, draw_award_badge, draw_award_sash, parse_mdblist_awards
 from i18n import load_languages, translate_genre, translate_sash
@@ -609,7 +610,7 @@ from ratings import (
     _score_color_alt,
     _score_color_metal,
 )
-from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_trending_rank, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, TEXT_FORWARD_PRIORITIES as _TEXT_FORWARD_LOGO_PRIORITIES
+from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_trending_rank, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, TEXT_FORWARD_PRIORITIES as _TEXT_FORWARD_LOGO_PRIORITIES
 
 # Logo priorities that consult the secondary preferred language ("custom").
 # Elsewhere the secondary language is inert and must be kept out of the image
@@ -901,6 +902,19 @@ class RequestConfig:
     bottom_gradient_opacity: float | None = None
     bottom_gradient_height: float | None = None
     hide_genre: bool = False
+    # --- Landscape (16:9) rendering -------------------------------------
+    # "portrait" (default, unchanged) | "landscape".  Landscape is a separate
+    # renderer, not a variant of the portrait layout — see landscape.py.
+    shape: str = "portrait"
+    # Which art the landscape renderer draws on:
+    #   "textless" — the language-neutral backdrop, with our logo composited
+    #   "original" — the highest-voted language-tagged backdrop (title treatment
+    #                already baked in), served as-is with no logo of ours
+    landscape_art: str = "textless"
+    # Where the info badge sits: "top_left" | "top_right" | "logo".  "logo"
+    # stacks it above the logo in textless mode; in original-art mode there is
+    # no logo of ours to stack on, so it takes the bottom-left slot itself.
+    landscape_badge_pos: str = "top_left"
     score_color_mode: int = 2
     score_custom_palette: CustomScorePalette | None = None
     sash_badge: bool = False              # legacy; superseded by sash_mode (kept for back-compat parsing)
@@ -1091,6 +1105,16 @@ def build_request_config(params: dict) -> RequestConfig:
         try: cfg.bottom_gradient_height = float(val_bgh)
         except ValueError: pass
     cfg.hide_genre = _b("hide_genre", cfg.hide_genre)
+
+    _shape = (params.get("shape") or "").strip().lower()
+    if _shape in ("portrait", "landscape"):
+        cfg.shape = _shape
+    _ls_art = (params.get("landscape_art") or "").strip().lower()
+    if _ls_art in ("textless", "original"):
+        cfg.landscape_art = _ls_art
+    _ls_badge = (params.get("badge_pos") or "").strip().lower()
+    if _ls_badge in ("top_left", "top_right", "logo"):
+        cfg.landscape_badge_pos = _ls_badge
 
     cfg.sash_badge              = _b("sash_badge",              cfg.sash_badge)
     # sash_mode supersedes the legacy sash_badge bool; fall back to it for old
@@ -2060,7 +2084,15 @@ _GENRE_LABEL_OVERRIDES: dict[str, str] = {
 }
 
 
-def _make_fallback_canvas(genre_ids: list[int] | None = None) -> Image.Image:
+def _make_landscape_canvas(genre_ids: list[int] | None = None) -> Image.Image:
+    """The no-art canvas at 16:9.  Same genre tint and gradient as the portrait
+    one — only the canvas it is painted on differs."""
+    return _make_fallback_canvas(genre_ids,
+                                 size=(_cfg.LANDSCAPE_WIDTH, _cfg.LANDSCAPE_HEIGHT))
+
+
+def _make_fallback_canvas(genre_ids: list[int] | None = None,
+                          size: tuple[int, int] | None = None) -> Image.Image:
     """
     Dark gradient canvas served when a title has no poster art on TMDB.
 
@@ -2081,7 +2113,7 @@ def _make_fallback_canvas(genre_ids: list[int] | None = None) -> Image.Image:
                     break
 
     r_mult, g_mult, b_mult = tint
-    W, H = _cfg.POSTER_WIDTH, _cfg.POSTER_HEIGHT
+    W, H = size or (_cfg.POSTER_WIDTH, _cfg.POSTER_HEIGHT)
     t    = np.linspace(0, np.pi, H, dtype=np.float32)
     # sin curve: peaks at midheight (~18), dark at top/bottom (~10)
     v    = (10 + 8 * np.sin(t)).astype(np.float32)
@@ -4199,6 +4231,9 @@ async def get_poster(
     muted: str | None = None,
     textless: str | None = None,
     score_color_mode: str | None = None,
+    shape: str | None = None,
+    landscape_art: str | None = None,
+    badge_pos: str | None = None,
     debug: str | None = None,
     nocache: str | None = None,
 ):
@@ -4870,7 +4905,44 @@ async def get_poster(
                 return False
 
         is_no_poster = poster_path is None and not _use_backdrop
-        if _use_backdrop:
+
+        # ------------------------------------------------------------------
+        # Landscape short-circuit.
+        #
+        # The whole portrait art chain above — textless poster selection,
+        # backdrop-to-portrait rescue, TVDB fallbacks — exists to manufacture a
+        # 2:3 image.  Landscape wants the backdrop as shot, so none of it
+        # applies: pick a backdrop, fit it, done.  Falls back to the portrait
+        # decisions only for the genre canvas, which has no aspect of its own.
+        #
+        #   textless — the language-neutral backdrop; our logo goes on top
+        #   original — the highest-voted language-tagged one, title treatment
+        #              already in the art, so is_textless stays False and every
+        #              existing gate skips our logo for us
+        # ------------------------------------------------------------------
+        _is_landscape = rcfg.shape == "landscape"
+        if _is_landscape:
+            _ls_text_bd = tmdb_data.get("text_backdrop_path")
+            if rcfg.landscape_art == "original":
+                _ls_path = _ls_text_bd or backdrop_path
+                # Only the text-bearing pick carries its own title; if the title
+                # had none and we fell back to the neutral backdrop, our logo is
+                # wanted after all.
+                is_textless = _ls_text_bd is None and _ls_path is not None
+            else:
+                _ls_path = backdrop_path or _ls_text_bd
+                # Falling through to a text-bearing backdrop means the title is
+                # already in the art; don't double it with our logo.
+                is_textless = bool(backdrop_path)
+            _use_backdrop = False
+            is_no_poster  = _ls_path is None
+            if _ls_path is None:
+                logger.info(f"No backdrop for {tmdb_id} — landscape falls back to genre canvas")
+                _image_coro = _resolved(_make_landscape_canvas(genre_ids))
+                is_textless = True
+            else:
+                _image_coro = fetch_landscape_image(client, tmdb_id, _ls_path)
+        elif _use_backdrop:
             # Text-aware backdrop cropping also invokes PP-OCR, so apply the
             # same foreground vote gate used by the final burned-in-text scan.
             _backdrop_avoid_text = (
@@ -5022,6 +5094,9 @@ async def get_poster(
             # produce an inconsistent result. See the is_textless assignment.
             # TMDB fallback art is scanned normally.
             and not using_anime_art
+            # Landscape picks its art by TMDB's own language tag rather than by
+            # scanning it, so there is nothing here for OCR to decide.
+            and not _is_landscape
         )
         if _scan_selected_image:
             from text_detect import DETECT_RES_SIG
@@ -5560,7 +5635,8 @@ async def get_poster(
         )
 
         def _composite_and_encode() -> bytes:
-            result = build_poster(image, score, genre, rcfg, **_bp_args)
+            _render = build_landscape if _is_landscape else build_poster
+            result = _render(image, score, genre, rcfg, **_bp_args)
             buf = io.BytesIO()
             _quality = _cfg.WEBP_QUALITY if _cfg.IMAGE_FORMAT == "webp" else _cfg.JPEG_QUALITY
             result.convert("RGB").save(buf, format=_cfg.IMAGE_FORMAT.upper(), quality=_quality)

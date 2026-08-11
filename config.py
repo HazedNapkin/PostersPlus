@@ -135,6 +135,15 @@ BADGE_DISPLAY_MODE       = 4
 POSTER_WIDTH  = 500
 POSTER_HEIGHT = 750
 
+# Landscape Poster Dimensions (16:9)
+#
+# Twice the portrait width so a landscape card on a desktop client still gets a
+# sharp image, and small enough that a WebP stays inside Stremio's 100kb poster
+# guidance.  The source backdrop is fetched at w1280 and fitted down to this.
+
+LANDSCAPE_WIDTH  = 1000
+LANDSCAPE_HEIGHT = 563
+
 # Rating & Genre Label Defaults
 
 ACCENT_BAR_MODE_FONT_SIZE_RATIO    = 0.08   # font size in accent bar mode
