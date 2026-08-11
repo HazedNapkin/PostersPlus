@@ -823,6 +823,11 @@ class RequestConfig:
     # so it sits under the logo (which is centred).  No effect under Split,
     # whose two groups are defined by the margins they sit on.
     minimalist_center: bool = False
+    # Glyph for the plain separator: "pip" (the silver bar) or "bullet".  Never
+    # applies to the Year mode's score-coloured pip, which has to stay a bar to
+    # be readable as a rating.  Defaults to the bar so existing posters don't
+    # change under anyone.
+    minimalist_separator: str = "pip"
 
     # Frosted bar (rating_display_mode == 4)
     bar_height_ratio:        float = 0.080
@@ -1186,6 +1191,9 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.minimalist_append_mode = _i("minimalist_append_mode", cfg.minimalist_append_mode, 0, 3)
     cfg.minimalist_score_out_of_10 = _b("minimalist_score_out_of_10", cfg.minimalist_score_out_of_10)
     cfg.minimalist_center = _b("minimalist_center", cfg.minimalist_center)
+    _msep = (params.get("minimalist_separator") or "").strip().lower()
+    if _msep in ("pip", "bullet"):
+        cfg.minimalist_separator = _msep
 
     cfg.bar_height_ratio        = _f("bar_height_ratio",        cfg.bar_height_ratio,        0.04, 0.20)
     cfg.bar_font_size_ratio     = _f("bar_font_size_ratio",     cfg.bar_font_size_ratio,     0.15, 0.70)
@@ -2921,6 +2929,25 @@ def build_poster(
             pip_cy  = round(y + font_size * 0.60)
             star_w  = draw.textlength("★", font=font_meta)
 
+            # The plain separator can be the silver bar or a bullet.  A bullet
+            # sits better beside the ★ — both are glyphs on the same baseline,
+            # where the bar reads as a rule borrowed from somewhere else — but
+            # it reserves its own glyph width rather than the bar's fixed one,
+            # so the choice has to reach the layout below, not just the drawing.
+            #
+            # "rpip" is deliberately NOT included.  That is the Year mode's
+            # separator-as-rating: a bar tall enough to read as a gauge of the
+            # score's colour.  A dot is far too small to carry that, so it keeps
+            # its bar whatever this is set to, and the configurator hides the
+            # option for the modes that only use rpip.
+            _bullet_sep = cfg.minimalist_separator == "bullet"
+            _pip_sep_w  = draw.textlength("•", font=font_meta) if _bullet_sep else pip_w
+
+            def _sep_width(sep: str) -> float:
+                if sep == "star":
+                    return star_w
+                return _pip_sep_w if sep == "pip" else pip_w
+
             # Lay out right-to-left: each segment, with its separator to its left.
             ops    = []   # (kind, x[, text]); kind in text|pip|rpip|star
             cursor = right_edge
@@ -2931,7 +2958,7 @@ def build_poster(
                 cursor = seg_x
                 if sep:
                     cursor -= pip_gap
-                    sep_w  = star_w if sep == "star" else pip_w
+                    sep_w  = _sep_width(sep)
                     sep_x  = cursor - sep_w
                     ops.append((sep, sep_x))
                     cursor = sep_x - pip_gap
@@ -2957,7 +2984,7 @@ def build_poster(
                 if sep:
                     cursor += pip_gap
                     ops.append((sep, int(cursor)))
-                    cursor += (star_w if sep == "star" else pip_w) + pip_gap
+                    cursor += _sep_width(sep) + pip_gap
                 ops.append(("text", int(cursor), seg))
                 cursor += draw.textlength(seg, font=font_meta)
 
@@ -2972,6 +2999,11 @@ def build_poster(
                                             height=pip_h, width=pip_w,
                                             color_mode=cfg.score_color_mode,
                                             custom_palette=cfg.score_custom_palette)
+                elif kind == "pip" and _bullet_sep:
+                    # The bar's silver, not the text ink: the separator stays a
+                    # shade quieter than the fields it divides, which is the one
+                    # thing about the bar worth keeping.
+                    draw.text((ox, y), "•", font=font_meta, fill=(192, 192, 200, 255))
                 else:  # "pip"
                     _draw_solid_pip(image, x=ox, y_center=pip_cy,
                                     width=pip_w, height=pip_h, color=(192, 192, 200))
