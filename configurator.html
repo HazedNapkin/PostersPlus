@@ -2570,7 +2570,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <select class="segmented-source" id="cfg-min-append" onchange="_updateMinimalistRows(); build(); queuePreviewReload()">
                     <option value="0" selected>Year</option>
                     <option value="1">Rating</option>
-                    <option value="2">Year + Rating</option>
+                    <option value="2">Both</option>
                     <option value="3">Split</option>
                   </select>
                   <div class="segmented" data-for="cfg-min-append"></div>
@@ -5075,7 +5075,7 @@ function initSegmented() {
  *  mode.  Each is hidden where it would sit there doing nothing:
  *    Centre    — Split anchors two groups on opposite margins, so there is no
  *                single group to centre.
- *    Separator — only Year + Rating and Split draw the plain separator.  Year
+ *    Separator — only Both and Split draw the plain separator.  Year
  *                uses the score-coloured bar and Rating only the star, and
  *                neither is affected by this setting. */
 function _updateMinimalistRows() {
