@@ -823,10 +823,10 @@ class RequestConfig:
     # so it sits under the logo (which is centred).  No effect under Split,
     # whose two groups are defined by the margins they sit on.
     minimalist_center: bool = False
-    # Glyph for the plain separator: "pip" (the silver bar) or "bullet".  Never
-    # applies to the Year mode's score-coloured pip, which has to stay a bar to
-    # be readable as a rating.  Defaults to the bar so existing posters don't
-    # change under anyone.
+    # Glyph for the separator: "pip" (the silver bar) or "bullet".  Applies to
+    # the Year mode's score-coloured separator as well, where the bullet takes
+    # the score colour the bar would have had.  Defaults to the bar so existing
+    # posters don't change under anyone.
     minimalist_separator: str = "pip"
 
     # Frosted bar (rating_display_mode == 4)
@@ -2929,24 +2929,22 @@ def build_poster(
             pip_cy  = round(y + font_size * 0.60)
             star_w  = draw.textlength("★", font=font_meta)
 
-            # The plain separator can be the silver bar or a bullet.  A bullet
-            # sits better beside the ★ — both are glyphs on the same baseline,
-            # where the bar reads as a rule borrowed from somewhere else — but
-            # it reserves its own glyph width rather than the bar's fixed one,
-            # so the choice has to reach the layout below, not just the drawing.
+            # The separator can be the silver bar or a bullet.  A bullet sits
+            # better beside the ★ — both are glyphs on the same baseline, where
+            # the bar reads as a rule borrowed from somewhere else — but it
+            # reserves its own glyph width rather than the bar's fixed one, so
+            # the choice has to reach the layout below, not just the drawing.
             #
-            # "rpip" is deliberately NOT included.  That is the Year mode's
-            # separator-as-rating: a bar tall enough to read as a gauge of the
-            # score's colour.  A dot is far too small to carry that, so it keeps
-            # its bar whatever this is set to, and the configurator hides the
-            # option for the modes that only use rpip.
+            # This covers "rpip" too — the Year mode's separator-as-rating.  A
+            # dot is a much weaker gauge than a bar, but it still carries the
+            # score's colour (see the draw loop), so the rating is dimmer rather
+            # than absent, and that is a look to have an opinion about rather
+            # than a thing to forbid.
             _bullet_sep = cfg.minimalist_separator == "bullet"
             _pip_sep_w  = draw.textlength("•", font=font_meta) if _bullet_sep else pip_w
 
             def _sep_width(sep: str) -> float:
-                if sep == "star":
-                    return star_w
-                return _pip_sep_w if sep == "pip" else pip_w
+                return star_w if sep == "star" else _pip_sep_w
 
             # Lay out right-to-left: each segment, with its separator to its left.
             ops    = []   # (kind, x[, text]); kind in text|pip|rpip|star
@@ -2994,6 +2992,19 @@ def build_poster(
                     draw.text((ox, y), op[2], font=font_meta, fill=_ink)
                 elif kind == "star":
                     draw.text((ox, y), "★", font=font_meta, fill=_ink)
+                elif kind == "rpip" and _bullet_sep:
+                    # Keeps the score's colour: in this mode the separator IS
+                    # the rating, so a silver dot would drop it off the poster
+                    # rather than restyle it.  Skipped entirely when there is no
+                    # usable score, which is what the bar does too.
+                    try:
+                        _sc = max(0, min(int(score), 100))
+                    except (TypeError, ValueError):
+                        _sc = None
+                    if _sc is not None:
+                        _fill = score_color_for_mode(
+                            _sc, cfg.score_color_mode, cfg.score_custom_palette)[0]
+                        draw.text((ox, y), "•", font=font_meta, fill=(*_fill, 255))
                 elif kind == "rpip":
                     draw_score_bar_vertical(image, score, x=ox, y_center=pip_cy,
                                             height=pip_h, width=pip_w,

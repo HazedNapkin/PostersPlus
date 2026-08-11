@@ -2575,8 +2575,8 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   </select>
                   <div class="segmented" data-for="cfg-min-append"></div>
                 </div>
-                <div class="field" id="minimalist-separator-field" style="display:none;">
-                  <label class="field-label" data-tip="Glyph between the genre and the year. The Year mode's rating separator always stays a bar — a dot is too small to read as a score colour.">Separator</label>
+                <div class="field" id="minimalist-separator-field">
+                  <label class="field-label" data-tip="Glyph between the fields. In Year mode the bullet still takes the score's colour, so the rating survives — it just reads more quietly than the bar does.">Separator</label>
                   <select class="segmented-source" id="cfg-min-separator" onchange="build(); queuePreviewReload()">
                     <option value="pip" selected>Bar</option>
                     <option value="bullet">Bullet</option>
@@ -4470,9 +4470,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
       // about what is actually in effect.
       if (ni('cfg-min-append') !== 3)
         params.set('minimalist_center',             c('tog-minimalist-center') ? 'true' : 'false');
-      // Likewise: only the two modes that actually draw a plain separator.
-      if (ni('cfg-min-append') === 2 || ni('cfg-min-append') === 3)
-        params.set('minimalist_separator',          vEl('cfg-min-separator') || 'pip');
+      params.set('minimalist_separator',           vEl('cfg-min-separator') || 'pip');
     } else if (ratingMode === 4) {
       params.set('bar_style',           vEl('cfg-bar-style') || 'frosted');
       const _bs = vEl('cfg-bar-style') || '';
@@ -5072,19 +5070,16 @@ function initSegmented() {
 })();
 
 /** Minimalist controls that depend on the Append mode as well as the rating
- *  mode.  Each is hidden where it would sit there doing nothing:
- *    Centre    — Split anchors two groups on opposite margins, so there is no
- *                single group to centre.
- *    Separator — only Both and Split draw the plain separator.  Year
- *                uses the score-coloured bar and Rating only the star, and
- *                neither is affected by this setting. */
+ *  mode.  Centre is hidden under Split because Split has no single group to
+ *  centre — the two halves are defined by the opposite margins they hang off,
+ *  so there is no behaviour to give it, which is a different thing from a
+ *  combination somebody might not like the look of.  Separator is deliberately
+ *  NOT gated: every mode that draws one can restyle it, taste included. */
 function _updateMinimalistRows() {
   const isMinimal = parseInt(document.getElementById('cfg-rating-mode').value) === 3;
   const append    = parseInt(vEl('cfg-min-append') || '0');
   const row = document.getElementById('minimalist-center-row');
   if (row) row.style.display = (isMinimal && append !== 3) ? '' : 'none';
-  const sep = document.getElementById('minimalist-separator-field');
-  if (sep) sep.style.display = (isMinimal && (append === 2 || append === 3)) ? '' : 'none';
 }
 
 function updateRatingFields() {
