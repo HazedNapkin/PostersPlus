@@ -40,7 +40,7 @@ from __future__ import annotations
 import os
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 from i18n import translate_genre, translate_sash
 
@@ -87,6 +87,8 @@ _SEPARATOR       = (255, 255, 255, 90)
 
 # The configurator's gold, so the badge reads as the same product.
 _GOLD            = (201, 168, 76)
+_BORDER_RATIO    = 0.045  # hairline width as a fraction of pill height
+_BORDER_ALPHA    = 200
 # Channel multipliers that push the smoked glass toward that gold without
 # lightening it — the gold's own channel ratio, eased back so the tint reads as
 # warmth rather than as a yellow filter.
@@ -170,12 +172,27 @@ def _glass_pill(image: Image.Image, box: tuple[int, int, int, int]) -> None:
     gain, lift = (0.30, 4.0) if luma > 120 else (0.48, 12.0)
     arr = np.clip(arr * gain + lift, 0, 255) * _GLASS_TINT
 
+    # Cairo rasterises the pill at ANTIALIAS_BEST; PIL's rounded_rectangle has
+    # no antialiasing at all, which on a 2px gold hairline is the difference
+    # between an edge and a staircase.  The border is the difference of two of
+    # those masks rather than a stroked outline, so both of its edges are
+    # smooth — stroking would only smooth the outer one.
+    from ratings import _cairo_pill_mask
+
     glass = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("RGBA")
-    mask = Image.new("L", (w, h), 0)
-    ImageDraw.Draw(mask).rounded_rectangle([0, 0, w - 1, h - 1], h // 2, fill=255)
+    mask = _cairo_pill_mask(w, h, h // 2)
     glass.putalpha(mask)
     image.alpha_composite(glass, (x0, y0))
-    ImageDraw.Draw(image).rounded_rectangle(box, h // 2, outline=(*_GOLD, 200), width=2)
+
+    bw = max(1, round(h * _BORDER_RATIO))
+    iw, ih = max(1, w - 2 * bw), max(1, h - 2 * bw)
+    inner = Image.new("L", (w, h), 0)
+    inner.paste(_cairo_pill_mask(iw, ih, ih // 2), (bw, bw))
+    ring = ImageChops.subtract(mask, inner)
+
+    border = Image.new("RGBA", (w, h), (*_GOLD, 255))
+    border.putalpha(ring.point(lambda a: a * _BORDER_ALPHA // 255))
+    image.alpha_composite(border, (x0, y0))
 
 
 def _draw_badge(image: Image.Image, text: str, position: str,
@@ -261,16 +278,14 @@ def _draw_title(image: Image.Image, title: str) -> None:
               font=font, fill=(255, 255, 255, 245), anchor="ls")
 
 
-def _draw_info_strip(image: Image.Image, cfg, genre_label: str,
+def _draw_info_strip(image: Image.Image, genre_label: str,
                      release_year: str | None, score) -> None:
-    """`Genre | Year | 87`, right-aligned on the shared baseline.
+    """`Genre • Year • 87`, right-aligned on the shared baseline.
 
     Drawn right-to-left so the score stays pinned to the right edge whatever the
     genre string does, and the whole strip is measured before anything is drawn
     so a long genre can be dropped rather than colliding with the logo.
     """
-    from ratings import score_color_for_mode
-
     width, height = image.size
     font = _font("Inter-Bold.ttf", int(height * _INFO_FONT))
     draw = ImageDraw.Draw(image)
@@ -280,20 +295,15 @@ def _draw_info_strip(image: Image.Image, cfg, genre_label: str,
     else:
         score_text = str(score)
 
-    if score_text.isdigit():
-        score_rgb = score_color_for_mode(
-            int(score_text), cfg.score_color_mode, cfg.score_custom_palette
-        )[0]
-        score_fill = (*score_rgb, 255)
-    else:
-        score_fill = (255, 255, 255, 220)
-
+    # The score takes the same weight as the genre and the year rather than a
+    # score-banded colour.  Here the three are one line of metadata, and one
+    # member of it changing hue per title breaks the row instead of ranking it.
     parts: list[tuple[str, tuple[int, int, int, int]]] = []
     if genre_label:
         parts.append((genre_label, _MUTED))
     if release_year:
         parts.append((str(release_year), _MUTED))
-    parts.append((score_text, score_fill))
+    parts.append((score_text, _MUTED))
 
     sep = "  •  "
     sep_w = draw.textlength(sep, font=font)
@@ -352,7 +362,7 @@ def build_landscape(
         elif fallback_title:
             _draw_title(image, fallback_title)
 
-    _draw_info_strip(image, cfg,
+    _draw_info_strip(image,
                      "" if cfg.hide_genre else (translate_genre(genre, cfg.logo_language) or genre),
                      release_year, score)
 
