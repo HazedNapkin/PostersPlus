@@ -2,6 +2,61 @@
 
 ## Unreleased
 
+### Anime
+
+- Added anime-native poster requests through AniList and Kitsu. Clients that
+  supply `anilist_id`, `kitsu_id`, or an AIOMetadata-compatible `{id}` can use
+  the provider's cover art, title, genres, air dates, lifecycle status, and
+  community score without converting the title to a TMDB or IMDb id.
+- Added an off-by-default Anime IDs configurator option for AIOMetadata poster
+  URLs. Anime-native ids are also carried through to compatible quality sources,
+  so stream-quality badges continue to work when no IMDb id exists.
+- Anime requests now keep any accompanying TMDB and IMDb ids for logos, MDBList
+  ratings, awards, age ratings, release data, and other enrichment. AniList and
+  Kitsu scores participate in the normal weighted-rating pipeline and default
+  to zero weight.
+- Anime cover art can receive a TMDB logo by default. If an anime provider is
+  unavailable or misses a title, rendering temporarily falls back to TMDB art
+  instead of a genre canvas without caching the degraded result.
+- Improved anime provider caching, concurrency limits, genre selection, request
+  identity, and placeholder handling. Definitive misses are negative-cached,
+  while throttles and transient provider failures are not.
+
+### Poster Rendering
+
+- Added a dedicated 16:9 poster layout through `shape=landscape`, with backdrop
+  artwork, height-relative sizing, a unified bottom information band, and clear
+  top corners for client overlays. `landscape_art` selects textless or original
+  artwork and `badge_pos` controls the age-rating badge position.
+- Added poster-coloured top and bottom vignettes with saturation, blur,
+  lightness, two-colour ramp, and blend controls. Tint selection now samples the
+  artwork near the visible seam, rejects shadow-only and conflicting colours,
+  and limits excessive chroma for more consistent results across a shelf.
+- Frosted notches and bars can match the colour actually painted by a tinted
+  vignette. Matching preserves the vignette's lightness and falls back to the
+  normal frost colour when the band does not have a reliable tint.
+- Posters confirmed to contain a baked-in title use a plain black vignette
+  instead of blurring and tinting the title inside the artwork.
+- Expanded Minimalist mode with a Split layout, optional centring, and separate
+  field and rating separators. Pip, bullet, and rating-star treatments are
+  exposed only where they apply, including the score-coloured separator in Year
+  mode.
+- Added independent notch padding so the space above and below a label can be
+  tightened without shrinking the font, changing the badge width, or moving the
+  notch.
+
+### Configurator
+
+- Redesigned the configurator with rounded panels, sentence-case group headings,
+  text tabs, consistent spacing and controls, a cleaner preview panel, and
+  refreshed preset and import dialogs across every settings tab.
+- Reworked inline help into row tooltips that also work on touch devices, and
+  improved control grouping, contrast, button styling, colour swatches, and the
+  sash-priority editor.
+- Moved Import from URL into the header and added a title-link menu with IMDb,
+  TMDB artwork, MDBList, and SIMKL shortcuts. Fixed menu links that could open
+  `#` before their targets were initialized.
+
 ### Quality
 
 - Added QualiCache as a quality source: set `QUALITY_SOURCE=qualicache` and
@@ -19,6 +74,55 @@
 - Quality backend selection now runs through one dispatcher instead of being
   repeated at each call site. `/status` reports the active backend as
   `quality_source`.
+
+### Metadata And Caching
+
+- Added `TRENDING_SOURCE_MOVIE` and `TRENDING_SOURCE_TV` so operators can replace
+  TMDB's global trending list with an MDBList page or a TMDB-shaped endpoint.
+  The configured order drives both trending sashes and cache warming, enabling
+  regional or service-specific rankings.
+- Custom trending sources now isolate movie and TV entries, reject rows without
+  numeric TMDB ids, follow canonical MDBList URLs, refresh cleanly when the
+  configured source changes, and avoid exposing credentials or query strings in
+  cache signatures and logs.
+- Release-status caches now use status-aware lifetimes: active, in-production,
+  and cinema titles refresh quickly, while ended, cancelled, physical, and
+  established streaming releases remain cached longer. Known release dates set
+  the next refresh boundary directly.
+- Composite posters now expire no later than the release data rendered into
+  them. Disk and in-memory cache entries share the same deadline, and cache
+  warming reuses the trending snapshot it already fetched.
+- Rating-provider failure counters are now pruned together with their expired
+  backoff state.
+
+### Performance And Reliability
+
+- Reduced startup memory by loading genre fallback backgrounds on demand into a
+  bounded cache instead of decoding the whole gallery, and reduced per-thread
+  SQLite page-cache memory. Fallback fonts are now cached as well.
+- Made fallback-title rendering faster and more reliable by starting font
+  fitting from a monotonic width search, fitting long titles rather than cutting
+  them off, and ellipsizing every landscape fallback line that needs it.
+- Reduced score and quality-bar composition work by drawing only the affected
+  strips instead of repeatedly compositing full-canvas layers.
+- OCR thread sizing now respects the container's actual cgroup CPU quota rather
+  than the host CPU count. `TEXTLESS_DETECTION_CONCURRENCY` now defaults to `1`
+  to avoid slower scans and roughly 50 MB of unnecessary memory per idle
+  session; larger values remain available for cold-cache library sweeps.
+- Landscape requests no longer wait for quality data the layout does not render,
+  and transient custom-trending failures use a short retry cooldown rather than
+  refetching once per poster.
+
+### Fixes And Documentation
+
+- Fixed missing ratings leaving an empty score in the information strip, and
+  fixed fallback titles that could be clipped instead of resized to fit.
+- Fixed landscape fallbacks losing their title, TV shows retaining a stale
+  ended status after revival, and release sashes surviving past a newly reached
+  digital-release boundary.
+- Split the oversized `.env.example` into a concise starter configuration and a
+  new `ADVANCED.md` tuning reference. Added previously undocumented OCR and face
+  model path overrides and corrected OCR concurrency guidance and defaults.
 
 ### Localization
 
