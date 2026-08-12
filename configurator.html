@@ -4475,17 +4475,16 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
       params.set('minimalist_mode_font_x_offset',   n('cfg-x-mode3').toFixed(3));
       params.set('minimalist_mode_font_y_offset',   n('cfg-y-mode3').toFixed(3));
       params.set('minimalist_score_out_of_10',      c('tog-minimalist-score-10') ? 'true' : 'false');
-      // Split ignores it server-side too; leaving it out keeps the URL honest
-      // about what is actually in effect.
-      if (ni('cfg-min-append') !== 3)
-        params.set('minimalist_center',             c('tog-minimalist-center') ? 'true' : 'false');
-      // Each only where the layout actually draws it, so the URL says what is
-      // in effect rather than what happens to be sitting in the form.
-      const _mAppend = ni('cfg-min-append');
-      if (_mAppend !== 1)
-        params.set('minimalist_separator',        vEl('cfg-min-separator') || 'pip');
-      if (_mAppend === 1 || _mAppend === 2)
-        params.set('minimalist_rating_separator', vEl('cfg-min-rating-separator') || 'star');
+      // Emitted whatever the Append mode is, even where that mode draws no such
+      // separator and the control is hidden.  These params are also the
+      // persistence format — saveSettings() round-trips this same builder — so
+      // omitting one because it is inert right now means it is not saved, and a
+      // reload silently returns it to the default.  Losing somebody's setting
+      // because they happened to be parked on another mode is worse than a URL
+      // carrying a param the server will ignore.
+      params.set('minimalist_center',              c('tog-minimalist-center') ? 'true' : 'false');
+      params.set('minimalist_separator',           vEl('cfg-min-separator') || 'pip');
+      params.set('minimalist_rating_separator',    vEl('cfg-min-rating-separator') || 'star');
     } else if (ratingMode === 4) {
       params.set('bar_style',           vEl('cfg-bar-style') || 'frosted');
       const _bs = vEl('cfg-bar-style') || '';
