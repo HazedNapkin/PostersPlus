@@ -309,7 +309,14 @@ class ConfiguratorAnimeIdTests(unittest.TestCase):
         self.assertNotRegex(self.html, r'id="tog-anime-ids"[^>]*\bchecked\b')
 
     def test_hint_names_the_only_supported_addon(self):
-        self.assertRegex(self.html, r"Anime IDs — AIOMetadata only")
+        # Inline hints became row tooltips in the redesign, so the warning now
+        # rides on the toggle's own data-tip rather than its label. Anchored to
+        # the label so it can't pass on some unrelated row's tooltip: enabling
+        # this on a non-AIOMetadata addon is what breaks the URL.
+        self.assertRegex(
+            self.html,
+            r'data-tip="[^"]*AIOMetadata only[^"]*"[^>]*>Anime IDs<',
+        )
 
     def test_placeholders_are_template_only(self):
         # Emitted under usePlaceholders, so the live preview (which renders one
