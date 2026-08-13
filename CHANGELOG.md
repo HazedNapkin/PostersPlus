@@ -56,6 +56,15 @@
 - Moved Import from URL into the header and added a title-link menu with IMDb,
   TMDB artwork, MDBList, and SIMKL shortcuts. Fixed menu links that could open
   `#` before their targets were initialized.
+- Generated poster URLs and presets no longer carry an `imdb_id` placeholder,
+  which previously discarded the whole URL for any title without an IMDb link.
+  A title with no linked IMDb id is now reported as a normal state rather than an
+  error, previews load from the TMDB id alone, and the result is remembered for a
+  week so the resolver is not re-run on every load.
+- Plex and Jellyfin sync no longer skip library items that have a TMDB id but no
+  IMDb id. Quality badges from the local file continue to work for those items,
+  and an `imdb_id` baked into a copied recipe URL can no longer be applied to
+  items it does not belong to.
 
 ### Quality
 
@@ -77,6 +86,27 @@
 
 ### Metadata And Caching
 
+- IMDb ids are now optional. `tmdb_id` is the required identity — it selects the
+  artwork and metadata — and `imdb_id` is optional enrichment. Titles TMDB has no
+  IMDb link for previously returned an error and, through AIOMetadata, lost their
+  poster entirely because a required placeholder with no value discards the whole
+  URL. Existing URLs that send both ids are unchanged.
+- Ratings, awards, keywords, and age ratings are now looked up through MDBList's
+  TMDB route when no IMDb id is available, so TMDB-only titles keep their score
+  and sashes. A title MDBList does not know still renders from TMDB metadata with
+  an `N/A` score.
+- Stream-quality lookups now resolve their id after metadata, so a title whose URL
+  omits `imdb_id` still gets quality badges via the IMDb id TMDB itself supplies.
+  Anime keeps its provider-native id for these lookups. Titles with no IMDb id
+  anywhere skip the lookup rather than issuing one nothing can answer; an explicit
+  `quality=` override is unaffected.
+- Rating cache, coalescing, and back-off state are now keyed on one immutable
+  per-request identity (`tmdb:<id>` when there is no IMDb id) rather than the raw
+  `imdb_id` parameter. Cache warming writes the same identity the request path
+  reads. Metahub logo fallback, digital-release detection, and IMDb links run only
+  when an IMDb id is actually available.
+- `/poster?debug=1` now reports the resolved identities — `canonical_id`,
+  `rating_provider`, `rating_media_id`, `quality_id`, and `effective_imdb_id`.
 - Added `TRENDING_SOURCE_MOVIE` and `TRENDING_SOURCE_TV` so operators can replace
   TMDB's global trending list with an MDBList page or a TMDB-shaped endpoint.
   The configured order drives both trending sashes and cache warming, enabling

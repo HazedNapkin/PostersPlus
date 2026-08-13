@@ -48,17 +48,27 @@ def _rating_vote_count(raw: dict) -> int | None:
 
 async def fetch_rating(
     client: httpx.AsyncClient,
-    imdb_id: str,
     mdblist_key: str,
     genre_ids: list[int],
     media_type: str = "movie",
     *,
+    media_id: str,
+    provider: str = "imdb",
     movie_weights: dict | None = None,
     tv_weights: dict | None = None,
 ) -> "tuple[dict | str, str, str | None, list[dict], int | None] | _FetchFailed | _RateLimited":
     """
     Returns ``(ratings_dict, genre, release_date, keywords, age_rating)`` on
     success, or ``FETCH_FAILED`` on a network / API error.
+
+    MDBList serves the same record under several id namespaces, so *provider*
+    selects the route ("imdb" or "tmdb") and *media_id* is the id in that
+    namespace. A title TMDB has no IMDb link for still has ratings, awards,
+    keywords and an age rating here — it just has to be asked for by TMDB id.
+
+    *media_id* and *provider* are keyword-only, and the old positional id
+    argument is gone: a call site that still passed an IMDb id positionally
+    would otherwise have silently become the API key.
     """
 
     genre = "Unknown"
@@ -70,14 +80,17 @@ async def fetch_rating(
     mdb_type = "show" if media_type in ("tv", "series") else "movie"
 
     try:
-        logger.info(f"External API Call: Requested ratings+keywords from MDBlist for {imdb_id}")
+        logger.info(
+            "External API Call: Requested ratings+keywords from MDBlist for "
+            f"{provider}/{media_id}"
+        )
         resp = await client.get(
-            f"https://api.mdblist.com/imdb/{mdb_type}/{imdb_id}",
+            f"https://api.mdblist.com/{provider}/{mdb_type}/{media_id}",
             params={"apikey": mdblist_key, "append_to_response": "keyword"},
             timeout=10.0,
         )
     except Exception as exc:
-        logger.error(f"MDblist request error for {imdb_id}: {type(exc).__name__}: {exc}")
+        logger.error(f"MDblist request error for {media_id}: {type(exc).__name__}: {exc}")
         return FETCH_FAILED
 
     if resp.status_code == 429:
@@ -94,16 +107,16 @@ async def fetch_rating(
             except ValueError:
                 pass
         logger.warning(
-            f"MDblist rate-limited for {imdb_id} (retry-after={retry_after})"
+            f"MDblist rate-limited for {media_id} (retry-after={retry_after})"
         )
         return _RateLimited(retry_after)
 
     if resp.status_code == 404:
-        logger.info(f"MDblist 404 for {imdb_id} — title not found, returning empty result")
+        logger.info(f"MDblist 404 for {provider}/{media_id} — title not found, returning empty result")
         return {}, genre, None, [], None
 
     if resp.status_code != 200:
-        logger.warning(f"MDblist error {resp.status_code} for {imdb_id}")
+        logger.warning(f"MDblist error {resp.status_code} for {provider}/{media_id}")
         return FETCH_FAILED
 
     data         = resp.json()
@@ -127,7 +140,7 @@ async def fetch_rating(
         vote_count = _rating_vote_count(r)
         if source != "rogerebert" and vote_count is not None and vote_count < RATING_MIN_VOTES:
             logger.info(
-                f"Skipping {source} rating for {imdb_id}: "
+                f"Skipping {source} rating for {media_id}: "
                 f"vote_count={vote_count} < {RATING_MIN_VOTES}"
             )
             continue

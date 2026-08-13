@@ -3951,6 +3951,20 @@ function saveApiKeys() {
 
 function saveSelection(data) { localStorage.setItem('postersplus_selection', JSON.stringify(data)); }
 
+// How long a "this title has no IMDb link" answer is trusted before the
+// resolver is asked again. Cached at all so a TMDB-only title doesn't re-run
+// the lookup on every page load; expiring, because TMDB gains IMDb links over
+// time and a permanently remembered "no" would never recover.
+const IMDB_NEGATIVE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function setNoLinkedImdbId() {
+  resolvedImdbId = '';
+  document.getElementById('cfg-imdb').value = '';
+  document.getElementById('selected-imdb-id').textContent = 'None — using TMDB';
+  const spinner = document.getElementById('selected-resolving');
+  if (spinner) spinner.style.display = 'none';
+}
+
 function persistImdbId(imdbId) {
   // The resolve is async, so this can land after build() has already run.
   updateExternalLink();
@@ -3958,7 +3972,8 @@ function persistImdbId(imdbId) {
     const raw = localStorage.getItem('postersplus_selection');
     if (!raw) return;
     const data = JSON.parse(raw);
-    data.imdbId = imdbId;
+    data.imdbId = imdbId || null;
+    data.imdbCheckedAt = Date.now();
     localStorage.setItem('postersplus_selection', JSON.stringify(data));
   } catch(e) {}
 }
@@ -3990,11 +4005,15 @@ function hydrateFromLocalStorage() {
     const badge = document.getElementById('selected-type-badge');
     badge.textContent = (data.type || 'movie').toUpperCase(); badge.className = 'result-type-badge ' + (data.type || 'movie');
     document.getElementById('selected-tmdb-id').textContent = data.tmdbId;
+    const negativeIsFresh = !data.imdbId && data.imdbCheckedAt
+      && (Date.now() - data.imdbCheckedAt) < IMDB_NEGATIVE_TTL_MS;
     if (data.imdbId) {
       resolvedImdbId = data.imdbId;
       document.getElementById('cfg-imdb').value = data.imdbId;
       document.getElementById('selected-imdb-id').textContent = data.imdbId;
       document.getElementById('selected-resolving').style.display = 'none';
+    } else if (negativeIsFresh) {
+      setNoLinkedImdbId();
     } else {
       document.getElementById('selected-imdb-id').textContent = '…';
       document.getElementById('selected-resolving').style.display = 'flex';
@@ -4006,8 +4025,10 @@ function hydrateFromLocalStorage() {
           resolvedImdbId = id;
           document.getElementById('cfg-imdb').value = id;
           document.getElementById('selected-imdb-id').textContent = id;
-          persistImdbId(id); queuePreviewReload();
+        } else {
+          setNoLinkedImdbId();
         }
+        persistImdbId(id || null); queuePreviewReload();
       });
     }
   } catch(e) { console.warn('Could not restore selection:', e); }
@@ -4175,8 +4196,11 @@ async function selectResult(dataset) {
     persistImdbId(imdbId);
     setStatus(`IMDB ID resolved: ${imdbId}`, 'ok');
   } else {
-    document.getElementById('selected-imdb-id').textContent = 'N/A';
-    setStatus('Could not resolve IMDB ID — preview may fail', 'err');
+    // Not an error: TMDB has no IMDb link for plenty of titles, and the poster
+    // renders from TMDB alone. Only the IMDb-keyed extras are unavailable.
+    setNoLinkedImdbId();
+    persistImdbId(null);
+    setStatus('', 'info');
   }
   build(); queuePreviewReload();
 }
@@ -4355,7 +4379,10 @@ function decodePlaceholders(url) {
 function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}) {
   const domain         = (domainOverride || vEl('cfg-domain')).replace(/\/$/, '') || 'https://your-instance.com';
   const logoLanguage   = vEl('cfg-language') || 'en';
-  const imdbId         = usePlaceholders ? '{imdb_id}'  : (resolvedImdbId  || '{imdb_id}');
+  // Unresolved stays empty rather than falling back to a literal "{imdb_id}":
+  // a concrete url is one somebody pastes into a browser, and a placeholder in
+  // it is just a broken url.
+  const imdbId         = usePlaceholders ? ''            : resolvedImdbId;
   const tmdbId         = usePlaceholders ? '{tmdb_id}'  : (resolvedTmdbId  || '{tmdb_id}');
   const accKey         = vEl('cfg-access-key');
   const type           = usePlaceholders ? '{type}'     : mediaType;
@@ -4386,13 +4413,13 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   // present in every AIOMetadata version, and always populated — so it can
   // never null the URL and never needs the optional form.
   //
-  // tmdb_id and imdb_id use the REQUIRED "{name}" form; the anime ids use the
-  // optional "{name?}" form. That split is deliberate and load-bearing:
+  // tmdb_id uses the REQUIRED "{name}" form; the anime ids use the optional
+  // "{name?}" form. That split is deliberate and load-bearing:
   //
   //   - Required is understood by every AIOMetadata build. Optional is not —
   //     older ones leave the placeholder in the URL verbatim, and a literal
   //     placeholder where the core id belongs fails validation server-side and
-  //     400s the poster. Never put the core ids in the optional form.
+  //     400s the poster. Never put the core id in the optional form.
   //   - The anime ids can't be required: the resolver returns null for the
   //     whole URL as soon as a required placeholder has no value, so
   //     "{kitsu_id}" would kill every live-action poster.
@@ -4401,15 +4428,26 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
   //     doesn't leaves "{kitsu_id?}" literal, and the server treats a literal
   //     placeholder as absent and takes the ordinary TMDB path.
   //
-  // The cost is that a title with an anime id but no tmdb/imdb never reaches us
-  // — the resolver nulls it. Not observed in practice: every logged request has
-  // carried tmdb_id and imdb_id.
+  // imdb_id is no longer emitted at all, and that is the same rule read the
+  // other way. It cannot be required: TMDB returns imdb_id: null for titles it
+  // has no IMDb link for, and the resolver then nulls the WHOLE url — those
+  // titles lost their poster entirely rather than losing their rating. It also
+  // cannot be optional: Bingecat rejects "{name?}" at config time and some
+  // AIOMetadata builds pass it through verbatim.
+  //
+  // Nothing visible is lost by dropping it. tmdb_id alone identifies the title,
+  // and the server reads the IMDb id back out of TMDB's own metadata for the
+  // enrichment that needs one (Metahub logo fallback, digital-release
+  // detection, stream-quality lookups). Urls generated before this — and any
+  // client that has a reliable IMDb id, such as the Plex and Jellyfin sync
+  // scripts — keep sending imdb_id and are still accepted; doing so also keys
+  // the rating cache by IMDb id, which is what those scripts want.
   //
   // AIOMetadata also offers {mal_id} and {anidb_id}; neither is emitted because
   // neither is wired as an art source (MAL needs auth, AniDB's API is heavily
   // restricted). The server ignores them if you add them by hand.
   params.set('tmdb_id', tmdbId);
-  params.set('imdb_id', imdbId);
+  if (imdbId) params.set('imdb_id', imdbId);
   if (usePlaceholders && c('tog-anime-ids')) {
     params.set('stremio_id', '{id}');
   }
@@ -4690,7 +4728,7 @@ function resetDefaults() {
 function queuePreviewReload() {
   clearTimeout(previewDebounce);
   previewDebounce = setTimeout(() => {
-    if (resolvedImdbId && resolvedTmdbId) loadPreview();
+    if (resolvedTmdbId) loadPreview();
   }, 350);
 }
 
@@ -4707,7 +4745,7 @@ function setStatus(msg, cls='') {
 async function loadPreview() {
   if (previewLoading) { clearTimeout(previewDebounce); return; }
   if (imdbResolvePending) return;
-  if (!resolvedImdbId || !resolvedTmdbId) { setStatus('Search and select a title first', 'err'); return; }
+  if (!resolvedTmdbId) { setStatus('Search and select a title first', 'err'); return; }
   if (!vEl('cfg-tmdb-key') && !serverCaps.tmdb_key_set) { setStatus('This instance has no server side TMDB key. You must provide your own or ask the operator to add one.', 'err'); return; }
   previewLoading = true;
   document.getElementById('preview-status').textContent = 'LOADING';
@@ -5179,7 +5217,7 @@ const PRESETS = [
     name: 'Prestige Rating Bar',
     description: 'Classic Posters+ design featuring a score bar using the prestige score palette, which uses grey, bronze and gold. Paired with the info sash and horizontal badge row.',
     screenshot: '/static/presets/prestige_rating_bar.jpg',
-    params: 'http://postersplus:8000/poster?tmdb_id={tmdb_id}&imdb_id={imdb_id}&type={type}&primary_client=stremio_tv_nuvio&top_gradient=medium&bottom_gradient=high&fallback_to_imdb=true&rating_display_mode=1&score_color_mode=2&accent_bar_font_size_ratio=0.080&accent_bar_y_offset=0.90&accent_bar_append_mode=0&accent_bar_bottom_ratio=0.040&score_glow_threshold=85&score_glow_blur=1&score_glow_alpha=40&movie_weights=letterboxd%3A0.99%2Ctrakt%3A0.01%2Ctomatoes%3A0.00%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Crogerebert%3A0.00%2Cmyanimelist%3A0.00&tv_weights=trakt%3A0.80%2Ctomatoes%3A0.20%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Cmyanimelist%3A0.00&textless=false&use_original_art=false&original_art_source=primary&logo_language=en&logo_priority=native_original&fallback_bg_style=photoreal&logo_max_w_ratio=0.75&logo_max_h_ratio=0.25&logo_bottom_ratio=0.28&sash_mode=sash&cinema_greyscale=true&cinema_greyscale_skip_if_available=false&release_status_cinema_only=false&muted=false&sash_poster_color=false&sash_length_ratio=1.20&sash_height_ratio=0.135&sash_priority=wins%2Cgg_wins%2Cfestival%2Cpic_noms%2Cmetacritic%2Cgg_noms%2Ctrending%2Ctrending_broad%2Cpremiere%2Cnew_release%2Cjust_added%2Cnew_season%2Cseason_finale%2Cstudio%2Cdirector%2Ccast%2Ccult%2Cforeign%2Ctrue_story%2Cshort_film%2Cmini_series%2Cbinge_ready%2Creturning%2Cairing%2Ccancelled%2Cended%2Cphysical%2Cstreaming%2Ccinema%2Cproduction&badge_display_mode=5&badge_height=28&badge_anchor_x=0.060&badge_anchor_y=0.045&badge_min_score=5&top_vignette_sash_only=true',
+    params: 'http://postersplus:8000/poster?tmdb_id={tmdb_id}&type={type}&primary_client=stremio_tv_nuvio&top_gradient=medium&bottom_gradient=high&fallback_to_imdb=true&rating_display_mode=1&score_color_mode=2&accent_bar_font_size_ratio=0.080&accent_bar_y_offset=0.90&accent_bar_append_mode=0&accent_bar_bottom_ratio=0.040&score_glow_threshold=85&score_glow_blur=1&score_glow_alpha=40&movie_weights=letterboxd%3A0.99%2Ctrakt%3A0.01%2Ctomatoes%3A0.00%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Crogerebert%3A0.00%2Cmyanimelist%3A0.00&tv_weights=trakt%3A0.80%2Ctomatoes%3A0.20%2Cpopcorn%3A0.00%2Cimdb%3A0.00%2Cmetacritic%3A0.00%2Cmetacriticuser%3A0.00%2Ctmdb%3A0.00%2Cmyanimelist%3A0.00&textless=false&use_original_art=false&original_art_source=primary&logo_language=en&logo_priority=native_original&fallback_bg_style=photoreal&logo_max_w_ratio=0.75&logo_max_h_ratio=0.25&logo_bottom_ratio=0.28&sash_mode=sash&cinema_greyscale=true&cinema_greyscale_skip_if_available=false&release_status_cinema_only=false&muted=false&sash_poster_color=false&sash_length_ratio=1.20&sash_height_ratio=0.135&sash_priority=wins%2Cgg_wins%2Cfestival%2Cpic_noms%2Cmetacritic%2Cgg_noms%2Ctrending%2Ctrending_broad%2Cpremiere%2Cnew_release%2Cjust_added%2Cnew_season%2Cseason_finale%2Cstudio%2Cdirector%2Ccast%2Ccult%2Cforeign%2Ctrue_story%2Cshort_film%2Cmini_series%2Cbinge_ready%2Creturning%2Cairing%2Ccancelled%2Cended%2Cphysical%2Cstreaming%2Ccinema%2Cproduction&badge_display_mode=5&badge_height=28&badge_anchor_x=0.060&badge_anchor_y=0.045&badge_min_score=5&top_vignette_sash_only=true',
   },
   {
     id: 'light_rating_bar',
@@ -5299,7 +5337,7 @@ function loadPreset(id) {
   const preset = PRESETS.find(p => p.id === id);
   if (!preset) return;
   const domain = (vEl('cfg-domain') || window.location.origin).replace(/\/$/, '');
-  const url = `${domain}/poster?tmdb_id=%7Btmdb_id%7D&imdb_id=%7Bimdb_id%7D&type=%7Btype%7D&${preset.params}`;
+  const url = `${domain}/poster?tmdb_id=%7Btmdb_id%7D&type=%7Btype%7D&${preset.params}`;
   importUrl(url, { settingsOnly: true, preserveClientInsets: true });
   closePresetModal();
   setStatus(`Preset "${preset.name}" loaded.`, 'ok');

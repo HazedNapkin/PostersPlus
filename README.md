@@ -286,7 +286,7 @@ Set the following environment variables before running, or edit the `_DEFAULT` c
 | `JELLYFIN_API_KEY` | API key from Jellyfin Dashboard → Advanced → API Keys |
 | `POSTERSPLUS_URL` | Full PostersPlus URL template including your preferred query parameters |
 
-The `POSTERSPLUS_URL` value should be the full URL template you'd normally give AIOMetadata. Copy it straight from the configurator's output box, replacing the `{tmdb_id}`, `{imdb_id}`, and `{type}` placeholders. Both scripts fill these in automatically from library metadata.
+The `POSTERSPLUS_URL` value should be the full URL template you'd normally give AIOMetadata. Copy it straight from the configurator's output box, replacing the `{tmdb_id}` and `{type}` placeholders. Both scripts fill these in automatically from library metadata, and add `imdb_id` for the items that have one.
 
 ### Usage
 
@@ -313,8 +313,12 @@ Both scripts process Movies and TV Shows. TV quality tokens are derived from a r
 Posters are served at `/poster` with parameters controlling every aspect of rendering:
 
 ```
-https://yourdomain.com/poster?tmdb_id={tmdb_id}&imdb_id={imdb_id}&type={type}
+https://yourdomain.com/poster?tmdb_id={tmdb_id}&type={type}
 ```
+
+`tmdb_id` is the only required identity: it selects the artwork and the metadata. `imdb_id` is optional enrichment — send it if your client has one reliably (the Plex and Jellyfin sync scripts do) and it keys the rating cache by IMDb id, sharing that row with every other client. Don't put it in an AIOMetadata template: TMDB has no IMDb link for some titles, and a required placeholder with no value makes the resolver discard the entire URL, so those titles get no poster at all.
+
+For a title with no IMDb id anywhere, TMDB artwork, logos, MDBList ratings, awards, sashes, genres and release status all work normally. Only the IMDb-keyed extras are unavailable: Metahub logo fallback, digital-release detection, and automatic stream-quality badges (an explicit `quality=` still works, which is why the Plex and Jellyfin sync scripts keep full badges either way).
 
 Append `&debug=1` to any poster URL to receive a JSON response with all computed metadata (score, genre, sash label, quality tokens, award data, matched cast/directors) instead of rendering the image. Useful for diagnosing unexpected sashes or missing ratings.
 
@@ -334,10 +338,10 @@ No id conversion happens in either direction. If your client can't supply one of
 Enable **Anime IDs** in the configurator's Core tab (off by default) and it appends one placeholder:
 
 ```
-?tmdb_id={tmdb_id}&imdb_id={imdb_id}&stremio_id={id}&type={type}
+?tmdb_id={tmdb_id}&stremio_id={id}&type={type}
 ```
 
-`{id}` is AIOMetadata's raw Stremio meta id — `kitsu:7442` for a Kitsu-catalogue anime, `tt0903747` or `tmdb:1396` otherwise. PostersPlus reads the namespace off it and ignores anything that isn't an anime id, so the same URL serves your whole library.
+`{id}` is AIOMetadata's raw Stremio meta id — `kitsu:7442` for a Kitsu-catalogue anime, `tt0903747` or `tmdb:1396` otherwise. PostersPlus reads the namespace off it and ignores anything that isn't an anime id, so the same URL serves your whole library. When it holds an IMDb id, that is also used as the title's identity, which shares its rating cache row with clients that send `imdb_id` directly.
 
 **This is for AIOMetadata only — leave it off for anything else,** since no other metadata addon exposes anime IDs.
 

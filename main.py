@@ -501,7 +501,7 @@ def _mdblist_server_key_label(key: str | None) -> str:
 
 
 def _mark_mdblist_rate_limit(
-    imdb_id: str, key: str, result
+    canonical_id: str, key: str, result
 ) -> tuple[float, str | None]:
     """Cool down a rate-limited key and select a healthy configured fallback."""
     if result.retry_after:
@@ -510,12 +510,12 @@ def _mark_mdblist_rate_limit(
         backoff_secs = 3600.0
     now = asyncio.get_running_loop().time()
     _mdblist_key_cooldown[key] = now + backoff_secs
-    _rating_backoff[_rating_retry_key(imdb_id, key)] = now + backoff_secs
+    _rating_backoff[_rating_retry_key(canonical_id, key)] = now + backoff_secs
     return backoff_secs, _next_mdblist_server_key(key, now)
 
 
 async def _background_quality_fetch(
-    imdb_id: str,
+    quality_id: str,
     media_type: str,
     season: int,
     episode: int,
@@ -532,25 +532,25 @@ async def _background_quality_fetch(
             remaining = _quality_backoff_remaining()
             if remaining > 0:
                 logger.debug(
-                    f"Quality fetch skipped for {imdb_id}; source cooldown has {remaining:.0f}s remaining"
+                    f"Quality fetch skipped for {quality_id}; source cooldown has {remaining:.0f}s remaining"
                 )
                 return
             result = await _with_retry(
                 fetch_quality,
-                _HTTP_CLIENT, imdb_id, media_type, season, episode, release_date,
+                _HTTP_CLIENT, quality_id, media_type, season, episode, release_date,
             )
             _record_quality_result(result)
             if result is QUALITY_PENDING:
                 # QualiCache is collecting in the background; the next request
                 # for this title picks up the value once it lands.
-                logger.info(f"Background quality fetch pending for {imdb_id}")
+                logger.info(f"Background quality fetch pending for {quality_id}")
             elif result is not FETCH_FAILED:
-                logger.info(f"Background quality fetch complete for {imdb_id}")
+                logger.info(f"Background quality fetch complete for {quality_id}")
     except Exception as exc:
         _record_quality_result(FETCH_FAILED)
-        logger.warning(f"Background quality fetch failed for {imdb_id}: {exc}")
+        logger.warning(f"Background quality fetch failed for {quality_id}: {exc}")
     finally:
-        _quality_bg_inflight.discard(imdb_id)
+        _quality_bg_inflight.discard(quality_id)
 
 # Local imports
 from age_badge import draw_quality_age_badge, draw_tier_bar, _score_points
@@ -678,6 +678,63 @@ def _check_imdb_id(val: str) -> None:
         raise HTTPException(status_code=400, detail="Invalid imdb_id")
 
 
+def _normalise_optional_id(raw: str | None, name: str) -> str:
+    """Trim an optional id param, reading an unsubstituted placeholder as absent.
+
+    A template pasted into a metadata provider arrives with the placeholder
+    still in it when that provider has no id for the title — AIOMetadata's
+    optional "{name?}" form is left verbatim by older builds, and some addons
+    reject the "?" syntax outright so operators write the plain form. Either way
+    the value is "no id", not a malformed one, and 400ing it would take down
+    every poster served through that template.
+
+    Deliberately narrow: only this parameter's own two literals. Accepting any
+    brace-wrapped value would silently swallow genuine typos.
+    """
+    value = (raw or "").strip()
+    if value in ("{" + name + "}", "{" + name + "?}"):
+        return ""
+    return value
+
+
+def _canonical_rating_id(imdb_id: str, anime_key: str, tmdb_id: str) -> str:
+    """The immutable cache/coalescing identity for a request.
+
+    Chosen once, before any metadata is fetched, and never revised: it keys the
+    rating cache read, the rating cache write, the coalescing map and the
+    back-off tables, so a value that changed mid-request would read one row and
+    write another — turning every subsequent request for that title into a fresh
+    MDBList call, permanently.
+
+    An IMDb id discovered later from TMDB metadata therefore never lands here.
+    See _quality_identity() for the identity that may use it.
+
+    The "tmdb:" form can't collide with a bare TMDB id or a tt-prefixed IMDb id,
+    and matches the namespacing the anime path already stores in these columns —
+    so no migration is needed.
+    """
+    return imdb_id or anime_key or f"tmdb:{tmdb_id}"
+
+
+def _quality_identity(
+    imdb_id: str, anime_key: str, effective_imdb_id: str | None
+) -> str | None:
+    """The id sent to the configured quality source, or None to skip the lookup.
+
+    Unlike the rating identity this is an *upstream* identity — Torrentio, Comet,
+    AIOStreams and QualiCache have to recognise it — so it is resolved after
+    metadata, and may use an IMDb id that only TMDB knew about.
+
+    Precedence is load-bearing. The anime-native id outranks a TMDB-discovered
+    IMDb id because it is what Stremio itself sends those addons for anime, and
+    because promoting the tt id would orphan every quality row already cached
+    under "kitsu:…". A title with no IMDb id at all yields None: there is no
+    accepted "tmdb:<id>" stream id for the ordinary sources, so the lookup is
+    skipped rather than issued in a form nothing answers.
+    """
+    return imdb_id or anime_key or effective_imdb_id or None
+
+
 def _check_type(val: str) -> None:
     if val not in _VALID_TYPES:
         raise HTTPException(status_code=400, detail="Invalid type")
@@ -748,9 +805,9 @@ def _resolve_mdblist_key(query_key: str) -> str | None:
     return None
 
 
-def _rating_retry_key(imdb_id: str, mdblist_key: str) -> tuple[str, str]:
+def _rating_retry_key(canonical_id: str, mdblist_key: str) -> tuple[str, str]:
     """Identify retry state for one title on one MDBList API key."""
-    return imdb_id, mdblist_key
+    return canonical_id, mdblist_key
 
 
 def _detection_vote_ok(vote_count: int | None) -> bool:
@@ -3427,10 +3484,17 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
                         _record_quality_result(FETCH_FAILED)
                         logger.warning(f"Cache warm: quality fetch failed for {imdb_id}: {exc}")
 
-        if mdblist_calls >= mdblist_budget or not imdb_id:
+        if mdblist_calls >= mdblist_budget:
             continue
 
-        if get_cached_rating(imdb_id) is not None:
+        # Warm under exactly the identity /poster reads, or the row is written
+        # where nothing looks for it. A title TMDB has no IMDb link for is warmed
+        # through the TMDB route rather than skipped.
+        warm_canonical_id = _canonical_rating_id(imdb_id or "", "", tmdb_id)
+        warm_provider     = "imdb" if imdb_id else "tmdb"
+        warm_media_id     = imdb_id or tmdb_id
+
+        if get_cached_rating(warm_canonical_id) is not None:
             continue  # rating already fresh — nothing to do
 
         await asyncio.sleep(0.25)
@@ -3438,16 +3502,17 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
         async def _fetch_rating_warm(_key: str):
             async with _mdblist_semaphore:
                 return await fetch_rating(
-                    client, imdb_id, _key, genre_ids, media_type,
+                    client, _key, genre_ids, media_type,
+                    media_id=warm_media_id, provider=warm_provider,
                 )
 
         result = await _fetch_rating_warm(effective_mdblist_key)
         mdblist_calls += 1
 
         if isinstance(result, _RateLimited):
-            backoff_secs, replacement = _mark_mdblist_rate_limit(imdb_id, effective_mdblist_key, result)
+            backoff_secs, replacement = _mark_mdblist_rate_limit(warm_canonical_id, effective_mdblist_key, result)
             logger.warning(
-                f"Cache warm: MDBList rate-limited on {imdb_id}; "
+                f"Cache warm: MDBList rate-limited on {warm_canonical_id}; "
                 f"key cooling down for {backoff_secs:.0f}s"
             )
             if replacement:
@@ -3458,7 +3523,7 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
             continue
 
         if result is FETCH_FAILED:
-            logger.warning(f"Cache warm: MDBList fetch failed for {imdb_id} — stopping MDBList warming for this cycle")
+            logger.warning(f"Cache warm: MDBList fetch failed for {warm_canonical_id} — stopping MDBList warming for this cycle")
             mdblist_budget = mdblist_calls  # stop further MDBList attempts
             continue
 
@@ -3474,7 +3539,7 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
         is_metacritic = "metacritic-must-see" in kw_names
 
         set_cached_rating(
-            imdb_id,
+            warm_canonical_id,
             ratings_dict if isinstance(ratings_dict, dict) else {},
             genre or "Unknown",
             rel,
@@ -4438,6 +4503,27 @@ async def get_poster(
 
     _check_type(type)
 
+    # Done before anything reads imdb_id — the composite cache key is built from
+    # it further down, and a literal "{imdb_id?}" baked into cache keys would
+    # fragment the cache per client build.
+    imdb_id = _normalise_optional_id(imdb_id, "imdb_id")
+
+    # AIOMetadata's "{id}" is the raw Stremio meta id, and for an ordinary title
+    # that IS the IMDb id ("tt0903747"). Generated templates no longer send
+    # imdb_id — a required placeholder with no value nulls the whole url — so
+    # when a template carries {id} and nothing else identifies the title to
+    # IMDb, take it from there. Request-supplied and available before any
+    # metadata fetch, so unlike an id discovered from TMDB later it is safe to
+    # key the cache on: it makes the row shared with every other client that
+    # sends an IMDb id, rather than a second row under the tmdb: form.
+    #
+    # Parsed here rather than in _resolve_anime_request because that returns
+    # early when anime sources are disabled, and this is not an anime concern.
+    if not imdb_id and stremio_id:
+        _stremio_hint = stremio_id.strip()
+        if _IMDB_ID_RE.match(_stremio_hint):
+            imdb_id = _stremio_hint
+
     # -----------------------------------------------------------------------
     # Anime-native ids (AniList / Kitsu).
     #
@@ -4454,11 +4540,11 @@ async def get_poster(
     # beyond the foreign-language label. So enrichment still runs on whatever
     # ids the client supplied; only the art comes from the anime provider.
     #
-    # `canonical_id` is the identity for the rating/quality cache tables and the
-    # scraper stream id: the IMDb id when there is one (so the row is shared
-    # with the ordinary path), else the "<namespace>:<id>" anime form, which
-    # can't collide with a bare TMDB id or a tt-prefixed IMDb id and is already
-    # what Torrentio/Comet/AIOStreams expect for anime stream lookups.
+    # `canonical_id` is the identity for the rating cache table: the IMDb id
+    # when there is one (so the row is shared with the ordinary path), else the
+    # "<namespace>:<id>" anime form, which can't collide with a bare TMDB id or
+    # a tt-prefixed IMDb id. See _canonical_rating_id(); the stream id sent to
+    # quality sources is resolved separately, after metadata.
     # -----------------------------------------------------------------------
     anime_namespace, anime_id = _resolve_anime_request(anilist_id, kitsu_id, stremio_id)
     is_anime = anime_namespace is not None
@@ -4478,32 +4564,50 @@ async def get_poster(
         # through them.
         if not tmdb_id:
             tmdb_id = anime_key
-        canonical_id = imdb_id or anime_key
     else:
-        # The ordinary TMDB path needs both ids, so report a missing one as
-        # missing.  Handing the empty string to the format checks reported it as
-        # a malformed id, and named whichever param happened to be checked first
-        # — so a caller who sent only tmdb_id was told "Invalid imdb_id" and a
-        # caller who sent only imdb_id was told "Invalid tmdb_id", both pointing
-        # away from what was actually wrong.
-        _missing = [
-            _name for _name, _value in (("tmdb_id", tmdb_id), ("imdb_id", imdb_id))
-            if not _value
-        ]
-        if _missing:
+        # tmdb_id is the one required identity: it selects the artwork and the
+        # metadata spine, and nothing renders without it. imdb_id is optional
+        # enrichment.
+        #
+        # It used to be required too, which meant a title TMDB has no IMDb link
+        # for — TMDB returns imdb_id: null for these — could not be rendered at
+        # all, and the 400 named a parameter the caller had no way to supply.
+        # Handing the empty string to the format checks was worse still: it
+        # reported a missing id as malformed, and named whichever param happened
+        # to be checked first.
+        if not tmdb_id:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Missing required parameter(s): {', '.join(_missing)}. "
-                    "/poster needs both tmdb_id and imdb_id: tmdb_id selects the "
-                    "artwork and metadata, imdb_id keys the rating, awards and "
-                    "quality lookups."
+                    "Missing required parameter: tmdb_id. /poster needs tmdb_id — "
+                    "it selects the artwork and metadata. imdb_id is optional; "
+                    "supplying it adds the IMDb-keyed enrichment (Metahub logo "
+                    "fallback, digital-release detection, stream-quality badges)."
                 ),
             )
         _check_tmdb_id(tmdb_id)
-        _check_imdb_id(imdb_id)
+        if imdb_id:
+            _check_imdb_id(imdb_id)
         has_tmdb_id = True
-        canonical_id = imdb_id
+
+    canonical_id = _canonical_rating_id(imdb_id, anime_key, tmdb_id)
+
+    # The MDBList lookup route — what we ask upstream, as opposed to what we key
+    # the cache on. MDBList serves the same record under /imdb/… and /tmdb/…, so
+    # a title with no IMDb id still has ratings, awards, keywords and an age
+    # rating available; it just has to be asked for by its TMDB id.
+    #
+    # Anime is deliberately excluded from the TMDB route: those titles take their
+    # score, genre and age rating from the anime provider, and routing them to
+    # MDBList as well would start putting awards and festival sashes on a whole
+    # catalogue that has never had them. That is a rendering change to make on
+    # purpose, not a side effect of this one.
+    if imdb_id:
+        rating_provider, rating_media_id = "imdb", imdb_id
+    elif has_tmdb_id and not is_anime:
+        rating_provider, rating_media_id = "tmdb", tmdb_id
+    else:
+        rating_provider, rating_media_id = None, None
 
     # -----------------------------------------------------------------------
     # Single-user mode: check for a cached final poster first.
@@ -4516,13 +4620,19 @@ async def get_poster(
     effective_tmdb_key    = _resolve_tmdb_key(tmdb_key)
     effective_mdblist_key = _resolve_mdblist_key(mdblist_key)
 
-    # MDBList is keyed by IMDb id. Only null the key when the request genuinely
-    # has no IMDb id — that makes every downstream MDBList gate (cooldown,
-    # back-off, coalescing, the fetch itself) skip naturally rather than needing
-    # a branch at each one. When AIOMetadata does send an IMDb id alongside the
-    # anime id, the normal fetch runs and the provider score is merged into its
-    # result, so the sash gets awards, keywords and an age rating too.
-    if not imdb_id:
+    # Only null the key when the request has no MDBList-resolvable identity at
+    # all — that makes every downstream MDBList gate (cooldown, back-off,
+    # coalescing, the fetch itself) skip naturally rather than needing a branch
+    # at each one.
+    #
+    # This used to trigger on a missing IMDb id, which quietly made the lookup
+    # unreachable for TMDB-only titles no matter how the fetch itself was
+    # routed. It is now the absence of a route: an anime request that carries
+    # neither an IMDb id nor a TMDB id. When AIOMetadata does send an IMDb id
+    # alongside the anime id, the normal fetch runs and the provider score is
+    # merged into its result, so the sash gets awards, keywords and an age
+    # rating too.
+    if rating_media_id is None:
         effective_mdblist_key = None
 
     # An anime request gets its art and metadata from the provider, so a TMDB
@@ -4615,10 +4725,14 @@ async def get_poster(
         # The anime key has to be part of this: the same imdb/tmdb pair renders
         # different art depending on whether an anime id came with it, so the
         # two must not share a composite cache entry.
+        # Non-anime uses canonical_id rather than the raw imdb_id so a TMDB-only
+        # title gets "tmdb:1698026:…" instead of a leading empty segment. For a
+        # title that has an IMDb id the two are the same string, so existing
+        # cache entries stay valid.
         final_cache_key = (
             f"{anime_key}:{imdb_id}:{tmdb_id}:{type}:{_params_hash}"
             if is_anime
-            else f"{imdb_id}:{tmdb_id}:{type}:{_params_hash}"
+            else f"{canonical_id}:{tmdb_id}:{type}:{_params_hash}"
         )
         cached_jpeg = None if _force_refresh else get_cached_final_poster(final_cache_key)
         if _force_refresh:
@@ -4707,14 +4821,14 @@ async def get_poster(
     # ------------------------------------------------------------------
     # Rating fetch coalescing + back-off
     #
-    # Goal: ensure at most one MDBList call per imdb_id per worker at a
+    # Goal: ensure at most one MDBList call per canonical_id per worker at a
     # time, and suppress repeated failures with key-scoped cooldowns.
     #
     # Back-off check: if a recent fetch failed, skip that title-key pair
     # until its escalating retry delay expires.
     #
     # Coalescing: if another coroutine in this worker is already fetching
-    # the same imdb_id, wait for its asyncio.Event, then re-read the DB.
+    # the same canonical_id, wait for its asyncio.Event, then re-read the DB.
     # If it succeeded we get the cached data for free; if it failed we
     # re-check the back-off (now set by the other coroutine) before
     # deciding whether to attempt our own call.
@@ -4734,12 +4848,12 @@ async def get_poster(
             if _replacement is not None:
                 effective_mdblist_key = _replacement
                 logger.info(
-                    f"MDBList key rotated to key #{_mdblist_active_key_idx + 1} for {imdb_id}"
+                    f"MDBList key rotated to key #{_mdblist_active_key_idx + 1} for {canonical_id}"
                 )
             else:
                 _remaining = _mdblist_key_cooldown.get(_cooling_key, 0.0) - _loop_now
                 logger.debug(
-                    f"Rating fetch for {imdb_id} skipped "
+                    f"Rating fetch for {canonical_id} skipped "
                     f"(selected MDBList key cooling down; {_remaining:.0f}s remaining)"
                 )
                 effective_mdblist_key = None
@@ -4748,11 +4862,11 @@ async def get_poster(
 
         # Per-title and key backoff (network failures, or this title-key pair's last 429).
         if effective_mdblist_key:
-            _retry_key = _rating_retry_key(imdb_id, effective_mdblist_key)
+            _retry_key = _rating_retry_key(canonical_id, effective_mdblist_key)
             _backoff_until = _rating_backoff.get(_retry_key)
             if _backoff_until is not None:
                 if _loop_now < _backoff_until:
-                    logger.debug(f"Rating fetch for {imdb_id} skipped (MDBList back-off active for selected key)")
+                    logger.debug(f"Rating fetch for {canonical_id} skipped (MDBList back-off active for selected key)")
                     effective_mdblist_key = None
                     _rating_backoff_active = True
                     _mdblist_unavailable_reason = "selected key is in back-off for this title"
@@ -4761,12 +4875,12 @@ async def get_poster(
                     _rating_fail_count.pop(_retry_key, None)  # reset escalation for clean slate
 
     if not rating_already_cached and effective_mdblist_key:
-        _inflight_event = _rating_fetch_inflight.get(imdb_id)
+        _inflight_event = _rating_fetch_inflight.get(canonical_id)
         if _inflight_event is not None:
             # Another coroutine is mid-fetch — wait and piggyback on its result.
-            logger.info(f"Rating fetch coalesced for {imdb_id} — awaiting in-flight fetch")
+            logger.info(f"Rating fetch coalesced for {canonical_id} — awaiting in-flight fetch")
             await _inflight_event.wait()
-            _refreshed = get_cached_rating(imdb_id)
+            _refreshed = get_cached_rating(canonical_id)
             if _refreshed is not None:
                 (
                     cached_ratings_dict,
@@ -4783,81 +4897,28 @@ async def get_poster(
                 ) = _refreshed
                 rating_already_cached        = True
                 release_date_for_quality_ttl = cached_release_date
-                logger.info(f"Rating coalesce succeeded for {imdb_id} — using cached result")
+                logger.info(f"Rating coalesce succeeded for {canonical_id} — using cached result")
             else:
                 # The owner already made the MDBList attempt for this title.
                 # If it did not produce a cache row, do not launch a second
                 # same-content request from a waiter in the same burst.
                 logger.debug(
-                    f"Rating fetch for {imdb_id} suppressed after coalescence "
+                    f"Rating fetch for {canonical_id} suppressed after coalescence "
                     "(owner did not cache rating)"
                 )
                 effective_mdblist_key = None
                 _rating_backoff_active = True
                 _mdblist_unavailable_reason = "coalesced fetch did not cache rating"
         else:
-            # First request for this imdb_id — claim the fetch slot.
+            # First request for this canonical_id — claim the fetch slot.
             _rating_event_to_set              = asyncio.Event()
-            _rating_fetch_inflight[imdb_id]   = _rating_event_to_set
+            _rating_fetch_inflight[canonical_id] = _rating_event_to_set
 
-    # Quality tokens — cache checked exactly once here; fetch fn only writes.
-    if quality:
-        quality_tokens = parse_quality(quality)
-        cached_tokens  = None
-    else:
-        cached_tokens  = get_cached_quality(canonical_id, release_date_for_quality_ttl)
-        quality_tokens = cached_tokens or []
-
-    # A quality source is available when the backend QUALITY_SOURCE selects has
-    # the settings it needs — AIOStreams URL + auth, SCRAPER_URL, or QUALICACHE_URL.
-    _has_quality_source = quality_source_configured()
-    _quality_cooldown_active = _has_quality_source and _quality_backoff_remaining() > 0
-
-    # The landscape renderer has no quality badges — build_landscape drops the
-    # tokens — so fetching them buys nothing and costs plenty: wait_for_quality
-    # would block every landscape request on a provider whose answer is thrown
-    # away, and a pending fetch would keep the composite out of the cache, so a
-    # slow source turned every request into a fresh render.
-    _is_landscape = rcfg.shape == "landscape"
-
-    quality_needs_fetch = (
-        rcfg.badge_display_mode in (1, 2, 4, 5)
-        and not quality
-        and cached_tokens is None
-        and _has_quality_source
-        and not _quality_cooldown_active
-        and not _is_landscape
-    )
-
-    quality_pending = bool(
-        _quality_cooldown_active and cached_tokens is None and not _is_landscape
-    )
-    if quality_needs_fetch and not rcfg.wait_for_quality:
-        # Fire-and-forget background fetch — poster is served immediately
-        # without badges; the cache will be warm on the next request.
-        # Torrentio, Comet and AIOStreams all accept an anime-native stream id
-        # ("kitsu:12345:1:1") because that is exactly what Stremio sends them
-        # for Kitsu-catalogue items, so the canonical id passes straight
-        # through and the quality badge keeps working without an IMDb id.
-        if canonical_id not in _quality_bg_inflight:
-            _quality_bg_inflight.add(canonical_id)
-            asyncio.create_task(
-                _background_quality_fetch(
-                    canonical_id, type, season, episode,
-                    release_date_for_quality_ttl,
-                )
-            )
-            logger.info(f"Quality fetch deferred to background for {canonical_id}")
-        else:
-            logger.info(f"Quality background fetch already in progress for {canonical_id}")
-        quality_needs_fetch = False
-        quality_pending = True
-
-    # An anime request without an IMDb id nulls the key deliberately, so this
-    # would be noise rather than a warning.
-    if not rating_already_cached and not effective_mdblist_key and imdb_id:
+    # A request with no MDBList route (anime carrying neither an IMDb nor a TMDB
+    # id) nulls the key deliberately, so this would be noise rather than a warning.
+    if not rating_already_cached and not effective_mdblist_key and rating_media_id:
         logger.warning(
-            f"MDBList unavailable for {imdb_id}: {_mdblist_unavailable_reason} — "
+            f"MDBList unavailable for {canonical_id}: {_mdblist_unavailable_reason} — "
             "poster will be served without rating/award data."
         )
 
@@ -4942,7 +5003,84 @@ async def get_poster(
             )
         # Canonical IMDb id for downstream lookups (e.g. TVDB remoteid resolution):
         # the request param if supplied, else the one TMDB returned in external_ids.
+        # Optional: TMDB returns imdb_id: null for titles it has no IMDb link for.
         effective_imdb_id = (imdb_id or "").strip() or tmdb_data.get("imdb_id") or None
+
+        # ------------------------------------------------------------------
+        # Quality tokens — cache checked exactly once here; fetch fn only writes.
+        #
+        # This runs *after* metadata on purpose. The id a quality source will
+        # recognise is not always one the caller sent: for an ordinary title
+        # whose URL carries no imdb_id, the IMDb id TMDB just returned is the
+        # only thing Torrentio/Comet/AIOStreams/QualiCache can be asked about.
+        # Resolving quality before metadata would have silently dropped the
+        # badges from every normally-linked title the moment generated templates
+        # stopped sending imdb_id.
+        #
+        # quality_id is None when nothing upstream would recognise the title —
+        # then the lookup is skipped rather than issued in a form that can only
+        # 404. An explicit quality= override needs no lookup and is unaffected.
+        # ------------------------------------------------------------------
+        quality_id = _quality_identity(imdb_id, anime_key, effective_imdb_id)
+
+        if quality:
+            quality_tokens = parse_quality(quality)
+            cached_tokens  = None
+        elif quality_id is None:
+            cached_tokens  = None
+            quality_tokens = []
+        else:
+            cached_tokens  = get_cached_quality(quality_id, release_date_for_quality_ttl)
+            quality_tokens = cached_tokens or []
+
+        # A quality source is available when the backend QUALITY_SOURCE selects has
+        # the settings it needs — AIOStreams URL + auth, SCRAPER_URL, or QUALICACHE_URL.
+        _has_quality_source = quality_source_configured()
+        _quality_cooldown_active = _has_quality_source and _quality_backoff_remaining() > 0
+
+        # The landscape renderer has no quality badges — build_landscape drops the
+        # tokens — so fetching them buys nothing and costs plenty: wait_for_quality
+        # would block every landscape request on a provider whose answer is thrown
+        # away, and a pending fetch would keep the composite out of the cache, so a
+        # slow source turned every request into a fresh render.
+        _is_landscape = rcfg.shape == "landscape"
+
+        quality_needs_fetch = (
+            rcfg.badge_display_mode in (1, 2, 4, 5)
+            and not quality
+            and quality_id is not None
+            and cached_tokens is None
+            and _has_quality_source
+            and not _quality_cooldown_active
+            and not _is_landscape
+        )
+
+        quality_pending = bool(
+            _quality_cooldown_active
+            and quality_id is not None
+            and cached_tokens is None
+            and not _is_landscape
+        )
+        if quality_needs_fetch and not rcfg.wait_for_quality:
+            # Fire-and-forget background fetch — poster is served immediately
+            # without badges; the cache will be warm on the next request.
+            # Torrentio, Comet and AIOStreams all accept an anime-native stream id
+            # ("kitsu:12345:1:1") because that is exactly what Stremio sends them
+            # for Kitsu-catalogue items, so that form passes straight through and
+            # the quality badge keeps working without an IMDb id.
+            if quality_id not in _quality_bg_inflight:
+                _quality_bg_inflight.add(quality_id)
+                asyncio.create_task(
+                    _background_quality_fetch(
+                        quality_id, type, season, episode,
+                        release_date_for_quality_ttl,
+                    )
+                )
+                logger.info(f"Quality fetch deferred to background for {quality_id}")
+            else:
+                logger.info(f"Quality background fetch already in progress for {quality_id}")
+            quality_needs_fetch = False
+            quality_pending = True
         _text_titles = tuple(dict.fromkeys(
             value for value in (title, tmdb_data.get("original_title")) if value
         ))
@@ -5063,8 +5201,8 @@ async def get_poster(
                 _mdblist_semaphore = asyncio.Semaphore(_cfg.MDBLIST_CONCURRENCY)
 
             async def _fetch_rating_gated(
-                _key: str, _client=client, _imdb_id=imdb_id,
-                _gids=genre_ids, _type=type,
+                _key: str, _client=client, _media_id=rating_media_id,
+                _provider=rating_provider, _gids=genre_ids, _type=type,
                 _mw=effective_movie_weights, _tw=effective_tv_weights,
             ):
                 nonlocal _rating_backoff_active, _mdblist_unavailable_reason
@@ -5079,7 +5217,7 @@ async def get_poster(
                         if _replacement_key is None:
                             _remaining = _mdblist_key_cooldown.get(_fetch_key, 0.0) - _fetch_now
                             logger.debug(
-                                f"Rating fetch for {_imdb_id} skipped "
+                                f"Rating fetch for {canonical_id} skipped "
                                 f"({_mdblist_server_key_label(_fetch_key)} cooling down; "
                                 f"{_remaining:.0f}s remaining)"
                             )
@@ -5091,12 +5229,13 @@ async def get_poster(
                             )
                         logger.info(
                             f"MDBList key rotated from {_mdblist_server_key_label(_fetch_key)} "
-                            f"to {_mdblist_server_key_label(_replacement_key)} for {_imdb_id} "
+                            f"to {_mdblist_server_key_label(_replacement_key)} for {canonical_id} "
                             "before outbound fetch"
                         )
                         _fetch_key = _replacement_key
                     return _fetch_key, await fetch_rating(
-                        _client, _imdb_id, _fetch_key, _gids, _type,
+                        _client, _fetch_key, _gids, _type,
+                        media_id=_media_id, provider=_provider,
                         movie_weights=_mw, tv_weights=_tw,
                     )
 
@@ -5470,16 +5609,16 @@ async def get_poster(
         if isinstance(rating_result, _RateLimited) and effective_mdblist_key:
             _failed_key = effective_mdblist_key
             _backoff_secs, _rescue_key = _mark_mdblist_rate_limit(
-                imdb_id, _failed_key, rating_result
+                canonical_id, _failed_key, rating_result
             )
             logger.warning(
                 f"MDBList {_mdblist_server_key_label(_failed_key)} rate-limited "
-                f"for {imdb_id}; cooling down for {_backoff_secs:.0f}s"
+                f"for {canonical_id}; cooling down for {_backoff_secs:.0f}s"
             )
             if _rescue_key is not None:
                 effective_mdblist_key = _rescue_key
                 logger.warning(
-                    f"Retrying MDBList for {imdb_id} with "
+                    f"Retrying MDBList for {canonical_id} with "
                     f"{_mdblist_server_key_label(_rescue_key)}"
                 )
                 _rescue_used_key, rating_result = await _fetch_rating_gated(_rescue_key)
@@ -5495,7 +5634,7 @@ async def get_poster(
                 fetched = await asyncio.wait_for(
                     _with_retry(
                         fetch_quality,
-                        client, imdb_id, type, season, episode, release_date_for_quality_ttl,
+                        client, quality_id, type, season, episode, release_date_for_quality_ttl,
                     ),
                     timeout=_cfg.QUALITY_WAIT_TIMEOUT,
                 )
@@ -5504,25 +5643,25 @@ async def get_poster(
                     # QualiCache has queued this title but has no value yet.
                     # Waiting longer wouldn't help — it collects out of band.
                     logger.info(
-                        f"Inline quality fetch pending for {imdb_id} "
+                        f"Inline quality fetch pending for {quality_id} "
                         "— serving without quality, composite not cached"
                     )
                     quality_pending = True
                 elif fetched is not FETCH_FAILED:
                     quality_tokens = fetched
-                    logger.info(f"Inline quality fetch complete for {imdb_id}: {quality_tokens}")
+                    logger.info(f"Inline quality fetch complete for {quality_id}: {quality_tokens}")
                 else:
                     # The quality source returned a transient error — don't cache
                     # the composite poster without quality so the next request retries.
                     logger.warning(
-                        f"Inline quality fetch failed for {imdb_id} "
+                        f"Inline quality fetch failed for {quality_id} "
                         "— serving without quality, composite not cached"
                     )
                     quality_pending = True
             except asyncio.TimeoutError:
                 _record_quality_result(FETCH_FAILED)
                 logger.warning(
-                    f"Quality wait timed out for {imdb_id} "
+                    f"Quality wait timed out for {quality_id} "
                     f"after {_cfg.QUALITY_WAIT_TIMEOUT:.0f}s — serving without quality, "
                     "composite not cached so next request retries"
                 )
@@ -5541,29 +5680,29 @@ async def get_poster(
 
         if rating_failed:
             if rate_limited:
-                _retry_key = _rating_retry_key(imdb_id, effective_mdblist_key)
+                _retry_key = _rating_retry_key(canonical_id, effective_mdblist_key)
                 if _retry_key not in _rating_backoff:
                     backoff_secs, _ = _mark_mdblist_rate_limit(
-                        imdb_id, effective_mdblist_key, rating_result
+                        canonical_id, effective_mdblist_key, rating_result
                     )
                     logger.warning(
-                        f"MDBList rate-limited {imdb_id}; key cooling down for "
+                        f"MDBList rate-limited {canonical_id}; key cooling down for "
                         f"{backoff_secs:.0f}s"
                     )
             else:
                 # Network / timeout failure — escalating back-off so a transient
                 # hiccup retries quickly while a sustained outage backs off further.
                 # Ladder: 30 s → 2 min → 8 min → 1 h (cap), using 4× multiplier.
-                _failed_retry_key = _rating_retry_key(imdb_id, effective_mdblist_key)
+                _failed_retry_key = _rating_retry_key(canonical_id, effective_mdblist_key)
                 fail_n = _rating_fail_count.get(_failed_retry_key, 0) + 1
                 _rating_fail_count[_failed_retry_key] = fail_n
                 backoff_secs = min(30 * (4 ** (fail_n - 1)), 3600.0)
                 logger.warning(
-                    f"Rating fetch failed for {imdb_id} (attempt {fail_n}) "
+                    f"Rating fetch failed for {canonical_id} (attempt {fail_n}) "
                     f"— back-off {backoff_secs:.0f}s"
                 )
             if not rate_limited:
-                _failed_retry_key = _rating_retry_key(imdb_id, effective_mdblist_key)
+                _failed_retry_key = _rating_retry_key(canonical_id, effective_mdblist_key)
                 _rating_backoff[_failed_retry_key] = asyncio.get_running_loop().time() + backoff_secs
             ratings_dict   = {}
             genre          = cached_genre or _tmdb_genre
@@ -5612,7 +5751,7 @@ async def get_poster(
                 and effective_mdblist_key
             ):
                 _rating_fail_count.pop(
-                    _rating_retry_key(imdb_id, effective_mdblist_key), None
+                    _rating_retry_key(canonical_id, effective_mdblist_key), None
                 )
 
             if isinstance(ratings_dict, dict):
@@ -5690,10 +5829,13 @@ async def get_poster(
         # the same MDBList request.
         if _rating_event_to_set is not None:
             _rating_event_to_set.set()
-            _rating_fetch_inflight.pop(imdb_id, None)
+            _rating_fetch_inflight.pop(canonical_id, None)
             _rating_event_to_set = None
 
-        logger.info(f"Quality for {canonical_id}: tokens={quality_tokens} year={release_year}")
+        logger.info(
+            f"Quality for {canonical_id}: tokens={quality_tokens} year={release_year} "
+            f"(quality_id={quality_id})"
+        )
 
         # ------------------------------------------------------------------
         # Release status / freshness facts. TV status is mapped from already
@@ -5724,7 +5866,9 @@ async def get_poster(
             # r/movieleaks confirmation overrides TMDB's theatrical/production
             # status — if the film is in the digital-release cache it's already
             # streaming regardless of what the official release dates say.
-            if _release_status in ("Cinema", "Production") and is_digital_release(imdb_id):
+            if (_release_status in ("Cinema", "Production")
+                    and effective_imdb_id
+                    and is_digital_release(effective_imdb_id)):
                 _release_status = "Streaming"
             # Cinema-only mode: keep the badge purely as an "unavailable" marker —
             # show only Cinema / Production and drop the rest so the slot is
@@ -5754,7 +5898,9 @@ async def get_poster(
             is_cult_override=is_cult,
             is_true_story_override=is_true_story,
             is_metacritic_override=is_metacritic,
-            is_digital_release_override=is_digital_release(imdb_id),
+            is_digital_release_override=bool(
+                effective_imdb_id and is_digital_release(effective_imdb_id)
+            ),
             release_status_override=_release_status,
             recent_digital_release_date=_recent_digital_release_date,
         )
@@ -5769,7 +5915,12 @@ async def get_poster(
         if debug and debug.strip() in ("1", "true"):
             _sash_result = pick_sash(discovery_meta, _sash_priority)
             return JSONResponse({
-                "imdb_id":           imdb_id,
+                "imdb_id":           imdb_id or None,
+                "effective_imdb_id": effective_imdb_id,
+                "canonical_id":      canonical_id,
+                "rating_provider":   rating_provider,
+                "rating_media_id":   rating_media_id,
+                "quality_id":        quality_id,
                 "tmdb_id":           tmdb_id,
                 "type":              type,
                 "score":             score if isinstance(score, str) else int(score),
@@ -5979,6 +6130,6 @@ async def get_poster(
         # net for error paths that exit before reaching that point.
         if _rating_event_to_set is not None:
             _rating_event_to_set.set()
-            _rating_fetch_inflight.pop(imdb_id, None)
+            _rating_fetch_inflight.pop(canonical_id, None)
         if final_cache_key is not None:
             _render_inflight.pop(final_cache_key, None)
