@@ -4476,8 +4476,11 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
       params.set('vignette_color_saturation', n('cfg-vignette-sat').toFixed(2));
       params.set('vignette_color_blur',       n('cfg-vignette-blur').toFixed(2));
       params.set('vignette_color_lightness',  n('cfg-vignette-light').toFixed(2));
-      if (c('tog-vignette-ramp')) params.set('vignette_color_ramp', 'true');
-      if (c('tog-vignette-local')) params.set('vignette_color_local', 'true');
+      // Both default to *on* in the renderer, so unlike every other toggle these
+      // have to be written out either way — omitting them when off would leave
+      // the renderer on its default and the switch would never turn anything off.
+      params.set('vignette_color_ramp',  c('tog-vignette-ramp')  ? 'true' : 'false');
+      params.set('vignette_color_local', c('tog-vignette-local') ? 'true' : 'false');
     } }
   if (c('tog-hide-genre')) params.set('hide_genre', 'true');
   params.set('fallback_to_imdb', c('tog-fallback-imdb') ? 'true' : 'false');
