@@ -4069,7 +4069,9 @@ _configurator_etag: str | None = None
 # "4": the tinted vignette no longer frosts posters with confirmed burned-in
 #      text, so composites cached with a blurred-over title must be re-rendered.
 # "5": mode 6 adds a tier-coloured bookmark at the poster top-left corner.
-_RENDER_CACHE_VERSION = "5"
+# "6": the mode 6 bookmark is redrawn with rounded tips and a curved inner edge,
+#      so composites cached with the old hard-edged triangle look stale.
+_RENDER_CACHE_VERSION = "6"
 _render_assets_signature = "startup"
 
 

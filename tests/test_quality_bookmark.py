@@ -38,6 +38,38 @@ class QualityBookmarkRenderingTests(unittest.TestCase):
         self.assertGreater(large_box[2], small_box[2] * 1.7)
         self.assertGreater(large_box[3], small_box[3] * 1.7)
 
+    def test_outer_corner_stays_flush_with_the_poster_edges(self):
+        # Clients round the poster corner themselves, so the mark has to run all
+        # the way into (0, 0) — a rounded outer corner would leave artwork
+        # showing through the crescent between the fold and the card edge.
+        poster = self._transparent()
+        age_badge.draw_quality_corner_bookmark(
+            poster, ["4K", "REMUX", "DV"], bookmark_size=16
+        )
+
+        for xy in ((0, 0), (0, 1), (1, 0), (3, 3)):
+            self.assertGreater(poster.getpixel(xy)[3], 150, xy)
+
+    def test_tips_are_rounded_and_reach_the_requested_size(self):
+        poster = self._transparent()
+        size = 16
+        age_badge.draw_quality_corner_bookmark(
+            poster, ["4K", "REMUX", "DV"], bookmark_size=size
+        )
+
+        top  = [poster.getpixel((x, 0))[3] for x in range(size + 4)]
+        left = [poster.getpixel((0, y))[3] for y in range(size + 4)]
+
+        # The fold reaches `size` along each edge and stops there.
+        self.assertGreater(top[size - 2], 150)
+        self.assertLess(top[size + 1], 40)
+        # Rounded rather than mitred: coverage tapers over the last few pixels.
+        self.assertLess(top[size - 1], top[size - 4])
+        # Both tips are drawn from the same geometry (the faint glow tail can
+        # differ by a rounding step).
+        for x, (a, b) in enumerate(zip(top, left)):
+            self.assertLessEqual(abs(a - b), 2, x)
+
     def test_bookmark_reuses_quality_tier_colours(self):
         bronze = self._transparent()
         gold = self._transparent()
