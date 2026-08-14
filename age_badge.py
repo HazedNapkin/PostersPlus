@@ -399,3 +399,62 @@ def draw_tier_bar(
     hl_strip = Image.new("RGBA", (hl_w, bh), hl_fill[:3] + (0,))
     hl_strip.putalpha(hl_mask)
     image.alpha_composite(hl_strip, dest=(x, y))
+
+
+# ---------------------------------------------------------------------------
+# Mode 6 — corner bookmark
+# ---------------------------------------------------------------------------
+
+def draw_quality_corner_bookmark(
+    image: Image.Image,
+    quality_tokens: Sequence[str],
+    *,
+    bookmark_size: int = 16,
+) -> None:
+    """Render a small tier-coloured fold attached to the poster top-left corner."""
+    W, H = image.size
+    if W < 2 or H < 2:
+        return
+
+    size = min(max(6, int(bookmark_size)), W, H)
+    colors = _tier(_score_points(quality_tokens))
+    SS = 4
+    edge = size * SS
+    spill = max(2, round(size * 0.35))
+    canvas_edge = (size + spill) * SS
+
+    # A restrained inward glow carries over the existing quality-notch language.
+    glow = Image.new("RGBA", (canvas_edge, canvas_edge), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).polygon(
+        [(0, 0), (edge, 0), (0, edge)],
+        fill=(*colors["glow"][:3], colors["glow"][3]),
+    )
+    glow = glow.filter(ImageFilter.GaussianBlur(max(1, size * SS * 0.14)))
+
+    mark = Image.new("RGBA", (canvas_edge, canvas_edge), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(mark)
+    face = (*colors["primary"][:3], colors["primary"][3])
+    draw.polygon([(0, 0), (edge, 0), (0, edge)], fill=face)
+
+    # Subtle top-edge sheen and diagonal fold shadow keep the tiny mark legible.
+    # Each is composited separately so translucent effects do not replace the face.
+    sheen = Image.new("RGBA", mark.size, (0, 0, 0, 0))
+    sheen_depth = max(1, round(edge * 0.22))
+    ImageDraw.Draw(sheen).polygon(
+        [(0, 0), (edge, 0), (edge - sheen_depth, sheen_depth), (0, sheen_depth)],
+        fill=(*colors["highlight"][:3], colors["highlight"][3]),
+    )
+    mark = Image.alpha_composite(mark, sheen)
+
+    fold = Image.new("RGBA", mark.size, (0, 0, 0, 0))
+    ImageDraw.Draw(fold).line(
+        [(edge, 0), (0, edge)],
+        fill=(*colors["shadow"][:3], min(110, colors["shadow"][3])),
+        width=max(1, round(size * SS * 0.06)),
+    )
+    mark = Image.alpha_composite(mark, fold)
+
+    composite = Image.alpha_composite(glow, mark).resize(
+        (size + spill, size + spill), Image.Resampling.LANCZOS
+    )
+    image.alpha_composite(composite, dest=(0, 0))
