@@ -1,6 +1,6 @@
 # PostersPlus
 
-A self-hosted poster generation service that composites extensive metadata onto TMDB posters - ratings, award sashes, quality badges, and title logos - served as ready-to-use WebP or JPEG images. PostersPlus is compatible with AIOMetadata, Bingecat, Plex, Jellyfin, and really any application that can pass IMDb/TMDB IDs and type.
+A self-hosted poster generation service that composites extensive metadata onto movie and TV artwork - ratings, award sashes, quality badges, and title logos - served as ready-to-use WebP or JPEG images. PostersPlus is compatible with AIOMetadata, Bingecat, Plex, Jellyfin, and really any application that can pass IMDb, TMDB, AniList, or Kitsu IDs and type.
 
 Those not self-hosting can [visit the public instance.](https://postersplus.elfhosted.com)
 
@@ -32,19 +32,25 @@ Those not self-hosting can [visit the public instance.](https://postersplus.elfh
 
 ## Features
 
-- **Ratings overlay** - weighted composite score from Letterboxd, Trakt, Rotten Tomatoes, IMDb, Metacritic, TMDb, MyAnimeList, and more. Four display modes (Score Bar, Clean, Minimalist, Bar) with many sub-modes. Three built-in colour palettes plus custom score-to-hex palettes, poster-aware overlays for a frosted look and optional glow on high scores.
+- **Ratings overlay** - weighted composite score from Letterboxd, Trakt, Rotten Tomatoes, IMDb, Metacritic, TMDb, MyAnimeList, AniList, Kitsu, and more. Four display modes (Score Bar, Clean, Minimalist, Bar) with many sub-modes. Minimalist mode includes Year, Rating, Both, and Split layouts with optional centring and independently styled field/rating separators. Three built-in colour palettes plus custom score-to-hex palettes, poster-aware overlays, configurable text and glow colours, and optional glow on high scores.
 
-- **Award sashes** - Oscar Best Picture, Golden Globe (film and TV, five major categories), Emmy Outstanding Series (Drama, Comedy, Limited), festival winners, notable studios/directors/cast, trending titles, TV lifecycle signals (new season, returning, season finale), premieres, just-added digital movies, cult classics, true stories, and Metacritic Must-See. Priority order is fully configurable and any sash can be disabled. Can also be rendered as a notch, for those that prefer a more modern look.
+- **Award sashes** - Oscar Best Picture, Golden Globe (film and TV, five major categories), Emmy Outstanding Series (Drama, Comedy, Limited), festival winners, notable studios/directors/cast, trending titles, TV lifecycle signals (new season, returning, season finale), premieres, just-added digital movies, cult classics, true stories, and Metacritic Must-See. Priority order is fully configurable and any sash can be disabled. Sashes can also render as a modern filled or frosted notch with independent size, inset, padding, text colour, and artwork-aware tint controls.
 
-- **Quality badges** - six display modes: Quality Notch (vertical tier-coloured accent pill), Quality + Age Rating (age numeral tinted by 4K/Remux/HDR tier), Badge Row (PNG icons for 4K, 1080p, Remux, Web, DV, HDR10+, HDR10), Combined Text Badge, Age Rating Only, or hidden. A minimum quality threshold (`badge_min_score`) can suppress the badge when stream quality falls below a configurable bar. Sourced from an AIOStreams integration, Torrentio or Comet and fetched in the background on first request. Plex and Jellyfin will use your local files' actual quality for completely accurate data.
+- **Quality badges** - six display modes: Quality Notch (vertical tier-coloured accent pill), Quality + Age Rating (age numeral tinted by 4K/Remux/HDR tier), Badge Row (PNG icons for 4K, 1080p, Remux, Web, DV, HDR10+, HDR10), Combined Text Badge, Age Rating Only, or hidden. A minimum quality threshold (`badge_min_score`) can suppress the badge when stream quality falls below a configurable bar. Quality can come from AIOStreams, a standalone Stremio addon such as Torrentio or Comet, QualiCache's background crawler, or the actual files in Plex and Jellyfin.
 
-- **Title logos** - TMDB/Metahub logos composited over the poster with configurable size and position. Many options for language preference, including native, original or fully textless.
+- **Title logos** - TMDB, Metahub, or optional TheTVDB logos composited over the artwork with configurable size and position. Language priority can combine the requested locale, original language, English, language-neutral art, and a secondary preferred language. A standalone `/logo` endpoint exposes cached TMDB/Metahub logo selection as a PNG.
+
+- **Anime-native requests** - AniList and Kitsu IDs can supply cover art, title, genres, air dates, lifecycle status, and community score without conversion to IMDb or TMDB. Any accompanying IMDb/TMDB IDs still enrich the poster with logos, MDBList ratings, awards, age ratings, release data, and quality badges.
+
+- **Landscape posters** - `shape=landscape` renders a dedicated 16:9 layout from backdrop artwork, with a unified bottom information band, height-relative typography, optional textless/original art, and configurable age-badge placement.
+
+- **Poster-coloured vignettes** - top and bottom vignettes can sample the nearby artwork and render a one- or two-colour tint with saturation, lightness, blur, and blend controls. Frosted bars and notches can match the colour actually painted by the vignette, while burned-in titles automatically fall back to a clean black band.
 
 - **Art fallback chain** - when a title has no textless poster on TMDB the landscape backdrop is cropped to portrait using face and visual-saliency detection. If no poster exists at all, you'll get either a minimalist gradient background or photorealistic fallback plus your usual ratings and info sash. Replace `static/genre_bg/<style>/<Genre>.png` with your own 500×750 PNG to use custom art.
 
 - **TheTVDB fallback** - optional TheTVDB v4 integration. When a TMDB API key alone can't find a usable logo, backdrop, or (opt-in, text-detection-gated) poster, PostersPlus falls back to TheTVDB before dropping to a text title or genre canvas. Configurable per-asset toggles and logo priority.
 
-- **Web configurator** - browser-based UI to tune every parameter and generate a ready-to-paste URL template. Tabbed layout covering Core, Rating, Logo, Sash, Quality, and Weights. Per-section info modals, URL import (paste any `/poster` URL to hydrate every control), persistent settings, a preset gallery with ready-made styles, light/dark mode toggle, and a mobile-optimised expanded preview.
+- **Web configurator** - redesigned browser UI to tune every parameter and generate a ready-to-paste URL template. Rounded tabbed panels cover Core, Rating, Logo, Sash, Quality, and Weights, with touch-friendly row help, persistent settings, a preset gallery, header-level URL import, IMDb/TMDB artwork/MDBList/SIMKL title links, light/dark mode, and a mobile-optimised expanded preview.
 
 - **Plex and Jellyfin sync** - companion scripts (`plex_sync.py` / `jellyfin_sync.py`) that read your media library, derive quality tokens from each title's actual file metadata, and push PostersPlus-generated posters back as library covers. Includes an `--inspect` mode for auditing token derivation without writing anything.
 
@@ -52,9 +58,11 @@ Those not self-hosting can [visit the public instance.](https://postersplus.elfh
 
 - **Cache warming** - optional background task that proactively pre-populates the TMDB and MDBList caches (metadata, images, logos, ratings) for trending, popular, and top-rated/now-playing titles ahead of real requests, so first views render fast instead of hitting upstream APIs cold. Can also pre-warm specific Stremio addon catalogs. Configurable budgets, schedule, and an opt-in quality-badge pre-fetch. Off by default.
 
+- **Custom trending sources** - replace TMDB's global movie and TV rankings with ordered MDBList pages or TMDB-shaped endpoints. The same custom order drives Trending sashes and cache warming, making regional, service-specific, or hand-curated rankings possible.
+
 - **Operator overrides** - drop a `discovery_overrides.json` into the cache volume to replace or merge the built-in notable-studio / director / cast lists without editing source. A huge optional env list to choose your own preferences about how the application runs, rather than having them forced on you.
 
-- **OCR detection** - automatically detects posters marked on TMDB as textless to avoid printing a logo for a more consistent experience.
+- **OCR detection** - PP-OCRv5 validates posters marked as textless to avoid double-printing a title logo. Vote-gated foreground scans, a background queue, request coalescing, configurable concurrency, and versioned signatures keep live instances responsive while stale detections refresh safely.
 
 - **Cinema greyscale** - greyscales content still in cinemas, as well as the ability to force the info sash to prioritize cinema for these examples.
 
@@ -166,6 +174,8 @@ All configuration is done via environment variables. Copy `.env.example` to `.en
 | `TRENDING_FETCH_TIMEZONE` | `UTC` | Timezone for `TRENDING_FETCH_TIME`, e.g. `America/New_York` |
 | `TRENDING_FETCH_COUNT` | `40` | Number of top trending titles that qualify for the **Trending** sash |
 | `TRENDING_BROAD_FETCH_COUNT` | `100` | Number of additional lower-ranked trending titles (ranks past `TRENDING_FETCH_COUNT`, up to this count) that qualify for the lower-priority **Trending (Broad)** sash |
+| `TRENDING_SOURCE_MOVIE` | - | Optional MDBList page or TMDB-shaped JSON endpoint whose order replaces TMDB's global movie trending list for both sashes and cache warming |
+| `TRENDING_SOURCE_TV` | - | Optional MDBList page or TMDB-shaped JSON endpoint whose order replaces TMDB's global TV trending list for both sashes and cache warming |
 | `TMDB_IMAGE_CACHE_JITTER_DAYS` | `10` | +/- half this many days of per-title jitter applied to TMDB poster/logo cache durations, so a large batch cached at once doesn't all expire the same day |
 | `COMPOSITE_CACHE_TTL` | `604800` | Seconds to keep a rendered poster before re-rendering (default 7 days) |
 | `COMPOSITE_CACHE_TTL_JITTER` | `172800` | +/- half this many seconds of per-title jitter applied to `COMPOSITE_CACHE_TTL`, so a large batch of composites rendered together doesn't all expire (and re-render) at once |
@@ -324,6 +334,33 @@ Append `&debug=1` to any poster URL to receive a JSON response with all computed
 
 Append `&nocache=1` (requires `ACCESS_KEY` to be set and valid) to force a fresh render of a single title, bypassing the composite cache read and re-caching the result. Lets you refresh one poster without flushing the whole cache.
 
+### Landscape posters
+
+Pass `shape=landscape` for the dedicated 16:9 renderer:
+
+```
+https://yourdomain.com/poster?tmdb_id={tmdb_id}&type={type}&shape=landscape
+```
+
+Landscape mode uses backdrop artwork, keeps the top corners clear for client overlays, and combines the genre, year, rating, sash, and age rating into one bottom information band. Typography, spacing, and overlays are sized relative to the canvas height for consistent proportions.
+
+Two optional parameters control the landscape-specific choices:
+
+- `landscape_art=textless|original` selects a language-neutral backdrop with a composited logo (the default) or the highest-ranked language-tagged backdrop with its own title treatment.
+- `badge_pos=top_left|top_right|logo` places the age badge in a top corner or alongside the composited logo.
+
+Landscape renders deliberately skip stream-quality fetching because this layout does not display quality tokens.
+
+### Logo endpoint
+
+`/logo` returns the best available title logo as its original PNG, using the same cached TMDB/Metahub selection chain as poster rendering:
+
+```
+https://yourdomain.com/logo?tmdb_id={tmdb_id}&type={type}&lang=en
+```
+
+`imdb_id` is optional and enables Metahub fallback when TMDB metadata cannot supply one. `access_key` and `tmdb_key` follow the same rules as `/poster`.
+
 ### Anime IDs (AniList / Kitsu)
 
 Advanced metadata providers such as AIOMetadata can pass an anime-native id instead of `tmdb_id`/`imdb_id`, in which case the cover art, title, genres, air dates, status and community score all come from that provider:
@@ -351,10 +388,10 @@ Why `{id}` rather than `{kitsu_id}`: the per-namespace placeholder is empty for 
 
 What changes on this path:
 
-- **Art** is the provider's single cover image, served as-is. These covers essentially always have the title logotype baked into the design, so no logo is composited over them, no burned-in-text scan runs, and there's no backdrop crop fallback. Anime cover art is ~0.72 aspect against the 500×750 canvas, so roughly 8% is cropped from the sides. Kitsu's `original` images are ~920×1270 and downscale cleanly; AniList's are ~460×636 and are upscaled slightly, so **prefer `kitsu_id` when your client has both**.
-- **Ratings** come from the provider, in the same response as the art, at no extra request. Give the `anilist` or `kitsu` source a non-zero weight to use it. Note both score high and compressed (anime clusters ~65–80, and a poor show still scores mid-50s), so blend deliberately rather than matching your Letterboxd weight.
-- **Quality badges** keep working — Torrentio, Comet and AIOStreams all accept anime-native stream ids, so the id passes straight through.
-- **Sashes** are limited to what the provider knows: lifecycle status (airing / ended / cancelled) works; awards, trending, digital-release and cinema status do not, because those are TMDB/MDBList lookups with nothing to match against.
+- **Art** is the provider's single cover image. Burned-in-text scanning and backdrop rescue stay off for these covers, but when the request also carries a TMDB id, PostersPlus fetches its language-aware logo list and composites the best match by default. If the anime provider is unavailable or misses a title, a supplied TMDB id temporarily falls back to normal TMDB art without caching the degraded result. Anime cover art is ~0.72 aspect against the 500×750 canvas, so roughly 8% is cropped from the sides. Kitsu's `original` images are ~920×1270 and downscale cleanly; AniList's are ~460×636 and are upscaled slightly, so **prefer `kitsu_id` when your client has both**.
+- **Ratings** include the provider score from the same response as the art, at no extra request. When an IMDb id is also supplied, that score joins the normal MDBList provider set instead of replacing it. Give the `anilist` or `kitsu` source a non-zero weight to use it. Note both score high and compressed (anime clusters ~65–80, and a poor show still scores mid-50s), so blend deliberately rather than matching your Letterboxd weight.
+- **Quality badges** keep working — Torrentio, Comet, AIOStreams, and compatible QualiCache sources accept anime-native stream ids, so the id passes straight through when no IMDb id exists.
+- **Sashes and enrichment** use any accompanying IMDb/TMDB ids for awards, trending, age ratings, logos, and release data. Without those ids, provider-only requests are limited to lifecycle status such as airing, ended, or cancelled.
 
 If you only want MyAnimeList *scores* on anime that already has an IMDb id, you don't need any of this — MDBList already returns a `myanimelist` rating, so just give that source a non-zero weight.
 
@@ -381,7 +418,7 @@ Sashes display contextual metadata about a title - awards, festival recognition,
 | Notable Studio | A24, Neon, Pixar, and other curated studios |
 | Notable Director | Curated list of notable directors |
 | Notable Cast | Curated list of notable cast members |
-| Trending | Currently in TMDB's trending list, rank 1–`TRENDING_FETCH_COUNT` (default top 40) |
+| Trending | Rank 1–`TRENDING_FETCH_COUNT` (default top 40) in TMDB's list or the configured movie/TV trending source |
 | New Season | TV show with a recent or upcoming S2+ season premiere |
 | Returning | TV show with a recent or upcoming non-premiere episode |
 | Premiere | Show initial release within the last two weeks |
@@ -399,6 +436,10 @@ Sashes display contextual metadata about a title - awards, festival recognition,
 Sash priority order is configurable in the web configurator via drag-and-drop. The Primary Client selector sets recommended edge insets: Stremio TV, Nuvio, Plex, and Jellyfin use `0` for both bar and notch; Stremio Desktop/Web use `0.007` for the bar and `0.004` for the notch. Both sliders remain manually adjustable, and loading a preset preserves them. Existing URLs can override the notch with `sash_badge_inset` and the bar with `bar_bottom_inset`. Individual sashes can be disabled entirely with the ✕ button - disabled sashes are serialised as `-slot_name` in the URL (e.g. `&sash_priority=wins,cast,-trending`).
 
 In Notch mode, the label is sized from the notch height, so `sash_badge_size_h` (Height) scales the text along with the badge. To tighten the empty space above and below the label *without* resizing it, use `sash_badge_pad` (Padding, default `1.0`, range `0.5`–`1.5`) — it trims only the vertical padding and leaves both the font and the badge width untouched. `sash_badge_inset` is a different control again: it shifts the whole notch up or down rather than reshaping it. Padding stops shrinking once the label's line height is reached, so low values crop the gap, never the glyphs.
+
+### Custom Trending Sources
+
+Set `TRENDING_SOURCE_MOVIE` and/or `TRENDING_SOURCE_TV` to an ordinary MDBList page URL or any endpoint returning TMDB-shaped `{"results": [{"id": 1234}]}` JSON. The source order becomes the ranking for both Trending sashes and cache warming. Movie and TV sources are independent; leave either one empty to keep TMDB's global list for that media type. Entries must contain numeric TMDB ids.
 
 ### Customising Directors, Studios, and Cast
 
