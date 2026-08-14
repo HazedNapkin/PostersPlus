@@ -553,7 +553,7 @@ async def _background_quality_fetch(
         _quality_bg_inflight.discard(quality_id)
 
 # Local imports
-from age_badge import draw_quality_age_badge, draw_tier_bar, _score_points
+from age_badge import draw_quality_age_badge, draw_quality_corner_bookmark, draw_tier_bar, _score_points
 from landscape import build_landscape
 from awards import _dominant_cluster, _is_skin_tone, dominant_frost_rgb
 from awards import FETCH_FAILED, _RateLimited, draw_award_badge, draw_award_sash, parse_mdblist_awards
@@ -1215,7 +1215,7 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.greyscale_no_quality    = _b("greyscale_no_quality",    cfg.greyscale_no_quality)
     cfg.score_color_mode        = _i("score_color_mode",       cfg.score_color_mode,       0,   3)
     cfg.score_custom_palette    = parse_custom_score_palette(params.get("score_custom_palette"))
-    cfg.badge_display_mode      = _i("badge_display_mode",     cfg.badge_display_mode,     0,   5)
+    cfg.badge_display_mode      = _i("badge_display_mode",     cfg.badge_display_mode,     0,   6)
     cfg.rating_display_mode     = _i("rating_display_mode",    cfg.rating_display_mode,    0,   4)
 
     if "show_quality_badges" in params and "badge_display_mode" not in params:
@@ -2591,6 +2591,15 @@ def build_poster(
                 anchor_x_ratio=cfg.badge_anchor_x,
                 anchor_y_ratio=cfg.badge_anchor_y,
                 bar_height=cfg.badge_height,
+            )
+
+    elif mode == 6:
+        # Corner bookmark — fixed to the poster top-left and coloured by tier.
+        if not tokens or _score_points(tokens) >= cfg.badge_min_score:
+            draw_quality_corner_bookmark(
+                image,
+                tokens,
+                bookmark_size=cfg.badge_height,
             )
 
     elif mode == 2:
@@ -4059,7 +4068,10 @@ _configurator_etag: str | None = None
 #      composites must be re-rendered.
 # "4": the tinted vignette no longer frosts posters with confirmed burned-in
 #      text, so composites cached with a blurred-over title must be re-rendered.
-_RENDER_CACHE_VERSION = "4"
+# "5": mode 6 adds a tier-coloured bookmark at the poster top-left corner.
+# "6": the mode 6 bookmark is redrawn with rounded tips and a curved inner edge,
+#      so composites cached with the old hard-edged triangle look stale.
+_RENDER_CACHE_VERSION = "6"
 _render_assets_signature = "startup"
 
 
@@ -5046,7 +5058,7 @@ async def get_poster(
         _is_landscape = rcfg.shape == "landscape"
 
         quality_needs_fetch = (
-            rcfg.badge_display_mode in (1, 2, 4, 5)
+            rcfg.badge_display_mode in (1, 2, 4, 5, 6)
             and not quality
             and quality_id is not None
             and cached_tokens is None
