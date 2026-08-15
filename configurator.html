@@ -3019,7 +3019,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             </div>
             <div class="field" id="badge-min-score-field" style="display:none">
               <label class="field-label">Minimum Quality to Display</label>
-              <select id="cfg-badge-min-score" onchange="build(); queuePreviewReload()">
+              <select id="cfg-badge-min-score" onchange="this.dataset.userSet='true'; build(); queuePreviewReload()">
                 <option value="2">HD Web</option>
                 <option value="3">One of 4K, HDR or Remux</option>
                 <option value="4">Two of the above or DV</option>
@@ -3717,7 +3717,12 @@ function updateBadgeModeHint() {
   if (!hidden) {
     document.getElementById('cfg-badge-h').value = mode === 6 ? 16 : mode === 4 ? 20 : mode === 2 ? 32 : mode === 5 ? 28 : 36;
     if ([1,2,4,5,6].includes(mode)) {
-      document.getElementById('cfg-badge-min-score').value = mode === 1 ? '2' : '5';
+      // The mode's default only seeds an untouched field.  Unlike badge height,
+      // a minimum quality means the same thing in every mode, so once the user
+      // (or an imported URL) has picked one, switching modes must not throw it
+      // away.  Cleared by Reset to Defaults, which re-arms the seeding.
+      const _minScore = document.getElementById('cfg-badge-min-score');
+      if (!_minScore.dataset.userSet) _minScore.value = mode === 1 ? '2' : '5';
     }
   }
 }
@@ -4710,6 +4715,9 @@ function resetDefaults() {
     if (el.type === 'checkbox') el.checked = el.defaultChecked;
     if (el.type === 'hidden')   el.value   = el.defaultValue || '';
     if (el.tagName === 'SELECT') { for (const opt of el.options) opt.selected = opt.defaultSelected; }
+    // Forget "the user chose this themselves" marks, so the mode-driven
+    // defaults start seeding again from a clean slate.
+    delete el.dataset.userSet;
   });
   onPrimaryClientChange({ rebuild: false });
   // Re-reads both gradient selects: re-hides the custom opacity/height sliders
@@ -5635,6 +5643,12 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('badge_anchor_y'))          _setEl('cfg-badge-y',          p.get('badge_anchor_y'));
   if (p.has('badge_min_score'))         _setEl('cfg-badge-min-score',  p.get('badge_min_score'));
   else if (p.has('combined_badge_min_score')) _setEl('cfg-badge-min-score', p.get('combined_badge_min_score'));
+  // An imported minimum is as deliberate as a clicked one, so it gets the same
+  // protection from the per-mode seeding above — and this holds whatever order
+  // the restore and updateBadgeModeHint() happen to run in.
+  if (p.has('badge_min_score') || p.has('combined_badge_min_score')) {
+    document.getElementById('cfg-badge-min-score').dataset.userSet = 'true';
+  }
   if (p.has('combined_badge_stacked'))  _setEl('tog-badge-stacked',    p.get('combined_badge_stacked') === 'true');
   if (p.has('wait_for_quality'))   _setEl('tog-wait-quality', p.get('wait_for_quality'));
   if (p.has('greyscale_no_quality')) _setEl('tog-greyscale-noquality', p.get('greyscale_no_quality'));
@@ -5723,6 +5737,7 @@ function _resetFormToDefaults() {
     } else if (el.tagName === 'SELECT') {
       for (const opt of el.options) opt.selected = opt.defaultSelected;
     }
+    delete el.dataset.userSet;
   });
 }
 
