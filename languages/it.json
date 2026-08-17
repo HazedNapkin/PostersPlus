@@ -30,6 +30,13 @@
     "trendingToday": "#{rank} Oggi",
     "New Season": "Nuova stagione",
     "Returning": "Di ritorno",
+    "Physical": "Formato fisico",
+    "Streaming": "Streaming",
+    "Cinema": "Al cinema",
+    "Production": "In produzione",
+    "Airing": "In onda",
+    "Ended": "Conclusa",
+    "Cancelled": "Cancellata",
     "Premiere": "Prima",
     "Just Added": "Appena aggiunto",
     "Season Finale": "Finale stagione",
@@ -68,6 +75,16 @@
     "Emmy Winner": "Vincitore Emmy",
     "Emmy Nominee": "Candidato agli Emmy",
     "Globe Winner": "Vincitore Golden Globe",
-    "Globe Nominee": "Candidato al Globo"
+    "Globe Nominee": "Candidato al Globo",
+    "Palme d'Or": "Palma d'oro",
+    "Golden Lion": "Leone d'oro",
+    "Golden Bear": "Orso d'oro",
+    "People's Choice": "Premio del pubblico",
+    "Sundance GJ": "Giuria Sundance",
+    "New Currents": "Nuove Correnti",
+    "Golden Leopard": "Pardo d'oro",
+    "Tiger Award": "Premio Tigre",
+    "SXSW Jury": "Giuria SXSW",
+    "Tribeca AA": "Pubblico Tribeca"
   }
 }

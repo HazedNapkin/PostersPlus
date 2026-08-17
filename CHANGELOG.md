@@ -162,6 +162,11 @@
   a `pt-br` request uses `languages/pt-br.json` rather than `languages/pt.json`.
   Selecting `pt-br` also restricts logo artwork to Brazil-tagged entries,
   falling back to English rather than to Portugal-tagged art.
+- Translated the remaining fixed sash vocabulary in every shipped language: the
+  release-status labels (`Physical`, `Streaming`, `Cinema`, `Production`,
+  `Airing`, `Ended`, `Cancelled`) and the ten festival winner labels, from
+  `Palme d'Or` through `Tribeca AA`. Previously these rendered in English on an
+  otherwise translated poster.
 
 ## v1.1.0 - 2026-06-09
 

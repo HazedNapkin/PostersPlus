@@ -79,8 +79,8 @@ def translate_sash(label: str | None, lang: str | None) -> str:
 
     Handles two special shapes: the "#<rank> Today" trending template and the
     " • "-joined composite nominee label (each part translated independently).
-    Proper nouns (studio / director / cast / festival names) aren't in the JSON
-    so they pass straight through.
+    Proper nouns and operator-defined labels (studio / director / cast) usually
+    aren't in the JSON, so they pass straight through.
     """
     if not label:
         return label or ""

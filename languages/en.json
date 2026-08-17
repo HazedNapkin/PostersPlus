@@ -31,6 +31,13 @@
     "trendingToday": "#{rank} Today",
     "New Season": "New Season",
     "Returning": "Returning",
+    "Physical": "Physical",
+    "Streaming": "Streaming",
+    "Cinema": "Cinema",
+    "Production": "Production",
+    "Airing": "Airing",
+    "Ended": "Ended",
+    "Cancelled": "Cancelled",
     "Premiere": "Premiere",
     "Just Added": "Just Added",
     "Season Finale": "Season Finale",
@@ -98,6 +105,16 @@
     "Emmy Winner": "Emmy Winner",
     "Emmy Nominee": "Emmy Nominee",
     "Globe Winner": "Globe Winner",
-    "Globe Nominee": "Globe Nominee"
+    "Globe Nominee": "Globe Nominee",
+    "Palme d'Or": "Palme d'Or",
+    "Golden Lion": "Golden Lion",
+    "Golden Bear": "Golden Bear",
+    "People's Choice": "People's Choice",
+    "Sundance GJ": "Sundance GJ",
+    "New Currents": "New Currents",
+    "Golden Leopard": "Golden Leopard",
+    "Tiger Award": "Tiger Award",
+    "SXSW Jury": "SXSW Jury",
+    "Tribeca AA": "Tribeca AA"
   }
 }
