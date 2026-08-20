@@ -282,6 +282,11 @@
 
   .left-col {
     min-height: 0;
+    /* A grid item defaults to min-width:auto, so nowrap content inside refuses
+       to shrink and pushes the column past its track. Harmless on desktop where
+       the tracks are fixed px; on mobile's 1fr it is what shifted the whole
+       config panel sideways. Same idiom as the rows' minmax(0, 1fr) above. */
+    min-width: 0;
     height: 100%;
     overflow: hidden;
     display: flex;
@@ -1321,6 +1326,7 @@
   /* ── RIGHT COLUMN ── */
   .right-col {
     min-height: 0;
+    min-width: 0;          /* see .left-col */
     height: 100%;
     overflow: hidden;
     position: sticky;
@@ -1813,7 +1819,13 @@
     html, body { width: 100%; overflow-x: hidden; }
     body { align-items: stretch; }
     .shell { min-width: 0; width: 100%; padding: 0 12px 80px; }
-    .main-layout { grid-template-columns: 1fr; grid-template-rows: auto; width: 100%; height: auto; max-height: none; gap: 16px; align-items: start; }
+    .main-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; width: 100%; height: auto; max-height: none; gap: 16px; align-items: start; }
+    /* overflow-y:auto computes the *other* axis to auto too, so this box was
+       horizontally scrollable — which is how a too-wide field could slide the
+       whole config panel sideways while the header (outside it) and the fixed
+       preview stayed put. Tooltips and .menu are parked on <body>, so nothing
+       that needs to escape the panel is clipped by this. */
+    #tab-host { overflow-x: hidden; }
     .left-col { height: auto; overflow: visible; }
     .left-col .panel-body { overflow: visible; scrollbar-width:none}
     .right-col { height: auto; overflow: visible; position: static; }
@@ -4663,25 +4675,130 @@ function buildPreviewUrl() {
 }
 function buildTemplateUrl() { return buildBaseParams({ usePlaceholders: true }); }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Clipboard
+//
+// navigator.clipboard cannot be the primary route, because of what it puts on
+// an Apple pasteboard. Measured on iOS Safari with the real template string:
+//
+//   writeText(url)                     -> types: [text/plain, text/uri-list]
+//   ClipboardItem({'text/plain': ...}) -> types: [text/plain, text/uri-list]
+//   document-selection copy            -> types: [text/plain]
+//
+// Both async-API routes synthesise that second flavour — a URL-canonicalised
+// copy of the string in which "{tmdb_id}" has become "%7Btmdb_id%7D" — and
+// declaring a single explicit text/plain item does not suppress it. WebKit's
+// paste then inserts the uri-list flavour, not the plain one, so the encoded
+// form is what lands in the field. AIOMetadata matches its placeholders with a
+// literal pattern.includes('{tmdb_id}'), never matches, passes the placeholder
+// through unsubstituted, and every poster 400s on the server's _check_tmdb_id.
+//
+// A copy driven from a document selection carries text/plain alone, on the same
+// device and the same string, so the URL flavour is never synthesised at all.
+// (That is also what the "paste via Notepad" folk remedy was doing by hand:
+// bouncing through a plain-text app discards every flavour but one.)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Copies by selecting an off-screen node — see the note above for why.
+ *
+ * Selects a plain element rather than a textarea deliberately: an ordinary DOM
+ * text selection is the shape that was actually measured as producing a single
+ * flavour, and a textarea selection is a different enough code path that it
+ * would be an untested assumption.
+ */
+function copyViaSelection(text) {
+  const host = document.createElement('div');
+  host.textContent = text;
+  // Off-screen but genuinely selectable: display:none and visibility:hidden
+  // cannot be selected at all, and a user-select:none inherited from a reset
+  // would leave the selection silently empty.
+  host.style.cssText = 'position:fixed;top:0;left:-9999px;white-space:pre;' +
+                       '-webkit-user-select:text;user-select:text;';
+  document.body.appendChild(host);
+
+  const sel   = window.getSelection();
+  const saved = sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+  let ok = false;
+  try {
+    const range = document.createRange();
+    range.selectNodeContents(host);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    // Confirm the selection took before firing. The first attempt at this fix
+    // selected a readonly, unfocused textarea; iOS reported execCommand success
+    // while copying nothing, so the fallback below never armed and the button
+    // silently did nothing at all. A selection that does not hold our string is
+    // the one detectable precursor to that.
+    if (sel.toString() === text) ok = document.execCommand('copy');
+  } catch { ok = false; }
+
+  sel.removeAllRanges();
+  if (saved) sel.addRange(saved);
+  host.remove();
+  return ok;
+}
+
+/** Same idea against an editable field, for engines that refuse the above.
+ *
+ * A non-editable selection is not universally copyable — this is the hedge for
+ * an engine that requires the selection to live in an editable control. Focused
+ * before selecting, which the very first attempt at this fix omitted.
+ */
+function copyViaTextarea(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  // In-viewport but invisible, rather than parked off-screen: some engines
+  // decline to copy a selection that is nowhere on screen.
+  ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;' +
+                     'padding:0;border:0;opacity:0;';
+  document.body.appendChild(ta);
+
+  const restore = document.activeElement;
+  let ok = false;
+  try {
+    ta.focus();
+    ta.setSelectionRange(0, text.length);
+    ok = document.execCommand('copy');
+  } catch { /* fall through to the caller's next route */ }
+
+  ta.remove();
+  if (restore && restore !== document.body) restore.focus?.();
+  return ok;
+}
+
+/** Selection routes first, async API last — see the note above for why. */
+async function copyText(text) {
+  if (copyViaSelection(text)) return true;
+  if (copyViaTextarea(text))  return true;
+  // Reached when execCommand is unavailable or refused everywhere. Costs Apple
+  // users the encoded placeholders, which is the status quo ante rather than a
+  // regression, and is correct everywhere else.
+  if (navigator.clipboard) {
+    try { await navigator.clipboard.writeText(text); return true; } catch { /* fall through */ }
+  }
+  return false;
+}
+
 async function copyUrl() {
-  // On LAN IPs clipboard is unavailable (non-secure context). Focus the URL
-  // display box and select all so the user can Ctrl+C manually.
+  const url = buildTemplateUrl();
+  const btn = document.querySelector('.preview-actions .btn-preview');
+  if (await copyText(url)) {
+    setStatus('');
+    // The console strip used to confirm this; the button says so itself now.
+    flashButton(btn, 'Copied');
+    return;
+  }
+  // Every route refused. On a non-secure origin the URL box is still on screen,
+  // so fall back to selecting it for a manual copy — which is, conveniently,
+  // the one route measured to carry clean braces anyway.
   if (_SHOW_URL_BOX) {
     const inp = document.getElementById('url-display-input');
     inp.focus();
     inp.select();
-    setStatus('URL selected — press Ctrl+C to copy, then paste into AIOMetadata → Art Providers → Custom Art URLs → Poster URL Pattern.', 'info');
+    setStatus('URL selected — copy it manually, then paste into AIOMetadata → Art Providers → Custom Art URLs → Poster URL Pattern.', 'info');
     return;
   }
-  const url = buildTemplateUrl();
-  try {
-    await navigator.clipboard.writeText(url);
-    setStatus('');
-    // The console strip used to confirm this; the button says so itself now.
-    flashButton(document.querySelector('.preview-actions .btn-preview'), 'Copied');
-  } catch {
-    setStatus('Clipboard copy failed — check browser permissions.', 'err');
-  }
+  setStatus('Clipboard copy failed — check browser permissions.', 'err');
 }
 
 /** Briefly swaps a button's label to confirm an action, then restores it. */
