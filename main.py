@@ -2962,7 +2962,7 @@ def build_poster(
             # it.  The role says what the separator divides; the configured
             # style says what it is drawn as.  Keeping those apart is what lets
             # every mode's separator be restyled without the layout knowing:
-            #   "field"  — between two plain fields (genre | year).  Silver.
+            #   "field"  — between two plain fields (genre | year).  Text colour.
             #   "rfield" — the same slot in Year mode, where the separator IS
             #              the rating: it takes the score's colour, because
             #              nothing else in that layout shows the score at all.
@@ -3092,15 +3092,11 @@ def build_poster(
                         continue
                     _fill = score_color_for_mode(
                         _sc, cfg.score_color_mode, cfg.score_custom_palette)[0]
-                elif glyph == "★":
-                    # The star labels the number it precedes rather than
-                    # dividing anything, so it matches the text, not the rules.
-                    _fill = _ink[:3]
                 else:
-                    # Every plain separator stays a shade quieter than the
-                    # fields it divides — the one thing about the bar worth
-                    # keeping whatever shape it is drawn in.
-                    _fill = (192, 192, 200)
+                    # Unless this separator is carrying the rating in Year
+                    # mode, it belongs to the metadata line and follows that
+                    # line's configured (or default) text colour.
+                    _fill = _ink[:3]
 
                 if glyph is None:
                     _draw_solid_pip(image, x=ox, y_center=pip_cy,
