@@ -3125,6 +3125,22 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </label>
             </div>
 
+            <div class="field" id="imdb-rating-source-field">
+              <label class="field-label" data-tip="Every other weighted source (Letterboxd, Trakt, Rotten Tomatoes, Metacritic, ...) always comes from MDBList. The IMDb weight can instead be sourced locally from IMDb's own free daily dataset, which needs no MDBList key and isn't subject to MDBList's rate limits. Requires IMDB_DATASET_ENABLED=true on the server.">IMDb Rating Source</label>
+              <select id="cfg-imdb-rating-source" onchange="build(); queuePreviewReload()">
+                <option value="mdblist" selected>MDBList (default)</option>
+                <option value="dataset">Local IMDb dataset (no MDBList key needed)</option>
+              </select>
+            </div>
+
+            <div class="field" id="tmdb-rating-source-field">
+              <label class="field-label" data-tip="Every source MDBList aggregates, including the one labelled TMDB, currently comes through MDBList. This sources the TMDB weight directly from TMDB's own vote average instead — it's already fetched for genre/year, so this costs nothing extra and needs no MDBList key.">TMDB Rating Source</label>
+              <select id="cfg-tmdb-rating-source" onchange="build(); queuePreviewReload()">
+                <option value="mdblist" selected>MDBList (default)</option>
+                <option value="direct">Direct from TMDB (no MDBList key needed)</option>
+              </select>
+            </div>
+
             <div class="cfg-sep">
               <span class="group-title" data-tip="Normalization always reaches 100%. 99% Letterboxd + 1% Trakt becomes 100% Trakt if Letterboxd is missing.">Movies</span>
               <div class="weight-grid" id="movie-weights"></div>
@@ -4505,6 +4521,8 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
     } }
   if (c('tog-hide-genre')) params.set('hide_genre', 'true');
   params.set('fallback_to_imdb', c('tog-fallback-imdb') ? 'true' : 'false');
+  params.set('imdb_rating_source', vEl('cfg-imdb-rating-source') || 'mdblist');
+  params.set('tmdb_rating_source', vEl('cfg-tmdb-rating-source') || 'mdblist');
 
   // ── Rating / Genre Label ───────────────────────────────────────────────────
   params.set('rating_display_mode', ratingMode);
@@ -5633,6 +5651,8 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('stremio_id') || p.has('anilist_id') || p.has('kitsu_id')) _setEl('tog-anime-ids', 'true');
   updateGradientFields();
   if (p.has('fallback_to_imdb')) _setEl('tog-fallback-imdb', p.get('fallback_to_imdb'));
+  if (p.has('imdb_rating_source')) _setEl('cfg-imdb-rating-source', p.get('imdb_rating_source'));
+  if (p.has('tmdb_rating_source')) _setEl('cfg-tmdb-rating-source', p.get('tmdb_rating_source'));
 
   // ── Sash ────────────────────────────────────────────────────────────────
   if (p.has('sash_poster_color')) _setEl('tog-sash-poster-color', p.get('sash_poster_color'));

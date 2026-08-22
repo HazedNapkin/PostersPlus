@@ -298,6 +298,24 @@ QUALITY_WAIT_TIMEOUT         = float(os.environ.get("QUALITY_WAIT_TIMEOUT", "30"
 # apparent per-key concurrency limit while still allowing good parallelism.
 MDBLIST_CONCURRENCY          = int(os.environ.get("MDBLIST_CONCURRENCY", "3"))
 
+# -----------------------------------------------------------------------
+# IMDb local ratings dataset — an MDBList-free way to source the "imdb"
+# weight, pulled straight from IMDb's own free, no-key, daily-refreshed
+# non-commercial dataset (https://datasets.imdbws.com/title.ratings.tsv.gz).
+#
+# Off by default. When enabled, a background task downloads the dataset on
+# IMDB_DATASET_REFRESH_HOURS and answers lookups from a local SQLite table —
+# no per-title network call, no MDBList key required for that source. See
+# imdb_dataset.py. Selected per-request/per-instance via the "imdb" weight's
+# source setting (imdb_rating_source=dataset), independent of MDBList.
+# -----------------------------------------------------------------------
+IMDB_DATASET_ENABLED         = os.environ.get("IMDB_DATASET_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+IMDB_DATASET_PATH            = os.environ.get("IMDB_DATASET_PATH", "/app/cache/imdb_ratings.db").strip()
+IMDB_DATASET_REFRESH_HOURS   = max(1, int(os.environ.get("IMDB_DATASET_REFRESH_HOURS", "24")))
+# IMDb's own dataset already includes titles with a single vote; this filters
+# those out for the same reason RATING_MIN_VOTES exists for MDBList sources.
+IMDB_DATASET_MIN_VOTES       = max(0, int(os.environ.get("IMDB_DATASET_MIN_VOTES", "10")))
+
 # Cache warming — proactively populate the TMDB metadata cache (logos, posters,
 # credits) and the MDBList rating/award cache for currently-trending titles, so
 # the first real requests for them are fast and don't all hit upstream APIs at

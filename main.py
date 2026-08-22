@@ -580,6 +580,8 @@ from cache import (
     get_db,
 )
 from digital_release import digital_release_poll_loop
+import imdb_dataset
+from imdb_dataset import imdb_dataset_refresh_loop
 import config as _cfg
 from discovery import (
     ALL_PRIORITY_SLOTS,
@@ -714,6 +716,65 @@ def _canonical_rating_id(imdb_id: str, anime_key: str, tmdb_id: str) -> str:
     so no migration is needed.
     """
     return imdb_id or anime_key or f"tmdb:{tmdb_id}"
+
+
+def _merge_imdb_dataset_rating(
+    ratings_dict, effective_imdb_id: str | None, rcfg: "RequestConfig"
+):
+    """Override the "imdb" entry in *ratings_dict* with a value looked up from
+    the local IMDb dataset, when the request/instance is configured to source
+    it that way.
+
+    A no-op (returns *ratings_dict* unchanged) unless all of: the feature is
+    enabled server-side, the config asked for "dataset" rather than the
+    default "mdblist", a real IMDb id is available, and that id is present in
+    the dataset with enough votes. In every no-op case the existing MDBList
+    behaviour (if any) is left exactly as it was — this only ever adds or
+    replaces the single "imdb" key, and only when it has something to put
+    there. That also means it works with no MDBList key configured at all,
+    since the lookup itself never touches MDBList.
+    """
+    if not isinstance(ratings_dict, dict):
+        return ratings_dict
+    if rcfg.imdb_rating_source != "dataset":
+        return ratings_dict
+    if not effective_imdb_id:
+        return ratings_dict
+    value = imdb_dataset.get_rating(effective_imdb_id)
+    if value is None:
+        return ratings_dict
+    return {**ratings_dict, "imdb": value}
+
+
+def _merge_direct_tmdb_rating(ratings_dict, tmdb_data: dict, rcfg: "RequestConfig"):
+    """Override the "tmdb" entry in *ratings_dict* with TMDB's own
+    vote_average, when configured to source it directly instead of via
+    MDBList.
+
+    Unlike the IMDb dataset, this costs nothing extra: vote_average rides
+    along in the same TMDB details call already made for genre, year and
+    credits, so this is a pure re-use of data already in hand — no schedule,
+    no local storage, no separate opt-in infrastructure. It works with no
+    MDBList key configured at all, same rationale as the IMDb dataset source.
+
+    SCORE_NORMALISERS["tmdb"] is the identity function because MDBList's own
+    "tmdb" source is already expressed on a 0-100 scale; TMDB's API reports
+    vote_average on a 0-10 scale, so it is rescaled here to match.
+    """
+    if not isinstance(ratings_dict, dict):
+        return ratings_dict
+    if rcfg.tmdb_rating_source != "direct":
+        return ratings_dict
+    vote_average = tmdb_data.get("vote_average") if tmdb_data else None
+    if vote_average is None:
+        return ratings_dict
+    try:
+        vote_average = float(vote_average)
+    except (TypeError, ValueError):
+        return ratings_dict
+    if vote_average <= 0:
+        return ratings_dict
+    return {**ratings_dict, "tmdb": vote_average * 10}
 
 
 def _quality_identity(
@@ -915,6 +976,17 @@ class RequestConfig:
     movie_weights: dict | None = None
     tv_weights:    dict | None = None
     fallback_to_imdb: bool = False
+    # "mdblist" (default): the "imdb" weight comes from the MDBList response,
+    # same as every other weighted source. "dataset": it is looked up locally
+    # from IMDb's own free non-commercial dataset instead (imdb_dataset.py) —
+    # no MDBList call needed for that source specifically, and it still works
+    # when no MDBList key is configured at all. See _merge_imdb_dataset_rating.
+    imdb_rating_source: str = "mdblist"
+    # "mdblist" (default): the "tmdb" weight comes from the MDBList response.
+    # "direct": use TMDB's own vote_average from the metadata call PostersPlus
+    # already makes for genre/year/credits — zero extra requests, and works
+    # with no MDBList key at all. See _merge_direct_tmdb_rating.
+    tmdb_rating_source: str = "mdblist"
 
     logo_language: str = field(default_factory=lambda: _cfg.DEFAULT_LOGO_LANGUAGE)
     # Secondary preferred language ("custom").  Only consulted by the
@@ -1299,6 +1371,10 @@ def build_request_config(params: dict) -> RequestConfig:
     tv_sources = list(_cfg.TV_WEIGHTS.keys())
     cfg.tv_weights = _parse_weights(params.get("tv_weights"), tv_sources)
     cfg.fallback_to_imdb = _b("fallback_to_imdb", cfg.fallback_to_imdb)
+    _irs = params.get("imdb_rating_source", cfg.imdb_rating_source).strip().lower()
+    cfg.imdb_rating_source = _irs if _irs in ("mdblist", "dataset") else cfg.imdb_rating_source
+    _trs = params.get("tmdb_rating_source", cfg.tmdb_rating_source).strip().lower()
+    cfg.tmdb_rating_source = _trs if _trs in ("mdblist", "direct") else cfg.tmdb_rating_source
 
     cfg.logo_language        = (params.get("logo_language", cfg.logo_language).strip().lower())
     cfg.logo_language_secondary = (
@@ -3797,6 +3873,12 @@ async def lifespan(app: FastAPI):
     init_db()
     logger.info(f"Cache initialised (composite TTL {_cfg.COMPOSITE_CACHE_TTL}s / "
                 f"{_cfg.COMPOSITE_CACHE_TTL / 86400:.1f}d)")
+    imdb_dataset.init_db()
+    if imdb_dataset.is_enabled():
+        logger.info(
+            f"IMDb local dataset enabled (refresh every {_cfg.IMDB_DATASET_REFRESH_HOURS}h, "
+            f"{imdb_dataset.row_count()} titles currently loaded)"
+        )
     _HTTP_CLIENT = _make_http_client()
     logger.info("HTTP client initialised")
     # Warn on quality source misconfiguration
@@ -3874,11 +3956,13 @@ async def lifespan(app: FastAPI):
     digital_task = asyncio.create_task(digital_release_poll_loop(_HTTP_CLIENT, _digital_release_ready))
     cache_warm_task = asyncio.create_task(_cache_warm_loop(_digital_release_ready))
     trending_task = asyncio.create_task(_trending_fetch_loop())
+    imdb_dataset_task = asyncio.create_task(imdb_dataset_refresh_loop(_HTTP_CLIENT))
     yield
     prune_task.cancel()
     digital_task.cancel()
     cache_warm_task.cancel()
     trending_task.cancel()
+    imdb_dataset_task.cancel()
     if _background_detection_task is not None:
         _background_detection_task.cancel()
     # Await the cancelled tasks so their finally: blocks finish unwinding
@@ -3891,6 +3975,8 @@ async def lifespan(app: FastAPI):
         await cache_warm_task
     with suppress(asyncio.CancelledError):
         await trending_task
+    with suppress(asyncio.CancelledError):
+        await imdb_dataset_task
     if _background_detection_task is not None:
         with suppress(asyncio.CancelledError):
             await _background_detection_task
@@ -4045,6 +4131,8 @@ async def server_caps(access_key: str = ""):
         "trending_fetch_time":   _cfg.TRENDING_FETCH_TIME,
         "trending_fetch_timezone": _cfg.TRENDING_FETCH_TIMEZONE,
         "trending_next_refresh_hours": next_refresh_hours,
+        "imdb_dataset_enabled":  imdb_dataset.is_enabled(),
+        "imdb_dataset_titles":   imdb_dataset.row_count(),
     }
 
 
@@ -5715,7 +5803,19 @@ async def get_poster(
             ratings_dict   = {}
             genre          = cached_genre or _tmdb_genre
             rel            = cached_release_date
-            score          = "N/A"
+            # MDBList failed (or was never reachable), but the IMDb dataset is
+            # an independent, MDBList-free source — try it before giving up on
+            # a score entirely. calculate_weighted_score returns "N/A" itself
+            # when ratings_dict has nothing usable, so this is safe even when
+            # the dataset has no entry either.
+            ratings_dict = _merge_imdb_dataset_rating(ratings_dict, effective_imdb_id, rcfg)
+            ratings_dict = _merge_direct_tmdb_rating(ratings_dict, tmdb_data, rcfg)
+            score = calculate_weighted_score(
+                ratings_dict,
+                effective_tv_weights if type in ("tv", "series") else effective_movie_weights,
+                fallback_to_imdb=rcfg.fallback_to_imdb,
+                fallback_source=anime_namespace if is_anime else None,
+            )
             keywords       = []
             award_wins     = cached_award_wins
             award_noms     = cached_award_noms
@@ -5763,6 +5863,8 @@ async def get_poster(
                 )
 
             if isinstance(ratings_dict, dict):
+                ratings_dict = _merge_imdb_dataset_rating(ratings_dict, effective_imdb_id, rcfg)
+                ratings_dict = _merge_direct_tmdb_rating(ratings_dict, tmdb_data, rcfg)
                 weights = (
                     effective_tv_weights
                     if type in ("tv", "series")
@@ -5928,6 +6030,8 @@ async def get_poster(
                 "canonical_id":      canonical_id,
                 "rating_provider":   rating_provider,
                 "rating_media_id":   rating_media_id,
+                "imdb_rating_source": rcfg.imdb_rating_source,
+                "tmdb_rating_source": rcfg.tmdb_rating_source,
                 "quality_id":        quality_id,
                 "tmdb_id":           tmdb_id,
                 "type":              type,
