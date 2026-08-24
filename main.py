@@ -1,5 +1,6 @@
 #main.py
 import asyncio
+import dataclasses
 import hashlib
 import hmac
 import io
@@ -1053,10 +1054,59 @@ def _parse_weights(raw: str | None, sources: list[str]) -> dict | None:
     return out if out else None
 
 
+# A sash_priority value that opens with this token is a *diff* against the
+# default order rather than a replacement for it.  Spelling it out keeps the
+# legacy form untouched: an all-exclusions value like "-cult" still means "only
+# these slots", which is how the configurator says "every sash off", and
+# quietly reinterpreting that as "default minus cult" would switch sashes back
+# on for anyone who had turned them all off.
+_SASH_DIFF_SEED = "default"
+
+
+def _apply_sash_diff(tokens: list[str]) -> list[str]:
+    """Default order, with "-slot" removals and "slot@N" moves applied in order.
+
+    Written for URL length: the full order is 30 slots and ~350 characters, and
+    a URL carrying it is most of the way to the 2000-character ceiling some
+    metadata clients enforce.  Most people move one or two slots, which this
+    says in a dozen characters.
+
+    Unknown slots and unparseable positions are skipped rather than rejected, on
+    the same principle as the legacy branch — a URL that half-parses still
+    renders a poster, where a 400 renders nothing.
+    """
+    order = list(_cfg.SASH_PRIORITY)
+    for token in tokens:
+        if token == _SASH_DIFF_SEED:
+            continue
+        if token.startswith("-"):
+            slot = token[1:]
+            if slot in order:
+                order.remove(slot)
+            continue
+        slot, _, position = token.partition("@")
+        if slot not in ALL_PRIORITY_SLOTS:
+            continue
+        if position:
+            try:
+                index = int(position)
+            except ValueError:
+                continue
+            if slot in order:
+                order.remove(slot)
+            order.insert(max(0, min(index, len(order))), slot)
+        elif slot not in order:
+            order.append(slot)
+    return order
+
+
 def _parse_sash_priority(raw: str | None) -> list[str]:
     if not raw:
         return list(_cfg.SASH_PRIORITY)
     tokens = [s.strip() for s in raw.split(",") if s.strip()]
+
+    if tokens and tokens[0] == _SASH_DIFF_SEED:
+        return _apply_sash_diff(tokens[1:])
     # Tokens prefixed with "-" are explicit exclusions
     excluded  = {t[1:] for t in tokens if t.startswith("-") and t[1:] in ALL_PRIORITY_SLOTS}
     active    = [t      for t in tokens if not t.startswith("-") and t in ALL_PRIORITY_SLOTS]
@@ -4012,6 +4062,44 @@ async def remove_server_header(request: Request, call_next):
 # Server capability endpoint
 # ---------------------------------------------------------------------------
 
+# Parameters the configurator must always send, whatever their value.  The
+# first four are identity and authentication rather than render settings, and
+# primary_client is the one setting that *changes other defaults* — the client
+# profile picks the two edge insets, so the defaults below are only meaningful
+# alongside it.
+_NEVER_OMITTED_PARAMS = frozenset({
+    "tmdb_id", "imdb_id", "type", "stremio_id", "anilist_id", "kitsu_id",
+    "access_key", "tmdb_key", "mdblist_key", "primary_client", "quality",
+    "bar_bottom_inset", "sash_badge_inset",
+})
+
+
+def _render_param_defaults() -> dict:
+    """Every render setting's default value, keyed by its query-parameter name.
+
+    Read straight off a freshly built RequestConfig rather than restated here,
+    because the whole point is that the configurator can drop a parameter it
+    knows the server would have chosen anyway — and a default duplicated in
+    JavaScript is a default that drifts.  When it drifts, the configurator omits
+    a parameter believing it is the default, the server picks something else,
+    and the poster silently changes.
+
+    The two client-profile insets are excluded: their default depends on
+    primary_client, so there is no single answer to publish.
+    """
+    cfg = RequestConfig()
+    defaults: dict = {}
+    for spec in dataclasses.fields(cfg):
+        if spec.name in _NEVER_OMITTED_PARAMS:
+            continue
+        value = getattr(cfg, spec.name)
+        if isinstance(value, (list, tuple)):
+            value = ",".join(str(v) for v in value)
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            defaults[spec.name] = value
+    return defaults
+
+
 @app.get("/server-caps")
 async def server_caps(access_key: str = ""):
     if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
@@ -4045,6 +4133,13 @@ async def server_caps(access_key: str = ""):
         "trending_fetch_time":   _cfg.TRENDING_FETCH_TIME,
         "trending_fetch_timezone": _cfg.TRENDING_FETCH_TIMEZONE,
         "trending_next_refresh_hours": next_refresh_hours,
+        # Lets the configurator leave out any parameter already at its default.
+        # A generated URL was running ~1500 characters, most of it restating
+        # defaults, against metadata clients that truncate at 2000.
+        "param_defaults":        _render_param_defaults(),
+        "never_omitted_params":  sorted(_NEVER_OMITTED_PARAMS),
+        "sash_priority_default": list(_cfg.SASH_PRIORITY),
+        "sash_priority_diff_seed": _SASH_DIFF_SEED,
     }
 
 

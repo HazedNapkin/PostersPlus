@@ -145,6 +145,23 @@
   and transient custom-trending failures use a short retry cooldown rather than
   refetching once per poster.
 
+### Configurator
+
+- Generated poster URLs are about a third of their previous length - roughly
+  1500 characters down to 450 on the shipped presets. Some metadata services
+  truncate or reject URLs past 2000 characters, and most of what was there
+  restated settings the server would have chosen anyway. Three changes get it
+  there: parameters already at their default are left out, `sash_priority` is
+  sent as a diff against the default order, and rating sources weighted at zero
+  are no longer named. The server parses the result identically and every URL
+  generated before this keeps working unchanged.
+- `sash_priority` now accepts a diff form: `default,-cult,festival@0` removes
+  the cult sash and promotes the festival one, instead of listing all thirty
+  slots. The full list is still accepted and still means what it always did.
+- The defaults the configurator omits are read from the server at load time
+  rather than restated in the page, so they cannot drift apart. If the server
+  cannot be reached the full-length URL is generated instead.
+
 ### Fixes And Documentation
 
 - Fixed festival sashes naming a top prize the film did not win. MDblist tags a

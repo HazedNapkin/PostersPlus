@@ -3929,7 +3929,86 @@ function enableSash(slotId) {
 function getSashPriorityParam() {
   const parts = [...sashOrder];
   sashDisabled.forEach(id => parts.push('-' + id));
-  return parts.join(',');
+  const full = parts.join(',');
+
+  // The full order is 30 slots and ~350 characters — the single largest thing
+  // in a generated URL, and usually identical to the server's own default.
+  // Where a diff against that default is shorter, send the diff instead; where
+  // it is not (every sash disabled, or a wholesale reordering) the full list
+  // still wins and still goes out. Both forms parse, so this only ever picks
+  // the shorter spelling of the same thing.
+  const diff = buildSashDiff();
+  // A bare seed means nothing was changed, so hand back the full order and let
+  // omitServerDefaults drop the parameter altogether — one mechanism for "this
+  // is the default", rather than a second one that special-cases the seed.
+  if (diff !== null && diff !== serverCaps.sash_priority_diff_seed
+      && diff.length < full.length) return diff;
+  return full;
+}
+
+// Expand "default,-cult,festival@0" to the full ordered list it denotes.
+// Mirrors _apply_sash_diff in main.py; the two have to agree or the preview
+// shows one order and the served poster uses another.
+function expandSashDiff(tokens) {
+  const base = serverCaps.sash_priority_default;
+  if (!Array.isArray(base) || !base.length) return tokens;
+  const known = new Set(SASH_SLOTS.map(s => s.id));
+  const order = base.filter(id => known.has(id));
+
+  for (const token of tokens) {
+    if (token.startsWith('-')) {
+      const at = order.indexOf(token.slice(1));
+      if (at !== -1) order.splice(at, 1);
+      continue;
+    }
+    const [slot, position] = token.split('@');
+    if (!known.has(slot)) continue;
+    if (position !== undefined) {
+      const index = parseInt(position, 10);
+      if (Number.isNaN(index)) continue;
+      const at = order.indexOf(slot);
+      if (at !== -1) order.splice(at, 1);
+      order.splice(Math.max(0, Math.min(index, order.length)), 0, slot);
+    } else if (!order.includes(slot)) {
+      order.push(slot);
+    }
+  }
+  return order;
+}
+
+// Turn the current order into "default,-cult,festival@0" against the server's
+// default order. Returns null when the server has not told us what that order
+// is, so an unreachable /server-caps degrades to the full list rather than to
+// a wrong one.
+function buildSashDiff() {
+  const base = serverCaps.sash_priority_default;
+  const seed = serverCaps.sash_priority_diff_seed;
+  if (!Array.isArray(base) || !base.length || !seed) return null;
+
+  const tokens = [];
+  const working = base.filter(id => {
+    if (sashOrder.includes(id)) return true;
+    tokens.push('-' + id);          // dropped from the default order
+    return false;
+  });
+  // Anything the default order does not mention has to be named outright.
+  sashOrder.forEach(id => { if (!base.includes(id)) working.push(id); });
+
+  // Walk the target order and move each slot that is not already in place.
+  // Emitting @index for only the slots that actually shifted is what keeps
+  // this short for the common case of promoting one or two sashes.
+  for (let target = 0; target < sashOrder.length; target++) {
+    const id = sashOrder[target];
+    const at = working.indexOf(id);
+    if (at === target) continue;
+    if (at !== -1) working.splice(at, 1);
+    working.splice(target, 0, id);
+    tokens.push(`${id}@${target}`);
+  }
+  // A slot the server would keep but the user did not order at all.
+  working.slice(sashOrder.length).forEach(id => tokens.push('-' + id));
+
+  return [seed, ...tokens].join(',');
 }
 
 function saveSashOrder() {
@@ -4573,8 +4652,24 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
     // Rating weights only affect the displayed score
     const mw = getWeights('movie-weights', MOVIE_SOURCES);
     const tw = getWeights('tv-weights',    TV_SOURCES);
-    params.set('movie_weights', Object.entries(mw).map(([k,v]) => `${k}:${v.toFixed(2)}`).join(','));
-    params.set('tv_weights',    Object.entries(tw).map(([k,v]) => `${k}:${v.toFixed(2)}`).join(','));
+    // A zero-weighted source is skipped outright by calculate_weighted_score,
+    // so naming it changes nothing and costs ~14 characters. The default
+    // weights leave 14 of the 18 sources at zero, which was ~200 characters of
+    // every generated URL saying "ignore this".
+    const _weights = (w) => {
+      const named = Object.entries(w).filter(([, v]) => v > 0);
+      if (named.length) return named.map(([k, v]) => `${k}:${v.toFixed(2)}`).join(',');
+      // Every source at zero is a deliberate configuration — it means "no
+      // weighted score, use the fallback". Sending nothing would mean something
+      // else entirely: an absent weights parameter falls back to the *server's*
+      // weights, so the poster would show a score the user had switched off.
+      // One zero entry keeps the meaning in twelve characters, because
+      // calculate_weighted_score skips a zero-weighted source whichever it is.
+      const first = Object.keys(w)[0];
+      return first ? `${first}:0.00` : '';
+    };
+    params.set('movie_weights', _weights(mw));
+    params.set('tv_weights',    _weights(tw));
   }
 
   // ── Logo ───────────────────────────────────────────────────────────────────
@@ -4663,8 +4758,51 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
     if (c('tog-greyscale-noquality')) params.set('greyscale_no_quality', 'true');
   }
 
-  const finalUrl = `${domain}/poster?${params.toString()}`;
+  const finalUrl = `${domain}/poster?${omitServerDefaults(params).toString()}`;
   return usePlaceholders ? decodePlaceholders(finalUrl) : finalUrl;
+}
+
+// Drop every parameter already sitting at the server's own default.
+//
+// Some metadata clients truncate or reject URLs past 2000 characters, and a
+// generated URL was running ~1500 of which roughly two thirds was restating
+// defaults the server would have chosen anyway. This is purely a shorter
+// spelling: the server parses the result identically, and URLs generated
+// before it keep working because nothing about the parsing changed.
+//
+// The defaults come from /server-caps, read off a live RequestConfig, rather
+// than being restated here. That matters more than it looks: a default copied
+// into this file drifts the moment someone changes it in Python, and a drifted
+// default means we omit a parameter believing it is the default while the
+// server picks something else — a silently different poster, on every URL ever
+// generated. If /server-caps did not answer, param_defaults is absent and this
+// drops nothing, so the failure mode is a long URL rather than a wrong one.
+function omitServerDefaults(params) {
+  const defaults = serverCaps.param_defaults;
+  if (!defaults) return params;
+  const keep = new Set(serverCaps.never_omitted_params || []);
+
+  const out = new URLSearchParams();
+  for (const [key, value] of params) {
+    if (keep.has(key) || !(key in defaults) || !matchesDefault(value, defaults[key])) {
+      out.append(key, value);
+    }
+  }
+  return out;
+}
+
+// Compare a query-string value against a default that arrived as real JSON.
+// Numbers have to be compared numerically: the URL carries "0.080" where the
+// config holds 0.08, and a string comparison would call those different and
+// keep every slider in the URL.
+function matchesDefault(value, fallback) {
+  if (fallback === null || fallback === undefined) return false;
+  if (typeof fallback === 'boolean') return value === String(fallback);
+  if (typeof fallback === 'number') {
+    const asNumber = Number(value);
+    return Number.isFinite(asNumber) && Math.abs(asNumber - fallback) < 1e-9;
+  }
+  return value === String(fallback);
 }
 
 function buildPreviewUrl() {
@@ -5579,6 +5717,21 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     if (rawType && !rawType.startsWith('{')) mediaType      = rawType;
   }
 
+  // Generated URLs leave out every parameter already at its default, so an
+  // absent parameter means "the default" rather than "leave whatever is in the
+  // form". Filling those in up front matters: every line below is written as
+  // `if (p.has(x))`, so without this an import would silently inherit the
+  // settings already on screen for anything the URL had omitted — you would
+  // paste a colleague's link and get your own configuration back with a few of
+  // their values sprinkled in.
+  //
+  // Identity, credentials and the client profile are never published as
+  // defaults, so they cannot be clobbered here.
+  const _serverDefaults = serverCaps.param_defaults || {};
+  for (const [key, value] of Object.entries(_serverDefaults)) {
+    if (value !== null && value !== undefined && !p.has(key)) p.set(key, String(value));
+  }
+
   // ── Logo language ───────────────────────────────────────────────────────
   // Language is Core Config — only restored on an explicit URL import.
   if (!settingsOnly && p.has('logo_language')) _setEl('cfg-language', p.get('logo_language'));
@@ -5665,8 +5818,15 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   updateSashBadgeFields();
 
   if (p.has('sash_priority')) {
-    const rawTokens = p.get('sash_priority').split(',').map(s => s.trim()).filter(Boolean);
+    let rawTokens = p.get('sash_priority').split(',').map(s => s.trim()).filter(Boolean);
     const known  = new Set(SASH_SLOTS.map(s => s.id));
+    // The diff form — "default,-cult,festival@0" — has to expand back to a
+    // plain ordered list before the legacy handling below can read it. Without
+    // this every token would fail the `known` test and import would land on
+    // "every sash disabled", quietly discarding the order it was handed.
+    if (rawTokens[0] === serverCaps.sash_priority_diff_seed) {
+      rawTokens = expandSashDiff(rawTokens.slice(1));
+    }
     // Back-compat: the legacy combined "structural" token expands, in place, to
     // its granular slots in the same priority order it used internally
     // (short_film > mini_series > binge_ready) so importing an old URL keeps the
