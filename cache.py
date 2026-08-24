@@ -1785,6 +1785,39 @@ def get_app_state(key: str) -> str | None:
         return None
 
 
+def claim_app_state_slot(key: str, now: float, min_interval: float) -> bool:
+    """Atomically claim a periodic job slot; True if this caller won it.
+
+    Every uvicorn worker runs its own copy of each background loop, and they
+    all share this database. For a cheap job that duplication is harmless, but
+    a job that downloads tens of megabytes and rewrites a table wants exactly
+    one runner per interval.
+
+    The check and the write are one statement so two workers waking together
+    cannot both see a stale timestamp and both proceed — the conditional
+    UPDATE is evaluated against the committed row, and only one connection's
+    write survives. `changes()` then tells the caller whether it was theirs.
+    """
+    try:
+        with _db_lock:
+            db = get_db()
+            cur = db.execute(
+                """
+                INSERT INTO app_state (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                WHERE CAST(app_state.value AS REAL) <= ?
+                """,
+                (key, str(now), now - min_interval),
+            )
+            db.commit()
+            return cur.rowcount > 0
+    except Exception as exc:
+        # Never let bookkeeping stop the job — a failure here degrades to the
+        # old behaviour (every worker runs it), not to nothing running.
+        logger.error(f"App state claim error ({key}): {exc}")
+        return True
+
+
 def set_app_state(key: str, value: str) -> None:
     """Upsert a string value in the app-state key/value store."""
     try:

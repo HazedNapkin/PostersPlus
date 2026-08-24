@@ -33,6 +33,7 @@ from contextlib import suppress
 
 import httpx
 
+from cache import claim_app_state_slot, set_app_state
 from config import (
     IMDB_DATASET_ENABLED,
     IMDB_DATASET_PATH,
@@ -43,6 +44,11 @@ from config import (
 logger = logging.getLogger(__name__)
 
 _DATASET_URL = "https://datasets.imdbws.com/title.ratings.tsv.gz"
+# Shared across worker processes via cache.db's app_state table, so only one
+# worker per interval performs the download. See imdb_dataset_refresh_loop.
+_REFRESH_CLAIM_KEY = "imdb_dataset_refresh_claimed_at"
+# How long a worker with an empty table waits before looking again.
+_NOT_READY_RETRY_SECS = 60
 
 _local = threading.local()
 _last_refresh_ts: float | None = None
@@ -287,13 +293,48 @@ async def refresh_dataset(client: httpx.AsyncClient) -> int:
 async def imdb_dataset_refresh_loop(client: httpx.AsyncClient) -> None:
     """Background task: refresh shortly after startup, then every
     IMDB_DATASET_REFRESH_HOURS. IMDb regenerates this file once a day, so
-    refreshing more often than that buys nothing."""
+    refreshing more often than that buys nothing.
+
+    Every uvicorn worker runs its own copy of this loop, so with WORKERS > 1
+    the download has to be claimed rather than simply performed: otherwise N
+    workers each pull the file and each rewrite the same SQLite table, and the
+    losers of the DROP/RENAME race take a SQLITE_BUSY and log a failure for a
+    refresh that actually succeeded.
+
+    The workers that don't win still re-count the table afterwards. _row_count
+    is per-process and only the winner's refresh updates it directly, so
+    without this a loser would keep whatever count it read at startup —
+    is_ready() stuck False through the first-ever download, splitting the
+    composite cache signature between workers and making /server-caps report
+    different title counts depending on which worker answered.
+    """
     if not is_enabled():
         return
+
+    global _row_count
+    interval = max(1, IMDB_DATASET_REFRESH_HOURS) * 3600
     await asyncio.sleep(30)  # let the service finish warming up first
     while True:
         try:
-            await refresh_dataset(client)
+            if claim_app_state_slot(_REFRESH_CLAIM_KEY, time.time(), interval * 0.9):
+                if await refresh_dataset(client) == 0:
+                    # Download or parse failed. Release the claim rather than
+                    # holding it for most of a day — otherwise one transient
+                    # startup failure leaves every worker locked out until
+                    # tomorrow, which is exactly when it matters least.
+                    set_app_state(_REFRESH_CLAIM_KEY, "0")
+            else:
+                logger.info(
+                    "IMDb dataset refresh claimed by another worker "
+                    "— re-reading the table instead"
+                )
+                _local.conn = None      # the winner swaps the table underneath us
+                _row_count = _count_rows()
         except Exception as exc:
             logger.error(f"IMDb dataset refresh loop error: {exc}")
-        await asyncio.sleep(max(1, IMDB_DATASET_REFRESH_HOURS) * 3600)
+        # A worker that lost the claim usually recounts before the winner has
+        # finished writing, so an empty table here means "not ready yet", not
+        # "nothing to load". Check back shortly instead of in a day; once rows
+        # are visible, settle into the normal cadence. This also gets a failed
+        # download retried in a minute rather than at the next daily tick.
+        await asyncio.sleep(interval if _row_count > 0 else _NOT_READY_RETRY_SECS)

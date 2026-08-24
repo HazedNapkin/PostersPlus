@@ -11,9 +11,12 @@ import io
 import os
 import sqlite3
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
 
+import cache as cache_mod
 import imdb_dataset
 import main
 
@@ -544,6 +547,87 @@ class NoMdblistKeyScoringTests(unittest.TestCase):
         score = calculate_weighted_score(ratings, main._cfg.MOVIE_WEIGHTS)
         self.assertEqual(score, "N/A")
         self.assertIsNotNone(score)
+
+
+class RefreshClaimTests(unittest.TestCase):
+    """Every uvicorn worker runs its own refresh loop against one shared
+    database, so the download has to be claimed rather than just performed.
+
+    Without this, WORKERS=4 means four downloads of the same file and four
+    concurrent DROP/RENAME swaps of the same table, where the losers take a
+    SQLITE_BUSY and log a failure for a refresh that actually succeeded.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self._prev_db_path = cache_mod.DB_PATH
+        cache_mod.DB_PATH = os.path.join(self.tmpdir, "cache.db")
+        cache_mod._local = threading.local()
+        cache_mod.init_db()
+        self.key = imdb_dataset._REFRESH_CLAIM_KEY
+        self.interval = 86400 * 0.9
+
+    def tearDown(self):
+        cache_mod.DB_PATH = self._prev_db_path
+        cache_mod._local = threading.local()
+
+    def test_first_claim_on_empty_state_wins(self):
+        self.assertTrue(
+            cache_mod.claim_app_state_slot(self.key, time.time(), self.interval)
+        )
+
+    def test_second_claim_inside_the_interval_loses(self):
+        now = time.time()
+        cache_mod.claim_app_state_slot(self.key, now, self.interval)
+        self.assertFalse(
+            cache_mod.claim_app_state_slot(self.key, now + 1, self.interval)
+        )
+
+    def test_claim_succeeds_once_the_interval_has_passed(self):
+        now = time.time()
+        cache_mod.claim_app_state_slot(self.key, now, self.interval)
+        self.assertTrue(
+            cache_mod.claim_app_state_slot(self.key, now + self.interval + 1, self.interval)
+        )
+
+    def test_a_released_claim_is_immediately_reclaimable(self):
+        # The loop releases on a failed download so one transient error can't
+        # lock every worker out until tomorrow.
+        now = time.time()
+        cache_mod.claim_app_state_slot(self.key, now, self.interval)
+        cache_mod.set_app_state(self.key, "0")
+        self.assertTrue(
+            cache_mod.claim_app_state_slot(self.key, now + 1, self.interval)
+        )
+
+    def test_exactly_one_of_many_concurrent_claimants_wins(self):
+        # Threads rather than processes so this stays fast, but they contend
+        # on the same connection and lock the real implementation uses.
+        results = []
+        lock = threading.Lock()
+        start = threading.Barrier(8)
+        now = time.time()
+
+        def claim():
+            start.wait()
+            won = cache_mod.claim_app_state_slot(self.key, now, self.interval)
+            with lock:
+                results.append(won)
+
+        threads = [threading.Thread(target=claim) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(sum(results), 1, f"expected one winner, got {sum(results)}")
+
+    def test_a_bookkeeping_failure_lets_the_job_run(self):
+        # Degrading to "every worker refreshes" is wasteful; degrading to
+        # "nobody refreshes" would silently freeze the dataset.
+        with patch.object(cache_mod, "get_db", side_effect=RuntimeError("db gone")):
+            self.assertTrue(
+                cache_mod.claim_app_state_slot(self.key, time.time(), self.interval)
+            )
 
 
 class ImdbDatasetReadinessTests(unittest.TestCase):
