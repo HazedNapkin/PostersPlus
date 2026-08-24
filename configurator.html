@@ -3785,7 +3785,7 @@ const BADGE_MODE_TIPS = {
   1: 'The font colour reflects stream quality, following medal tiers.',
   4: 'A medal-coloured marker based on stream quality.',
   5: 'Minimalist text badge: resolution · visual tag, pip coloured by source. Needs both resolution and source; visual tag defaults to SDR if absent.',
-  6: 'A small corner bookmark coloured by the same quality tier as Quality Notch.',
+  6: 'A small corner bookmark coloured by the same quality tier as Quality Notch. Clients render posters at different scales, so Badge Size usually needs adjusting to suit yours.',
 };
 
 function updateBadgeModeHint() {
@@ -3805,7 +3805,7 @@ function updateBadgeModeHint() {
   document.getElementById('badge-x-field').style.display           = mode === 6 ? 'none' : '';
   document.getElementById('badge-y-field').style.display           = mode === 6 ? 'none' : '';
   if (!hidden) {
-    document.getElementById('cfg-badge-h').value = mode === 6 ? 16 : mode === 4 ? 20 : mode === 2 ? 32 : mode === 5 ? 28 : 36;
+    document.getElementById('cfg-badge-h').value = mode === 6 ? 30 : mode === 4 ? 20 : mode === 2 ? 32 : mode === 5 ? 28 : 36;
     if ([1,2,4,5,6].includes(mode)) {
       // The mode's default only seeds an untouched field.  Unlike badge height,
       // a minimum quality means the same thing in every mode, so once the user

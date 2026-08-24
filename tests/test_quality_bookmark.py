@@ -99,7 +99,10 @@ class QualityBookmarkConfigurationTests(unittest.TestCase):
         with open(path, encoding="utf-8") as source:
             html = source.read()
         self.assertIn("Quality Bookmark", html)
-        self.assertIn("mode === 6 ? 16", html)
+        # 30, not the 16 this shipped with: at 16 the mark is barely visible on
+        # the poster sizes most clients render at. The right value still varies
+        # by client, which the mode tooltip now says.
+        self.assertIn("mode === 6 ? 30", html)
         self.assertIn("badge-x-field", html)
         self.assertIn("badge-y-field", html)
         self.assertGreaterEqual(html.count("mode === 6 ?"), 3)
