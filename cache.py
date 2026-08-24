@@ -329,6 +329,7 @@ def init_db() -> None:
         ("backdrop_path",       "TEXT"),
         ("tmdb_status",         "TEXT"),
         ("vote_count",          "INTEGER"),
+        ("vote_average",        "REAL"),
         ("text_backdrop_path",  "TEXT"),
         ("original_poster_path","TEXT"),
         ("poster_langs_json",   "TEXT"),
@@ -1250,6 +1251,7 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
                    credits_json, production_cos_json,
                    runtime, number_of_seasons, number_of_episodes,
                    original_language, original_title, backdrop_path, tmdb_status, vote_count,
+                   vote_average,
                    text_backdrop_path, original_poster_path,
                    poster_langs_json, imdb_id,
                    tmdb_release_date, last_air_date, next_episode_json,
@@ -1268,6 +1270,7 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
             credits_json, production_cos_json,
             runtime, number_of_seasons, number_of_episodes,
             original_language, original_title, backdrop_path, tmdb_status, vote_count,
+            vote_average,
             text_backdrop_path, original_poster_path,
             poster_langs_json, imdb_id,
             tmdb_release_date, last_air_date, next_episode_json,
@@ -1311,7 +1314,7 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
         # Rows created before newer metadata fields were added were migrated
         # with NULL. Refresh once so discovery sashes have complete title,
         # vote, and TV lifecycle fields.
-        if vote_count is None or original_title is None or metadata_version != 3:
+        if vote_count is None or original_title is None or metadata_version != 4:
             logger.info(
                 f"TMDB metadata cache missing current schema fields for {cache_key}; refreshing"
             )
@@ -1339,6 +1342,7 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
             "backdrop_path":        backdrop_path,
             "tmdb_status":          tmdb_status,
             "vote_count":           vote_count,
+            "vote_average":         vote_average,
             "text_backdrop_path":   text_backdrop_path,
             "original_poster_path": original_poster_path,
             "poster_langs":         json.loads(poster_langs_json or "{}"),
@@ -1374,6 +1378,7 @@ def set_cached_tmdb_metadata(
     backdrop_path: str | None = None,
     tmdb_status: str | None = None,
     vote_count: int | None = None,
+    vote_average: float | None = None,
     text_backdrop_path: str | None = None,
     original_poster_path: str | None = None,
     poster_langs: dict | None = None,
@@ -1383,7 +1388,7 @@ def set_cached_tmdb_metadata(
     next_episode: dict | None = None,
     last_episode: dict | None = None,
     seasons: list[dict] | None = None,
-    metadata_version: int = 3,
+    metadata_version: int = 4,
 ) -> None:
     try:
         with _db_lock:
@@ -1395,11 +1400,12 @@ def set_cached_tmdb_metadata(
                      credits_json, production_cos_json,
                      runtime, number_of_seasons, number_of_episodes,
                      original_language, original_title, backdrop_path, tmdb_status, vote_count,
+                     vote_average,
                      text_backdrop_path, original_poster_path,
                      poster_langs_json, imdb_id,
                      tmdb_release_date, last_air_date, next_episode_json,
                      last_episode_json, seasons_json, metadata_version)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     cache_key,
@@ -1420,6 +1426,7 @@ def set_cached_tmdb_metadata(
                     backdrop_path,
                     tmdb_status,
                     vote_count,
+                    vote_average,
                     text_backdrop_path,
                     original_poster_path,
                     json.dumps(poster_langs or {}),

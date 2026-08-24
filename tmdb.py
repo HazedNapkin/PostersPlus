@@ -380,6 +380,7 @@ async def fetch_poster_metadata(
             "number_of_episodes":    meta.get("number_of_episodes"),
             "tmdb_status":           meta.get("tmdb_status"),
             "vote_count":            meta.get("vote_count"),
+            "vote_average":          meta.get("vote_average"),
             "text_backdrop_path":    meta.get("text_backdrop_path"),
             "original_poster_path":  meta.get("original_poster_path"),
             "poster_langs":          meta.get("poster_langs", {}),
@@ -502,6 +503,11 @@ async def fetch_poster_metadata(
     number_of_episodes   = data.get("number_of_episodes")
     tmdb_status          = data.get("status")   # e.g. "Released", "In Production", "Returning Series"
     vote_count           = data.get("vote_count")
+    # The title's own aggregate score, straight from the same details call
+    # already made for genre/year/credits — no extra API request. 0-10 scale,
+    # same as TMDB's UI. Lets the "tmdb" rating weight be sourced without
+    # MDBList when tmdb_rating_source=direct (see main._merge_direct_tmdb_rating).
+    vote_average         = data.get("vote_average")
     tmdb_release_date    = raw_date or None
     last_air_date        = data.get("last_air_date")
     next_episode         = data.get("next_episode_to_air") or None
@@ -581,6 +587,7 @@ async def fetch_poster_metadata(
         backdrop_path=backdrop_path,
         tmdb_status=tmdb_status,
         vote_count=vote_count,
+        vote_average=vote_average,
         text_backdrop_path=text_backdrop_path,
         original_poster_path=original_poster_path,
         poster_langs=poster_langs,
@@ -602,6 +609,7 @@ async def fetch_poster_metadata(
         "number_of_episodes":   number_of_episodes,
         "tmdb_status":          tmdb_status,
         "vote_count":           vote_count,
+        "vote_average":         vote_average,
         "text_backdrop_path":   text_backdrop_path,
         "original_poster_path": original_poster_path,
         "poster_langs":         poster_langs,

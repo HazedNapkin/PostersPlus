@@ -115,6 +115,55 @@ Default: `false`
 
 ---
 
+## Ratings without MDBList
+
+Every weighted rating source normally comes from MDBList — including the one
+labelled "tmdb". Two of them can instead be sourced without an MDBList key at
+all, if that's all you need:
+
+### `imdb_rating_source` (URL param) / `IMDB_DATASET_ENABLED` (env)
+
+Sources the IMDb weight from IMDb's own free, no-key, daily-refreshed
+non-commercial dataset (`https://datasets.imdbws.com/title.ratings.tsv.gz`)
+instead of MDBList. Set `IMDB_DATASET_ENABLED=true` on the server, then select
+it with `imdb_rating_source=dataset` (default: `mdblist`, unchanged
+behaviour) — also available as a dropdown on the configurator's Weights tab.
+
+A background task downloads and reloads the full dataset into a local SQLite
+table on `IMDB_DATASET_REFRESH_HOURS` (default 24 — IMDb itself only
+regenerates the file about once a day, so refreshing faster buys nothing).
+Lookups are a single indexed local query, not a network call.
+`IMDB_DATASET_MIN_VOTES` (default 10) filters out titles with too few votes to
+be meaningful, mirroring `RATING_MIN_VOTES`. `IMDB_DATASET_PATH` (default
+`/app/cache/imdb_ratings.db`) is where the table lives — keep it on the same
+volume as the rest of the cache so it survives restarts.
+
+If a live MDBList fetch fails for a title, the IMDb dataset value (when
+enabled) is still tried before giving up, so an MDBList outage doesn't
+unconditionally zero out the score for operators using this.
+
+Default: `IMDB_DATASET_ENABLED=false`, `IMDB_DATASET_REFRESH_HOURS=24`,
+`IMDB_DATASET_MIN_VOTES=10`, `IMDB_DATASET_PATH=/app/cache/imdb_ratings.db`
+
+### `tmdb_rating_source` (URL param)
+
+Sources the TMDB weight from TMDB's own `vote_average` — already fetched in
+the same metadata call used for genre, year, and credits — instead of
+MDBList. Set `tmdb_rating_source=direct` (default: `mdblist`, unchanged
+behaviour). No env var or background task needed; the value is already in
+hand on every request, so this has no extra cost. Also available as a
+dropdown on the Weights tab.
+
+Between the two, an instance can run entirely without an MDBList key: TMDB
+metadata (genre, year), TMDB-only sashes (trending, Golden Globe,
+studio/director/cast, foreign-language, release-status), and both the TMDB
+and IMDb weighted ratings. What you lose without MDBList is the MDBList-only
+sashes (festival, cult classic, true story, Metacritic must-see, Oscar
+wins/nominations) and every other weighted rating source (Letterboxd, Trakt,
+Rotten Tomatoes, Metacritic, Popcornmeter, Roger Ebert).
+
+---
+
 ## Cache warming
 
 ### `CACHE_WARM_AT_HOUR`

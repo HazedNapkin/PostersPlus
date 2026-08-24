@@ -86,6 +86,26 @@
   repeated at each call site. `/status` reports the active backend as
   `quality_source`.
 
+### Ratings
+
+- Added an MDBList-free way to source two of the weighted rating inputs.
+  `tmdb_rating_source=direct` uses TMDB's own vote average — already fetched
+  alongside genre/year/credits, so it costs nothing extra and needs no MDBList
+  key. `imdb_rating_source=dataset` sources the IMDb weight from IMDb's own
+  free, no-key, daily-refreshed non-commercial dataset
+  (`title.ratings.tsv.gz`), downloaded and refreshed on a schedule
+  (`IMDB_DATASET_ENABLED`, `IMDB_DATASET_REFRESH_HOURS`,
+  `IMDB_DATASET_MIN_VOTES`, `IMDB_DATASET_PATH`) and looked up locally with no
+  per-title network call. Both default to the existing MDBList-sourced
+  behaviour and are exposed as dropdowns on the Weights tab. Either can be
+  used with zero MDBList key configured, and the IMDb dataset value is also
+  tried as a fallback when a live MDBList fetch fails, so a MDBList outage no
+  longer means an unconditional `N/A` score for operators who enable it.
+- Corrected `.env.example`'s `MDBLIST_API_KEY` documentation, which called it
+  `[Required]`; it has been optional in the request path for some time (see
+  the "IMDb ids are now optional" entry above) and is now spelled out exactly
+  which sashes and the score are unavailable without it.
+
 ### Metadata And Caching
 
 - IMDb ids are now optional. `tmdb_id` is the required identity — it selects the
