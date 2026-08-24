@@ -725,22 +725,45 @@ def _canonical_rating_id(imdb_id: str, anime_key: str, tmdb_id: str) -> str:
 def _merge_imdb_dataset_rating(
     ratings_dict, effective_imdb_id: str | None, rcfg: "RequestConfig"
 ):
-    """Override the "imdb" entry in *ratings_dict* with a value looked up from
-    the local IMDb dataset, when the request/instance is configured to source
-    it that way.
+    """Supply the "imdb" entry in *ratings_dict* from the local IMDb dataset.
 
-    A no-op (returns *ratings_dict* unchanged) unless all of: the feature is
-    enabled server-side, the config asked for "dataset" rather than the
-    default "mdblist", a real IMDb id is available, and that id is present in
-    the dataset with enough votes. In every no-op case the existing MDBList
-    behaviour (if any) is left exactly as it was — this only ever adds or
-    replaces the single "imdb" key, and only when it has something to put
-    there. That also means it works with no MDBList key configured at all,
-    since the lookup itself never touches MDBList.
+    Three modes, per rcfg.imdb_rating_source:
+
+      "mdblist"  (default) — no-op. The IMDb weight comes from MDBList like
+                             every other source.
+      "dataset"            — always override. MDBList is not consulted for
+                             this one source at all, so the weight works
+                             with no MDBList key configured.
+      "fallback"           — backfill only. MDBList's answer wins whenever
+                             it has one; the dataset fills the gap when it
+                             does not.
+
+    "fallback" is the mode that pays off for operators who do use MDBList,
+    and it covers two distinct gaps with one rule. A hard gap: MDBList was
+    rate-limited, timed out, or every configured key is cooling down, so
+    the failure path arrives here with an empty dict. And a soft gap:
+    MDBList answered fine but carried no IMDb score for this title, or
+    carried one that RATING_MIN_VOTES filtered out. Both look identical
+    from here — "imdb" is absent — so both are covered by testing for its
+    absence rather than by inspecting how the fetch went.
+
+    Note the deliberate asymmetry with fallback_to_imdb, which is a
+    *scoring* fallback: it fires when no weighted source scored at all and
+    reaches for whatever "imdb" value is present. This one fires earlier,
+    at the point the ratings are assembled, and is what puts a value there
+    for it to find. The two compose: dataset backfill, then weighting,
+    then fallback_to_imdb if the weights still produced nothing.
+
+    In every no-op case the existing MDBList behaviour is left exactly as
+    it was — this only ever adds or replaces the single "imdb" key, and
+    only when it has something to put there.
     """
     if not isinstance(ratings_dict, dict):
         return ratings_dict
-    if rcfg.imdb_rating_source != "dataset":
+    mode = rcfg.imdb_rating_source
+    if mode not in ("dataset", "fallback"):
+        return ratings_dict
+    if mode == "fallback" and ratings_dict.get("imdb") is not None:
         return ratings_dict
     if not effective_imdb_id:
         return ratings_dict
@@ -769,9 +792,18 @@ def _ratings_base(ratings_dict):
 
 
 def _merge_direct_tmdb_rating(ratings_dict, tmdb_data: dict, rcfg: "RequestConfig"):
-    """Override the "tmdb" entry in *ratings_dict* with TMDB's own
-    vote_average, when configured to source it directly instead of via
-    MDBList.
+    """Supply the "tmdb" entry in *ratings_dict* from TMDB's own vote_average.
+
+    Same three modes as _merge_imdb_dataset_rating, per
+    rcfg.tmdb_rating_source: "mdblist" (default, no-op), "direct" (always
+    override), "fallback" (backfill only when MDBList has no "tmdb" value,
+    whether because the fetch failed or because it simply carried none).
+    See that function for why absence is the right thing to test.
+
+    "fallback" is close to free here in a way it is not for the IMDb
+    dataset: there is no download, no table and no readiness window, so an
+    MDBList outage is covered for this source on an instance that has
+    opted into nothing else.
 
     Unlike the IMDb dataset, this costs nothing extra: vote_average rides
     along in the same TMDB details call already made for genre, year and
@@ -791,7 +823,10 @@ def _merge_direct_tmdb_rating(ratings_dict, tmdb_data: dict, rcfg: "RequestConfi
     """
     if not isinstance(ratings_dict, dict):
         return ratings_dict
-    if rcfg.tmdb_rating_source != "direct":
+    mode = rcfg.tmdb_rating_source
+    if mode not in ("direct", "fallback"):
+        return ratings_dict
+    if mode == "fallback" and ratings_dict.get("tmdb") is not None:
         return ratings_dict
     vote_average = tmdb_data.get("vote_average") if tmdb_data else None
     if vote_average is None:
@@ -1015,16 +1050,19 @@ class RequestConfig:
     movie_weights: dict | None = None
     tv_weights:    dict | None = None
     fallback_to_imdb: bool = False
-    # "mdblist" (default): the "imdb" weight comes from the MDBList response,
-    # same as every other weighted source. "dataset": it is looked up locally
-    # from IMDb's own free non-commercial dataset instead (imdb_dataset.py) —
-    # no MDBList call needed for that source specifically, and it still works
-    # when no MDBList key is configured at all. See _merge_imdb_dataset_rating.
+    # Where the "imdb" weight comes from. "mdblist" (default) is the MDBList
+    # response, same as every other weighted source. "dataset" looks it up
+    # locally from IMDb's own free non-commercial dataset (imdb_dataset.py),
+    # bypassing MDBList for this source entirely. "fallback" keeps MDBList as
+    # the source of truth and only consults the dataset when MDBList has no
+    # IMDb value — an outage, an exhausted key, or simply a title it has no
+    # score for. See _merge_imdb_dataset_rating.
     imdb_rating_source: str = "mdblist"
-    # "mdblist" (default): the "tmdb" weight comes from the MDBList response.
-    # "direct": use TMDB's own vote_average from the metadata call PostersPlus
-    # already makes for genre/year/credits — zero extra requests, and works
-    # with no MDBList key at all. See _merge_direct_tmdb_rating.
+    # Same three modes for the "tmdb" weight, against TMDB's own vote_average
+    # from the metadata call PostersPlus already makes for genre/year/credits:
+    # "mdblist" (default), "direct" (always), "fallback" (only when MDBList
+    # has no tmdb value). Zero extra requests in every mode.
+    # See _merge_direct_tmdb_rating.
     tmdb_rating_source: str = "mdblist"
 
     logo_language: str = field(default_factory=lambda: _cfg.DEFAULT_LOGO_LANGUAGE)
@@ -1460,9 +1498,13 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.tv_weights = _parse_weights(params.get("tv_weights"), tv_sources)
     cfg.fallback_to_imdb = _b("fallback_to_imdb", cfg.fallback_to_imdb)
     _irs = params.get("imdb_rating_source", cfg.imdb_rating_source).strip().lower()
-    cfg.imdb_rating_source = _irs if _irs in ("mdblist", "dataset") else cfg.imdb_rating_source
+    cfg.imdb_rating_source = (
+        _irs if _irs in ("mdblist", "dataset", "fallback") else cfg.imdb_rating_source
+    )
     _trs = params.get("tmdb_rating_source", cfg.tmdb_rating_source).strip().lower()
-    cfg.tmdb_rating_source = _trs if _trs in ("mdblist", "direct") else cfg.tmdb_rating_source
+    cfg.tmdb_rating_source = (
+        _trs if _trs in ("mdblist", "direct", "fallback") else cfg.tmdb_rating_source
+    )
 
     cfg.logo_language        = (params.get("logo_language", cfg.logo_language).strip().lower())
     cfg.logo_language_secondary = (

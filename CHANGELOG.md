@@ -97,10 +97,18 @@
   (`IMDB_DATASET_ENABLED`, `IMDB_DATASET_REFRESH_HOURS`,
   `IMDB_DATASET_MIN_VOTES`, `IMDB_DATASET_PATH`) and looked up locally with no
   per-title network call. Both default to the existing MDBList-sourced
-  behaviour and are exposed as dropdowns on the Weights tab. Either can be
-  used with zero MDBList key configured, and the IMDb dataset value is also
-  tried as a fallback when a live MDBList fetch fails, so a MDBList outage no
-  longer means an unconditional `N/A` score for operators who enable it.
+  behaviour and are exposed as dropdowns on the Weights tab, and either can be
+  used with zero MDBList key configured.
+- Both settings also take `fallback`, which keeps MDBList as the source of
+  truth and consults the local source only when MDBList has no value for that
+  title. That covers a hard gap — a rate-limited or exhausted key, a timeout,
+  every configured key cooling down — and a soft gap, where MDBList answered
+  but carried no score for the title (or one `RATING_MIN_VOTES` filtered out),
+  with the same rule. `tmdb_rating_source=fallback` needs no server-side setup
+  at all, which makes it the cheapest way to keep scores alive through an
+  MDBList outage. This is a different layer from `fallback_to_imdb`: that one
+  fires when the *weights* score nothing and reaches for whatever `imdb` value
+  is present, whereas these put a value there for it to find. They compose.
 - Corrected `.env.example`'s `MDBLIST_API_KEY` documentation, which called it
   `[Required]`; it has been optional in the request path for some time (see
   the "IMDb ids are now optional" entry above) and is now spelled out exactly

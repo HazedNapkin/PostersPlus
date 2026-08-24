@@ -3126,17 +3126,19 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             </div>
 
             <div class="field" id="imdb-rating-source-field">
-              <label class="field-label" data-tip="Every other weighted source (Letterboxd, Trakt, Rotten Tomatoes, Metacritic, ...) always comes from MDBList. The IMDb weight can instead be sourced locally from IMDb's own free daily dataset, which needs no MDBList key and isn't subject to MDBList's rate limits. Requires IMDB_DATASET_ENABLED=true on the server.">IMDb Rating Source</label>
+              <label class="field-label" data-tip="Every other weighted source (Letterboxd, Trakt, Rotten Tomatoes, Metacritic, ...) always comes from MDBList. The IMDb weight can instead be sourced locally from IMDb's own free daily dataset, which needs no MDBList key and isn't subject to MDBList's rate limits. 'Only when MDBList has none' keeps MDBList in charge and uses the dataset purely as a safety net — for a rate-limited or exhausted key, or a title MDBList carries no IMDb score for. Requires IMDB_DATASET_ENABLED=true on the server.">IMDb Rating Source</label>
               <select id="cfg-imdb-rating-source" onchange="build(); queuePreviewReload()">
                 <option value="mdblist" selected>MDBList (default)</option>
+                <option value="fallback">MDBList, local dataset as fallback</option>
                 <option value="dataset">Local IMDb dataset (no MDBList key needed)</option>
               </select>
             </div>
 
             <div class="field" id="tmdb-rating-source-field">
-              <label class="field-label" data-tip="Every source MDBList aggregates, including the one labelled TMDB, currently comes through MDBList. This sources the TMDB weight directly from TMDB's own vote average instead — it's already fetched for genre/year, so this costs nothing extra and needs no MDBList key.">TMDB Rating Source</label>
+              <label class="field-label" data-tip="Every source MDBList aggregates, including the one labelled TMDB, currently comes through MDBList. This sources the TMDB weight directly from TMDB's own vote average instead — it's already fetched for genre/year, so this costs nothing extra and needs no MDBList key. 'Only when MDBList has none' keeps MDBList in charge and falls back to TMDB's own figure when it has nothing — free insurance against a rate-limited key, with no server-side setup at all.">TMDB Rating Source</label>
               <select id="cfg-tmdb-rating-source" onchange="build(); queuePreviewReload()">
                 <option value="mdblist" selected>MDBList (default)</option>
+                <option value="fallback">MDBList, direct TMDB as fallback</option>
                 <option value="direct">Direct from TMDB (no MDBList key needed)</option>
               </select>
             </div>

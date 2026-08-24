@@ -118,8 +118,31 @@ Default: `false`
 ## Ratings without MDBList
 
 Every weighted rating source normally comes from MDBList — including the one
-labelled "tmdb". Two of them can instead be sourced without an MDBList key at
-all, if that's all you need:
+labelled "tmdb". Two of them can instead be sourced elsewhere: either
+*instead* of MDBList, or only when MDBList comes up empty.
+
+Both settings take the same three values, on the configurator's Weights tab
+under **Fallback**:
+
+| Value | Behaviour |
+|---|---|
+| `mdblist` | Default. The weight comes from MDBList, like every other source. |
+| `fallback` | MDBList stays in charge; the local source fills in only when MDBList has no value for that title. |
+| `dataset` / `direct` | Always use the local source. MDBList is never asked for this weight, so it works with no MDBList key at all. |
+
+`fallback` is the one to reach for if you *do* use MDBList. It covers two
+different gaps with one rule — a hard gap (a rate-limited or exhausted key,
+a timeout, every configured key cooling down) and a soft gap (MDBList
+answered fine but carried no score for that title, or one that
+`RATING_MIN_VOTES` filtered out). Both look the same from the scoring code:
+the value is absent, so the local source supplies it.
+
+Note this is a *different layer* from `fallback_to_imdb`. That one is a
+scoring fallback — it fires when no weighted source scored at all and reaches
+for whatever `imdb` value is present. These fire earlier, when the ratings are
+assembled, and are what put a value there for it to find. They compose:
+backfill → weighting → `fallback_to_imdb` if the weights still produced
+nothing.
 
 > **You must also give the source a weight.** Both `imdb` and `tmdb` ship at
 > weight `0` in the stock `MOVIE_WEIGHTS` / `TV_WEIGHTS` (the defaults are
@@ -133,10 +156,16 @@ all, if that's all you need:
 ### `imdb_rating_source` (URL param) / `IMDB_DATASET_ENABLED` (env)
 
 Sources the IMDb weight from IMDb's own free, no-key, daily-refreshed
-non-commercial dataset (`https://datasets.imdbws.com/title.ratings.tsv.gz`)
-instead of MDBList. Set `IMDB_DATASET_ENABLED=true` on the server, then select
-it with `imdb_rating_source=dataset` (default: `mdblist`, unchanged
-behaviour) — also available as a dropdown on the configurator's Weights tab.
+non-commercial dataset (`https://datasets.imdbws.com/title.ratings.tsv.gz`).
+Set `IMDB_DATASET_ENABLED=true` on the server, then pick `dataset` (always
+use it) or `fallback` (use it only when MDBList has no IMDb score) — default
+`mdblist`, unchanged behaviour. Also a dropdown on the Weights tab.
+
+`fallback` needs the same server-side setup as `dataset` — the table has to
+exist and be loaded to be worth consulting — but it leaves every MDBList
+answer you already get exactly as it was. Until the first download completes
+it is simply inert; readiness is part of the composite cache key, so posters
+rendered during that window aren't served stale afterwards.
 
 A background task downloads and reloads the full dataset into a local SQLite
 table on `IMDB_DATASET_REFRESH_HOURS` (default 24 — IMDb itself only
@@ -168,14 +197,19 @@ Default: `IMDB_DATASET_ENABLED=false`, `IMDB_DATASET_REFRESH_HOURS=24`,
 
 Sources the TMDB weight from TMDB's own `vote_average` — already fetched in
 the same metadata call used for genre, year, and credits — instead of
-MDBList. Set `tmdb_rating_source=direct` (default: `mdblist`, unchanged
-behaviour). No env var or background task needed; the value is already in
-hand on every request, so this has no extra cost. Also available as a
-dropdown on the Weights tab.
+MDBList. Pick `direct` (always) or `fallback` (only when MDBList has no TMDB
+score) — default `mdblist`, unchanged behaviour. Also a dropdown on the
+Weights tab.
+
+No env var or background task needed; the value is already in hand on every
+request. That makes `tmdb_rating_source=fallback` close to free — no
+download, no table, no readiness window — so it is the cheapest way to keep
+scores alive through a rate-limited MDBList key, on an instance that has
+opted into nothing else.
 
 `RATING_MIN_VOTES` (default 10) applies here just as it does to every
-MDBList-sourced rating, so a title carrying a single 10/10 vote is skipped
-rather than scored 100.
+MDBList-sourced rating, in all three modes, so a title carrying a single
+10/10 vote is skipped rather than scored 100.
 
 Between the two, an instance can run entirely without an MDBList key: TMDB
 metadata (genre, year), TMDB-only sashes (trending, Golden Globe,

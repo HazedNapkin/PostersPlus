@@ -348,6 +348,144 @@ class DirectTmdbVoteFloorTests(unittest.TestCase):
         self.assertEqual(out, {"tmdb": 100.0})
 
 
+class ImdbFallbackModeTests(unittest.TestCase):
+    """imdb_rating_source=fallback: MDBList wins, the dataset fills the gaps.
+
+    The point of this mode is that operators who do use MDBList get something
+    out of the dataset too. It covers a hard gap (fetch failed, key exhausted,
+    every key cooling down — the failure path arrives with an empty dict) and
+    a soft gap (MDBList answered but carried no IMDb score, or one that
+    RATING_MIN_VOTES filtered out) with the same absence test.
+    """
+
+    def _rcfg(self, source="fallback"):
+        rcfg = main.build_request_config({})
+        rcfg.imdb_rating_source = source
+        return rcfg
+
+    def test_mdblist_value_is_not_overridden(self):
+        with patch.object(imdb_dataset, "get_rating", return_value=9.3):
+            out = main._merge_imdb_dataset_rating(
+                {"imdb": 8.1, "tomatoes": 80}, "tt0111161", self._rcfg()
+            )
+        self.assertEqual(out, {"imdb": 8.1, "tomatoes": 80})
+
+    def test_dataset_fills_a_soft_gap(self):
+        # MDBList answered, but with no IMDb score for this title.
+        with patch.object(imdb_dataset, "get_rating", return_value=9.3):
+            out = main._merge_imdb_dataset_rating(
+                {"tomatoes": 80}, "tt0111161", self._rcfg()
+            )
+        self.assertEqual(out, {"tomatoes": 80, "imdb": 9.3})
+
+    def test_dataset_fills_a_hard_gap(self):
+        # The MDBList failure path arrives here with an empty dict.
+        with patch.object(imdb_dataset, "get_rating", return_value=9.3):
+            out = main._merge_imdb_dataset_rating({}, "tt0111161", self._rcfg())
+        self.assertEqual(out, {"imdb": 9.3})
+
+    def test_an_explicit_none_is_treated_as_absent(self):
+        with patch.object(imdb_dataset, "get_rating", return_value=9.3):
+            out = main._merge_imdb_dataset_rating(
+                {"imdb": None}, "tt0111161", self._rcfg()
+            )
+        self.assertEqual(out, {"imdb": 9.3})
+
+    def test_still_a_noop_when_the_dataset_has_nothing_either(self):
+        with patch.object(imdb_dataset, "get_rating", return_value=None):
+            out = main._merge_imdb_dataset_rating(
+                {"tomatoes": 80}, "tt0111161", self._rcfg()
+            )
+        self.assertEqual(out, {"tomatoes": 80})
+
+    def test_dataset_mode_still_overrides(self):
+        # The distinction between the two modes: "dataset" replaces MDBList's
+        # answer, "fallback" defers to it.
+        with patch.object(imdb_dataset, "get_rating", return_value=9.3):
+            out = main._merge_imdb_dataset_rating(
+                {"imdb": 8.1}, "tt0111161", self._rcfg("dataset")
+            )
+        self.assertEqual(out, {"imdb": 9.3})
+
+    def test_mdblist_mode_never_consults_the_dataset(self):
+        with patch.object(
+            imdb_dataset, "get_rating", side_effect=AssertionError("looked it up")
+        ):
+            out = main._merge_imdb_dataset_rating({}, "tt0111161", self._rcfg("mdblist"))
+        self.assertEqual(out, {})
+
+    def test_fallback_is_accepted_as_a_query_param(self):
+        rcfg = main.build_request_config({"imdb_rating_source": "fallback"})
+        self.assertEqual(rcfg.imdb_rating_source, "fallback")
+
+    def test_composes_with_fallback_to_imdb(self):
+        # The two are different layers: this one puts a value in the ratings
+        # dict, fallback_to_imdb reaches for it when the weights score nothing.
+        from ratings import calculate_weighted_score
+
+        rcfg = self._rcfg()
+        with patch.object(imdb_dataset, "get_rating", return_value=9.3):
+            ratings = main._merge_imdb_dataset_rating({}, "tt0111161", rcfg)
+        # imdb carries weight 0 by default, so the weights alone score nothing.
+        self.assertEqual(calculate_weighted_score(ratings, main._cfg.MOVIE_WEIGHTS), "N/A")
+        self.assertEqual(
+            calculate_weighted_score(
+                ratings, main._cfg.MOVIE_WEIGHTS, fallback_to_imdb=True
+            ),
+            93,
+        )
+
+
+class TmdbFallbackModeTests(unittest.TestCase):
+    """tmdb_rating_source=fallback — same rule, and free: no download, no
+    table, no readiness window, so it covers an MDBList outage on an instance
+    that has opted into nothing else."""
+
+    def _rcfg(self, source="fallback"):
+        rcfg = main.build_request_config({})
+        rcfg.tmdb_rating_source = source
+        return rcfg
+
+    def test_mdblist_value_is_not_overridden(self):
+        out = main._merge_direct_tmdb_rating(
+            {"tmdb": 55}, {"vote_average": 8.7, "vote_count": 28000}, self._rcfg()
+        )
+        self.assertEqual(out, {"tmdb": 55})
+
+    def test_fills_a_soft_gap(self):
+        out = main._merge_direct_tmdb_rating(
+            {"tomatoes": 80}, {"vote_average": 8.7, "vote_count": 28000}, self._rcfg()
+        )
+        self.assertEqual(out, {"tomatoes": 80, "tmdb": 87.0})
+
+    def test_fills_a_hard_gap(self):
+        out = main._merge_direct_tmdb_rating(
+            {}, {"vote_average": 8.7, "vote_count": 28000}, self._rcfg()
+        )
+        self.assertEqual(out, {"tmdb": 87.0})
+
+    def test_vote_floor_still_applies_in_fallback_mode(self):
+        with patch.object(main._cfg, "RATING_MIN_VOTES", 10):
+            out = main._merge_direct_tmdb_rating(
+                {}, {"vote_average": 10.0, "vote_count": 1}, self._rcfg()
+            )
+        self.assertEqual(out, {})
+
+    def test_direct_mode_still_overrides(self):
+        out = main._merge_direct_tmdb_rating(
+            {"tmdb": 55}, {"vote_average": 8.7, "vote_count": 28000}, self._rcfg("direct")
+        )
+        self.assertEqual(out, {"tmdb": 87.0})
+
+    def test_fallback_is_accepted_as_a_query_param(self):
+        rcfg = main.build_request_config({"tmdb_rating_source": "fallback"})
+        self.assertEqual(rcfg.tmdb_rating_source, "fallback")
+
+    def test_invalid_value_still_falls_back_to_the_default(self):
+        rcfg = main.build_request_config({"tmdb_rating_source": "fallbck"})
+        self.assertEqual(rcfg.tmdb_rating_source, "mdblist")
+
+
 class NoMdblistKeyScoringTests(unittest.TestCase):
     """The whole point of these sources is running without an MDBList key —
     and that was the one configuration where they did nothing.
