@@ -114,11 +114,41 @@ class ImdbDatasetRefreshTests(unittest.TestCase):
         for p in self._patches:
             p.start()
         imdb_dataset._local.conn = None
+        # refresh_dataset writes this module global; zero it for the fresh
+        # temp database and restore it in tearDown, so neither a leftover
+        # count leaks in nor this test's count leaks out.
+        self._saved_row_count = imdb_dataset._row_count
+        imdb_dataset._row_count = 0
 
     def tearDown(self):
         for p in self._patches:
             p.stop()
         imdb_dataset._local.conn = None
+        imdb_dataset._row_count = self._saved_row_count
+
+    def test_refresh_replaces_rather_than_accumulates(self):
+        # The load builds imdb_ratings_new and swaps it in, so a title that
+        # drops out of IMDb's file must disappear locally too rather than
+        # linger from the previous run.
+        client = _FakeClient(_make_gz_tsv([
+            ("tt0903747", "9.0", "2000000"),
+            ("tt0000001", "5.5", "42"),
+        ]))
+        asyncio.run(imdb_dataset.refresh_dataset(client))
+        self.assertEqual(imdb_dataset.row_count(), 2)
+
+        client = _FakeClient(_make_gz_tsv([("tt0903747", "9.3", "2100000")]))
+        count = asyncio.run(imdb_dataset.refresh_dataset(client))
+        self.assertEqual(count, 1)
+        self.assertEqual(imdb_dataset.row_count(), 1)
+        self.assertEqual(imdb_dataset.get_rating("tt0903747"), 9.3)
+        self.assertIsNone(imdb_dataset.get_rating("tt0000001"))
+
+    def test_refresh_marks_the_dataset_ready(self):
+        self.assertFalse(imdb_dataset.is_ready())
+        client = _FakeClient(_make_gz_tsv([("tt0903747", "9.0", "2000000")]))
+        asyncio.run(imdb_dataset.refresh_dataset(client))
+        self.assertTrue(imdb_dataset.is_ready())
 
     def test_refresh_parses_and_loads_rows(self):
         gz = _make_gz_tsv([
@@ -264,6 +294,103 @@ class MergeDirectTmdbRatingTests(unittest.TestCase):
         merged = main._merge_direct_tmdb_rating({}, {"vote_average": 8.2}, self._rcfg("direct"))
         score = calculate_weighted_score(merged, {"tmdb": 1.0})
         self.assertEqual(score, 82)
+
+
+class DirectTmdbVoteFloorTests(unittest.TestCase):
+    """RATING_MIN_VOTES applies to the direct-from-TMDB source too.
+
+    Every MDBList-sourced rating is filtered on vote count in
+    ratings.fetch_mdblist_data, including MDBList's own "tmdb". Without the
+    same floor here, switching the source would quietly remove it and a
+    single 10/10 vote would render a score of 100.
+    """
+
+    def _rcfg(self):
+        rcfg = main.build_request_config({})
+        rcfg.tmdb_rating_source = "direct"
+        return rcfg
+
+    def test_below_min_votes_is_skipped(self):
+        with patch.object(main._cfg, "RATING_MIN_VOTES", 10):
+            out = main._merge_direct_tmdb_rating(
+                {}, {"vote_average": 10.0, "vote_count": 1}, self._rcfg()
+            )
+        self.assertEqual(out, {})
+
+    def test_at_min_votes_is_kept(self):
+        with patch.object(main._cfg, "RATING_MIN_VOTES", 10):
+            out = main._merge_direct_tmdb_rating(
+                {}, {"vote_average": 8.2, "vote_count": 10}, self._rcfg()
+            )
+        self.assertEqual(out, {"tmdb": 82.0})
+
+    def test_missing_vote_count_is_allowed(self):
+        # Matches ratings.fetch_mdblist_data: the floor only bites when a
+        # count is actually reported, so an absent field is not a rejection.
+        with patch.object(main._cfg, "RATING_MIN_VOTES", 10):
+            out = main._merge_direct_tmdb_rating(
+                {}, {"vote_average": 8.2}, self._rcfg()
+            )
+        self.assertEqual(out, {"tmdb": 82.0})
+
+    def test_unparseable_vote_count_is_allowed(self):
+        with patch.object(main._cfg, "RATING_MIN_VOTES", 10):
+            out = main._merge_direct_tmdb_rating(
+                {}, {"vote_average": 8.2, "vote_count": "many"}, self._rcfg()
+            )
+        self.assertEqual(out, {"tmdb": 82.0})
+
+    def test_floor_of_zero_keeps_everything(self):
+        with patch.object(main._cfg, "RATING_MIN_VOTES", 0):
+            out = main._merge_direct_tmdb_rating(
+                {}, {"vote_average": 10.0, "vote_count": 1}, self._rcfg()
+            )
+        self.assertEqual(out, {"tmdb": 100.0})
+
+
+class ImdbDatasetReadinessTests(unittest.TestCase):
+    """is_ready() distinguishes "switched on" from "actually has data".
+
+    The composite cache signature keys on it so that posters rendered in the
+    window between first startup and the first completed download aren't
+    served from cache at N/A once the data lands.
+    """
+
+    def test_not_ready_when_disabled(self):
+        with patch.object(imdb_dataset, "IMDB_DATASET_ENABLED", False):
+            with patch.object(imdb_dataset, "_row_count", 1_700_000):
+                self.assertFalse(imdb_dataset.is_ready())
+
+    def test_not_ready_when_enabled_but_empty(self):
+        with patch.object(imdb_dataset, "IMDB_DATASET_ENABLED", True):
+            with patch.object(imdb_dataset, "_row_count", 0):
+                self.assertTrue(imdb_dataset.is_enabled())
+                self.assertFalse(imdb_dataset.is_ready())
+
+    def test_ready_once_rows_are_loaded(self):
+        with patch.object(imdb_dataset, "IMDB_DATASET_ENABLED", True):
+            with patch.object(imdb_dataset, "_row_count", 1_700_000):
+                self.assertTrue(imdb_dataset.is_ready())
+
+    def test_row_count_is_served_from_cache_not_a_table_scan(self):
+        # /server-caps is polled by the configurator and the table runs to
+        # ~1.7 M rows, so row_count() must never reach SQLite.
+        with patch.object(imdb_dataset, "IMDB_DATASET_ENABLED", True):
+            with patch.object(imdb_dataset, "_row_count", 42):
+                with patch.object(
+                    imdb_dataset, "_get_db", side_effect=AssertionError("queried the db")
+                ):
+                    self.assertEqual(imdb_dataset.row_count(), 42)
+
+    def test_status_reports_readiness_and_last_error(self):
+        with patch.object(imdb_dataset, "IMDB_DATASET_ENABLED", True):
+            with patch.object(imdb_dataset, "_row_count", 5):
+                with patch.object(imdb_dataset, "_last_refresh_error", "download failed: boom"):
+                    st = imdb_dataset.status()
+        self.assertTrue(st["enabled"])
+        self.assertTrue(st["ready"])
+        self.assertEqual(st["row_count"], 5)
+        self.assertEqual(st["last_refresh_error"], "download failed: boom")
 
 
 class TmdbRatingSourceRequestConfigTests(unittest.TestCase):

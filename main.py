@@ -764,6 +764,12 @@ def _merge_direct_tmdb_rating(ratings_dict, tmdb_data: dict, rcfg: "RequestConfi
     SCORE_NORMALISERS["tmdb"] is the identity function because MDBList's own
     "tmdb" source is already expressed on a 0-100 scale; TMDB's API reports
     vote_average on a 0-10 scale, so it is rescaled here to match.
+
+    RATING_MIN_VOTES applies here exactly as it does to every MDBList-sourced
+    rating (see ratings.fetch_mdblist_data), including MDBList's own "tmdb".
+    Without it this path would be the one rating source in the app with no
+    vote floor, and a single 10/10 vote on an obscure title would render a
+    score of 100.
     """
     if not isinstance(ratings_dict, dict):
         return ratings_dict
@@ -777,6 +783,17 @@ def _merge_direct_tmdb_rating(ratings_dict, tmdb_data: dict, rcfg: "RequestConfi
     except (TypeError, ValueError):
         return ratings_dict
     if vote_average <= 0:
+        return ratings_dict
+    vote_count = tmdb_data.get("vote_count")
+    try:
+        vote_count = int(vote_count) if vote_count is not None else None
+    except (TypeError, ValueError):
+        vote_count = None
+    if vote_count is not None and vote_count < _cfg.RATING_MIN_VOTES:
+        logger.info(
+            f"Skipping direct TMDB rating: vote_count={vote_count} < "
+            f"{_cfg.RATING_MIN_VOTES}"
+        )
         return ratings_dict
     return {**ratings_dict, "tmdb": vote_average * 10}
 
@@ -4345,6 +4362,10 @@ async def stats(access_key: str = ""):
 
     return {
         "cache":   get_cache_stats(),
+        # Surfaced here rather than only on /server-caps because a failed or
+        # silently stale dataset refresh is otherwise invisible outside the
+        # container logs.
+        "imdb_dataset": imdb_dataset.status(),
         "runtime": {
             "renders_in_flight":        len(_render_inflight),
             "quality_fetches_in_flight": len(_quality_bg_inflight),
@@ -4934,6 +4955,20 @@ async def get_poster(
             f"|rp={_cfg.RATING_MIN_VOTES}:"
             f"{int(rcfg.fallback_to_imdb)}"
         )
+        # The IMDb dataset changes the rendered score exactly the way
+        # RATING_MIN_VOTES does, so flipping IMDB_DATASET_ENABLED has to bust
+        # composites the same way. Appended only when the feature is on, so
+        # instances that never enable it keep every existing cache entry.
+        #
+        # is_ready() rather than is_enabled(): on the first-ever start the
+        # feature is on but the table is empty until the download lands, and
+        # posters rendered in that window would otherwise be cached at "N/A"
+        # for the full composite TTL.
+        _dataset_sig = (
+            f"|imdbds={int(imdb_dataset.is_ready())}:{_cfg.IMDB_DATASET_MIN_VOTES}"
+            if imdb_dataset.is_enabled()
+            else ""
+        )
         _server_sig = "|server=" + _server_render_signature()
         _params_hash = hashlib.sha256(
             (
@@ -4941,6 +4976,7 @@ async def get_poster(
                 + _detect_sig
                 + _poster_selection_sig
                 + _rating_policy_sig
+                + _dataset_sig
                 + _server_sig
             ).encode()
         ).hexdigest()[:16]

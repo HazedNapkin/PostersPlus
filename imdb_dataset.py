@@ -29,6 +29,7 @@ import os
 import sqlite3
 import threading
 import time
+from contextlib import suppress
 
 import httpx
 
@@ -44,14 +45,29 @@ logger = logging.getLogger(__name__)
 _DATASET_URL = "https://datasets.imdbws.com/title.ratings.tsv.gz"
 
 _local = threading.local()
-_initialised = False
 _last_refresh_ts: float | None = None
 _last_refresh_rows: int = 0
 _last_refresh_error: str | None = None
+# Cached COUNT(*). The table runs to ~1.7 M rows and SQLite has to walk all of
+# them to count, so this is far too expensive to do per request — /server-caps
+# is polled by the configurator. Recomputed at startup and after each refresh,
+# which are the only two moments it changes.
+_row_count: int = 0
 
 
 def is_enabled() -> bool:
     return bool(IMDB_DATASET_ENABLED)
+
+
+def is_ready() -> bool:
+    """True once the table actually holds ratings.
+
+    Distinct from is_enabled(): between the first-ever startup and the first
+    completed download there is a window where the feature is on but every
+    lookup returns None. Folded into the composite cache signature so posters
+    rendered during that window aren't served from cache afterwards.
+    """
+    return is_enabled() and _row_count > 0
 
 
 def _get_db() -> sqlite3.Connection:
@@ -79,29 +95,41 @@ def _get_db() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    """Idempotent — safe to call once at startup even when disabled, so the
-    file exists and later enabling the feature needs no migration step."""
-    global _initialised
+    """Idempotent — safe to call once at startup. Does nothing at all when the
+    feature is disabled: no connection, no file, no table. Enabling it later
+    needs no migration step because _get_db() creates the schema on first use.
+    """
+    global _row_count
     if not is_enabled():
+        _row_count = 0
         return
     _get_db()
-    _initialised = True
+    _row_count = _count_rows()
 
 
 def status() -> dict:
+    """Operator diagnostics, surfaced on /stats.
+
+    last_refresh_error is the reason this exists: a download or parse failure
+    is otherwise only visible in the container logs, and a silently stale
+    dataset looks exactly like a working one from the outside.
+    """
     return {
         "enabled": is_enabled(),
+        "ready": is_ready(),
         "path": IMDB_DATASET_PATH if is_enabled() else None,
         "refresh_hours": IMDB_DATASET_REFRESH_HOURS,
         "min_votes": IMDB_DATASET_MIN_VOTES,
         "last_refresh_unix": _last_refresh_ts,
         "last_refresh_rows": _last_refresh_rows,
         "last_refresh_error": _last_refresh_error,
-        "row_count": row_count() if is_enabled() else 0,
+        "row_count": row_count(),
     }
 
 
-def row_count() -> int:
+def _count_rows() -> int:
+    """Actual COUNT(*) — a full table walk. Only ever called at startup and
+    after a refresh; everything else reads the cached _row_count."""
     if not is_enabled():
         return 0
     try:
@@ -109,6 +137,10 @@ def row_count() -> int:
         return conn.execute("SELECT COUNT(*) FROM imdb_ratings").fetchone()[0]
     except Exception:
         return 0
+
+
+def row_count() -> int:
+    return _row_count if is_enabled() else 0
 
 
 def get_rating(imdb_id: str | None) -> float | None:
@@ -140,11 +172,11 @@ def get_rating(imdb_id: str | None) -> float | None:
 async def refresh_dataset(client: httpx.AsyncClient) -> int:
     """Download and reload the full dataset. Returns the row count loaded.
 
-    Runs the download+parse+bulk-insert off the event loop (it's a ~25 MB
-    gzip download and a few million-row parse) so it never blocks request
+    Runs the download+parse+bulk-insert off the event loop (an ~8.6 MB gzip
+    that expands to ~30 MB over ~1.7 M rows) so it never blocks request
     handling; only the final connection handoff happens on this thread.
     """
-    global _last_refresh_ts, _last_refresh_rows, _last_refresh_error
+    global _last_refresh_ts, _last_refresh_rows, _last_refresh_error, _row_count
 
     if not is_enabled():
         return 0
@@ -159,21 +191,26 @@ async def refresh_dataset(client: httpx.AsyncClient) -> int:
         return 0
 
     def _parse_and_load() -> int:
-        rows: list[tuple[str, float, int]] = []
-        with gzip.GzipFile(fileobj=io.BytesIO(raw)) as gz:
-            text = io.TextIOWrapper(gz, encoding="utf-8")
-            header = text.readline()  # tconst  averageRating  numVotes
-            for line in text:
-                parts = line.rstrip("\n").split("\t")
-                if len(parts) != 3:
-                    continue
-                tconst, rating_str, votes_str = parts
-                try:
-                    rating = float(rating_str)
-                    votes = int(votes_str)
-                except ValueError:
-                    continue
-                rows.append((tconst, rating, votes))
+        # Streamed rather than accumulated into a list: materialising all
+        # ~1.7 M rows costs ~300 MB of RSS, and this runs in a container that
+        # is simultaneously holding decoded poster bitmaps. Feeding the
+        # generator straight to executemany measures at ~22 MB peak for the
+        # same wall-clock time (~5 s), so the list buys nothing.
+        def _rows():
+            with gzip.GzipFile(fileobj=io.BytesIO(raw)) as gz:
+                text = io.TextIOWrapper(gz, encoding="utf-8")
+                text.readline()  # header: tconst  averageRating  numVotes
+                for line in text:
+                    parts = line.rstrip("\n").split("\t")
+                    if len(parts) != 3:
+                        continue
+                    tconst, rating_str, votes_str = parts
+                    try:
+                        rating = float(rating_str)
+                        votes = int(votes_str)
+                    except ValueError:
+                        continue
+                    yield (tconst, rating, votes)
 
         conn = sqlite3.connect(IMDB_DATASET_PATH, check_same_thread=False)
         try:
@@ -204,7 +241,7 @@ async def refresh_dataset(client: httpx.AsyncClient) -> int:
             conn.execute("BEGIN")
             conn.executemany(
                 "INSERT INTO imdb_ratings_new (tconst, rating, votes) VALUES (?, ?, ?)",
-                rows,
+                _rows(),
             )
             conn.execute("DROP TABLE imdb_ratings")
             conn.execute("ALTER TABLE imdb_ratings_new RENAME TO imdb_ratings")
@@ -212,10 +249,14 @@ async def refresh_dataset(client: httpx.AsyncClient) -> int:
                 "INSERT OR REPLACE INTO imdb_ratings_meta (key, value) VALUES ('last_refresh', ?)",
                 (str(int(time.time())),),
             )
+            # Counted from the table rather than the generator: nothing is
+            # holding the parsed rows any more, and this is the figure that
+            # actually landed.
+            loaded = conn.execute("SELECT COUNT(*) FROM imdb_ratings").fetchone()[0]
             conn.commit()
         finally:
             conn.close()
-        return len(rows)
+        return loaded
 
     try:
         loop = asyncio.get_running_loop()
@@ -227,12 +268,18 @@ async def refresh_dataset(client: httpx.AsyncClient) -> int:
 
     # Any per-thread connections opened before the swap point at a now-stale
     # schema object; drop the cached handle on this thread so the next lookup
-    # reconnects and sees the new table.
+    # reconnects and sees the new table. Closed explicitly rather than left to
+    # the collector so the old WAL reader is released immediately.
+    _stale = getattr(_local, "conn", None)
+    if _stale is not None:
+        with suppress(Exception):
+            _stale.close()
     _local.conn = None
 
     _last_refresh_ts = time.time()
     _last_refresh_rows = count
     _last_refresh_error = None
+    _row_count = count
     logger.info(f"IMDb dataset refreshed: {count} titles loaded from {_DATASET_URL}")
     return count
 

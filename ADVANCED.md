@@ -121,6 +121,15 @@ Every weighted rating source normally comes from MDBList — including the one
 labelled "tmdb". Two of them can instead be sourced without an MDBList key at
 all, if that's all you need:
 
+> **You must also give the source a weight.** Both `imdb` and `tmdb` ship at
+> weight `0` in the stock `MOVIE_WEIGHTS` / `TV_WEIGHTS` (the defaults are
+> Letterboxd 0.8 / Rotten Tomatoes 0.2 for movies, Trakt 0.8 / Rotten Tomatoes
+> 0.2 for TV — all MDBList-only). Switching the *source* changes where the
+> value comes from, not whether it counts. Enable one of these without also
+> raising its weight on the configurator's Weights tab and every score still
+> reads `N/A`, because the only source with a non-zero weight is one you no
+> longer have a key for.
+
 ### `imdb_rating_source` (URL param) / `IMDB_DATASET_ENABLED` (env)
 
 Sources the IMDb weight from IMDb's own free, no-key, daily-refreshed
@@ -138,6 +147,16 @@ be meaningful, mirroring `RATING_MIN_VOTES`. `IMDB_DATASET_PATH` (default
 `/app/cache/imdb_ratings.db`) is where the table lives — keep it on the same
 volume as the rest of the cache so it survives restarts.
 
+Budget for it: the download is ~8.6 MB gzipped, and the resulting SQLite file
+is **~84 MB** for ~1.7 million titles. The reload takes a few seconds and runs
+off the event loop, so it never blocks requests. Refresh progress and any
+download or parse failure are reported under `imdb_dataset` on `/stats`.
+
+IMDb publishes these files for **personal and non-commercial use only** (see
+<https://developer.imdb.com/non-commercial-datasets/>). That is a fine fit for
+a self-hosted instance; it is not one for a commercial deployment, which is
+part of why this is off by default.
+
 If a live MDBList fetch fails for a title, the IMDb dataset value (when
 enabled) is still tried before giving up, so an MDBList outage doesn't
 unconditionally zero out the score for operators using this.
@@ -153,6 +172,10 @@ MDBList. Set `tmdb_rating_source=direct` (default: `mdblist`, unchanged
 behaviour). No env var or background task needed; the value is already in
 hand on every request, so this has no extra cost. Also available as a
 dropdown on the Weights tab.
+
+`RATING_MIN_VOTES` (default 10) applies here just as it does to every
+MDBList-sourced rating, so a title carrying a single 10/10 vote is skipped
+rather than scored 100.
 
 Between the two, an instance can run entirely without an MDBList key: TMDB
 metadata (genre, year), TMDB-only sashes (trending, Golden Globe,
