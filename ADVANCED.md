@@ -186,9 +186,15 @@ IMDb publishes these files for **personal and non-commercial use only** (see
 a self-hosted instance; it is not one for a commercial deployment, which is
 part of why this is off by default.
 
-If a live MDBList fetch fails for a title, the IMDb dataset value (when
-enabled) is still tried before giving up, so an MDBList outage doesn't
-unconditionally zero out the score for operators using this.
+With `IMDB_DATASET_ENABLED=false` the configurator disables both non-default
+options outright and says why, rather than letting you build a URL that
+silently scores `N/A`. A URL imported from an instance that does have it on
+is coerced back to `mdblist` for the same reason. The server is forgiving
+about it either way — a hand-written `imdb_rating_source=dataset` against a
+server without the dataset just falls through to normal MDBList behaviour.
+
+With `WORKERS` greater than 1, only one worker per interval performs the
+download; the rest re-read the table it writes. Nothing to configure.
 
 Default: `IMDB_DATASET_ENABLED=false`, `IMDB_DATASET_REFRESH_HOURS=24`,
 `IMDB_DATASET_MIN_VOTES=10`, `IMDB_DATASET_PATH=/app/cache/imdb_ratings.db`
@@ -211,7 +217,8 @@ opted into nothing else.
 MDBList-sourced rating, in all three modes, so a title carrying a single
 10/10 vote is skipped rather than scored 100.
 
-Between the two, an instance can run entirely without an MDBList key: TMDB
+Between the two — set to `dataset` / `direct`, and given a weight — an
+instance can run entirely without an MDBList key: TMDB
 metadata (genre, year), TMDB-only sashes (trending, Golden Globe,
 studio/director/cast, foreign-language, release-status), and both the TMDB
 and IMDb weighted ratings. What you lose without MDBList is the MDBList-only

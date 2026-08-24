@@ -85,6 +85,10 @@
 - Quality backend selection now runs through one dispatcher instead of being
   repeated at each call site. `/status` reports the active backend as
   `quality_source`.
+- The Quality Bookmark badge mode now seeds Badge Size at 30 rather than 16.
+  At 16 the corner mark was barely visible at the poster sizes most clients
+  render at, so the mode looked like it hadn't worked. The right value varies
+  by client, which the mode's tooltip now says.
 
 ### Ratings
 
@@ -109,6 +113,16 @@
   MDBList outage. This is a different layer from `fallback_to_imdb`: that one
   fires when the *weights* score nothing and reaches for whatever `imdb` value
   is present, whereas these put a value there for it to find. They compose.
+- The configurator now disables the two dataset-backed IMDb source options
+  when `IMDB_DATASET_ENABLED` is off server-side, and coerces an imported URL
+  that names one back to `mdblist`. Selecting an option the server can't
+  honour produced a URL that looked configured and silently scored `N/A`.
+  `/server-caps` already reported the state; nothing was reading it.
+- Only one worker per interval downloads the IMDb dataset. With `WORKERS` > 1
+  every worker ran its own copy of the refresh loop against the same
+  database, so the losers of the table swap failed with `database is locked`
+  and — worse — kept a stale row count, which left them reporting an empty
+  dataset on `/server-caps` and splitting the composite cache signature.
 - Corrected `.env.example`'s `MDBLIST_API_KEY` documentation, which called it
   `[Required]`; it has been optional in the request path for some time (see
   the "IMDb ids are now optional" entry above) and is now spelled out exactly
