@@ -3133,6 +3133,12 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="dataset">Local IMDb dataset (no MDBList key needed)</option>
               </select>
             </div>
+            <!-- Standing warning, not a per-field hint, so it keeps its copy.
+                 Both non-default options need the dataset loaded server-side;
+                 without it they would generate a URL that silently scores N/A. -->
+            <div class="field callout" id="imdb-dataset-hint" style="display:none">
+              <div class="field-hint" id="imdb-dataset-hint-text"></div>
+            </div>
 
             <div class="field" id="tmdb-rating-source-field">
               <label class="field-label" data-tip="Every source MDBList aggregates, including the one labelled TMDB, currently comes through MDBList. This sources the TMDB weight directly from TMDB's own vote average instead — it's already fetched for genre/year, so this costs nothing extra and needs no MDBList key. 'Only when MDBList has none' keeps MDBList in charge and falls back to TMDB's own figure when it has nothing — free insurance against a rate-limited key, with no server-side setup at all.">TMDB Rating Source</label>
@@ -3431,7 +3437,7 @@ const SASH_DEFAULT_DISABLED = new Set([]);
 let sashOrder    = SASH_SLOTS.filter(s => !SASH_DEFAULT_DISABLED.has(s.id)).map(s => s.id);
 let sashDisabled = new Set(SASH_DEFAULT_DISABLED);   // IDs explicitly disabled via ✕ button
 let mediaType = 'movie', resolvedImdbId = '', resolvedTmdbId = '';
-let serverCaps = { tmdb_key_set: false, mdblist_key_set: false, aiostreams_configured: false, quality_configured: false };
+let serverCaps = { tmdb_key_set: false, mdblist_key_set: false, aiostreams_configured: false, quality_configured: false, imdb_dataset_enabled: false, imdb_dataset_titles: 0 };
 let serverCapsLoaded = false;
 let searchDebounce = null, previewDebounce = null, previewLoading = false, imdbResolvePending = false;
 
@@ -3640,6 +3646,7 @@ async function fetchServerCaps() {
     serverCaps = await resp.json();
     serverCapsLoaded = true;
     updateKeyBadges();
+    updateImdbSourceAvailability();
     
     if (serverCaps.trending_fetch_count) {
       const trSash = SASH_SLOTS.find(s => s.id === 'trending');
@@ -3689,6 +3696,59 @@ function updateKeyBadges() {
   }
 
   updateScraperHint();
+}
+
+// Both non-default IMDb source options depend on IMDB_DATASET_ENABLED and a
+// loaded table. Selecting one against a server that has neither produces a URL
+// that looks configured and silently scores N/A, so the options are disabled
+// outright rather than merely explained — the tooltip is long and the failure
+// is invisible.
+//
+// The TMDB source needs no equivalent: vote_average rides along in a call the
+// server already makes, so "direct" and "fallback" work on every instance.
+function updateImdbSourceAvailability() {
+  const sel  = document.getElementById('cfg-imdb-rating-source');
+  const hint = document.getElementById('imdb-dataset-hint');
+  const text = document.getElementById('imdb-dataset-hint-text');
+  if (!sel || !hint || !text) return;
+
+  // Until /server-caps answers, leave everything enabled. Disabling on an
+  // unreachable endpoint would lock an operator out of a working feature —
+  // same reasoning as the quality warning below.
+  if (!serverCapsLoaded) { hint.style.display = 'none'; return; }
+
+  const enabled = !!serverCaps.imdb_dataset_enabled;
+  const titles  = serverCaps.imdb_dataset_titles || 0;
+  const gated   = ['fallback', 'dataset'];
+
+  for (const opt of sel.options) {
+    if (gated.includes(opt.value)) opt.disabled = !enabled;
+  }
+
+  // A URL imported from another instance (or restored from localStorage) can
+  // carry a value this server can't honour. Coerce it back rather than leaving
+  // a disabled option selected, which browsers render as a blank <select>.
+  if (!enabled && gated.includes(sel.value)) {
+    sel.value = 'mdblist';
+    if (typeof build === 'function') build();
+  }
+
+  if (!enabled) {
+    text.textContent =
+      'The local IMDb dataset is not enabled on this instance, so these options '
+      + 'are unavailable. The operator can turn it on with IMDB_DATASET_ENABLED=true.';
+    hint.style.display = '';
+  } else if (titles === 0) {
+    // Enabled but the first download hasn't landed. The options stay usable —
+    // they simply do nothing until it does, and the composite cache is keyed
+    // on readiness so nothing renders stale in the meantime.
+    text.textContent =
+      'The local IMDb dataset is enabled but still downloading, so it has no '
+      + 'ratings yet. These options take effect once it finishes.';
+    hint.style.display = '';
+  } else {
+    hint.style.display = 'none';
+  }
 }
 
 function updateScraperHint() {
@@ -5808,6 +5868,11 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('fallback_to_imdb')) _setEl('tog-fallback-imdb', p.get('fallback_to_imdb'));
   if (p.has('imdb_rating_source')) _setEl('cfg-imdb-rating-source', p.get('imdb_rating_source'));
   if (p.has('tmdb_rating_source')) _setEl('cfg-tmdb-rating-source', p.get('tmdb_rating_source'));
+  // An imported URL may name a dataset-backed source this server can't honour.
+  // Re-run the gate so it is coerced back rather than silently kept. Safe to
+  // call before /server-caps has answered — it no-ops until then, and
+  // fetchServerCaps calls it again on arrival.
+  updateImdbSourceAvailability();
 
   // ── Sash ────────────────────────────────────────────────────────────────
   if (p.has('sash_poster_color')) _setEl('tog-sash-poster-color', p.get('sash_poster_color'));
