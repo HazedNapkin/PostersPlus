@@ -348,6 +348,66 @@ class DirectTmdbVoteFloorTests(unittest.TestCase):
         self.assertEqual(out, {"tmdb": 100.0})
 
 
+class NoMdblistKeyScoringTests(unittest.TestCase):
+    """The whole point of these sources is running without an MDBList key —
+    and that was the one configuration where they did nothing.
+
+    With no key and no cached rating row, the rating tuple carries
+    cached_ratings_dict, which is None rather than {}. Both merge helpers are
+    guarded on isinstance(..., dict), so they were skipped exactly when they
+    were supposed to be doing the work, and score fell through as None — a
+    500 from the debug endpoint and no score on the poster.
+    """
+
+    def _rcfg(self):
+        rcfg = main.build_request_config({})
+        rcfg.imdb_rating_source = "dataset"
+        rcfg.tmdb_rating_source = "direct"
+        return rcfg
+
+    def test_none_becomes_an_empty_dict(self):
+        self.assertEqual(main._ratings_base(None), {})
+
+    def test_an_existing_dict_is_untouched(self):
+        ratings = {"letterboxd": 4.1}
+        self.assertIs(main._ratings_base(ratings), ratings)
+
+    def test_a_real_score_sentinel_is_not_swallowed(self):
+        # "N/A" is an answer, not an absence — normalising it to {} would let
+        # the merge helpers overwrite a deliberate result.
+        self.assertEqual(main._ratings_base("N/A"), "N/A")
+
+    def test_dataset_rating_survives_the_no_key_path(self):
+        from ratings import calculate_weighted_score
+
+        ratings = main._ratings_base(None)
+        with patch.object(imdb_dataset, "get_rating", return_value=9.3):
+            ratings = main._merge_imdb_dataset_rating(ratings, "tt0111161", self._rcfg())
+        self.assertEqual(ratings, {"imdb": 9.3})
+        self.assertEqual(calculate_weighted_score(ratings, {"imdb": 1.0}), 93)
+
+    def test_direct_tmdb_rating_survives_the_no_key_path(self):
+        from ratings import calculate_weighted_score
+
+        ratings = main._ratings_base(None)
+        ratings = main._merge_direct_tmdb_rating(
+            ratings, {"vote_average": 8.7, "vote_count": 28000}, self._rcfg()
+        )
+        self.assertEqual(ratings, {"tmdb": 87.0})
+        self.assertEqual(calculate_weighted_score(ratings, {"tmdb": 1.0}), 87)
+
+    def test_no_key_and_no_usable_source_scores_na_not_none(self):
+        from ratings import calculate_weighted_score
+
+        ratings = main._ratings_base(None)
+        with patch.object(imdb_dataset, "get_rating", return_value=None):
+            ratings = main._merge_imdb_dataset_rating(ratings, "tt0111161", self._rcfg())
+        ratings = main._merge_direct_tmdb_rating(ratings, {}, self._rcfg())
+        score = calculate_weighted_score(ratings, main._cfg.MOVIE_WEIGHTS)
+        self.assertEqual(score, "N/A")
+        self.assertIsNotNone(score)
+
+
 class ImdbDatasetReadinessTests(unittest.TestCase):
     """is_ready() distinguishes "switched on" from "actually has data".
 

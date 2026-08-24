@@ -750,6 +750,24 @@ def _merge_imdb_dataset_rating(
     return {**ratings_dict, "imdb": value}
 
 
+def _ratings_base(ratings_dict):
+    """Normalise "MDBList was never asked" to an empty dict.
+
+    An instance with no MDBList key and no cached rating row resolves its
+    rating tuple from cached_ratings_dict, which is None rather than {}.
+    That is precisely the configuration the dataset / direct-TMDB sources
+    exist to serve, so it has to reach the merge helpers as a dict —
+    otherwise they are skipped, no MDBList-free source is ever consulted,
+    and the score is left as None (which the debug JSON then fails to
+    int()).
+
+    Anything that is already a dict, and any non-None sentinel such as the
+    "N/A" string, is passed through untouched: those are real answers, not
+    an absence of one.
+    """
+    return {} if ratings_dict is None else ratings_dict
+
+
 def _merge_direct_tmdb_rating(ratings_dict, tmdb_data: dict, rcfg: "RequestConfig"):
     """Override the "tmdb" entry in *ratings_dict* with TMDB's own
     vote_average, when configured to source it directly instead of via
@@ -6022,6 +6040,7 @@ async def get_poster(
                     _rating_retry_key(canonical_id, effective_mdblist_key), None
                 )
 
+            ratings_dict = _ratings_base(ratings_dict)
             if isinstance(ratings_dict, dict):
                 ratings_dict = _merge_imdb_dataset_rating(ratings_dict, effective_imdb_id, rcfg)
                 ratings_dict = _merge_direct_tmdb_rating(ratings_dict, tmdb_data, rcfg)
