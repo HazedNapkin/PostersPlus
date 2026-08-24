@@ -34,7 +34,7 @@ Those not self-hosting can [visit the public instance.](https://postersplus.elfh
 
 - **Ratings overlay** - weighted composite score from Letterboxd, Trakt, Rotten Tomatoes, IMDb, Metacritic, TMDb, MyAnimeList, AniList, Kitsu, and more. Four display modes (Score Bar, Clean, Minimalist, Bar) with many sub-modes. Minimalist mode includes Year, Rating, Both, and Split layouts with optional centring and independently styled field/rating separators. Three built-in colour palettes plus custom score-to-hex palettes, poster-aware overlays, configurable text and glow colours, and optional glow on high scores.
 
-- **Award sashes** - Oscar Best Picture, Golden Globe (film and TV, five major categories), Emmy Outstanding Series (Drama, Comedy, Limited), festival winners, notable studios/directors/cast, trending titles, TV lifecycle signals (new season, returning, season finale), premieres, just-added digital movies, cult classics, true stories, and Metacritic Must-See. Priority order is fully configurable and any sash can be disabled. Sashes can also render as a modern filled or frosted notch with independent size, inset, padding, text colour, and artwork-aware tint controls.
+- **Award sashes** - Oscar Best Picture, Golden Globe (film and TV, five major categories), Emmy Outstanding Series (Drama, Comedy, Limited), festival prizes, notable studios/directors/cast, trending titles, TV lifecycle signals (new season, returning, season finale), premieres, just-added digital movies, cult classics, true stories, and Metacritic Must-See. Priority order is fully configurable and any sash can be disabled. Sashes can also render as a modern filled or frosted notch with independent size, inset, padding, text colour, and artwork-aware tint controls.
 
 - **Quality badges** - seven display modes: Quality Bookmark (a tier-coloured top-left corner fold), Quality Notch (vertical tier-coloured accent pill), Quality + Age Rating (age numeral tinted by 4K/Remux/HDR tier), Badge Row (PNG icons for 4K, 1080p, Remux, Web, DV, HDR10+, HDR10), Combined Text Badge, Age Rating Only, or hidden. A minimum quality threshold (`badge_min_score`) can suppress the badge when stream quality falls below a configurable bar. Quality can come from AIOStreams, a standalone Stremio addon such as Torrentio or Comet, QualiCache's background crawler, or the actual files in Plex and Jellyfin.
 
@@ -412,7 +412,7 @@ Sashes display contextual metadata about a title - awards, festival recognition,
 |---|---|
 | Oscar Winner, Emmy Winner | Oscar Best Picture winner, Emmy Outstanding Drama/Comedy/Limited winner |
 | Globe Winner | Golden Globe winner (film drama/comedy, TV drama/comedy/limited) |
-| Festival Winner | Cannes, Venice, Sundance, TIFF, and other major festivals |
+| Festival Prize | The top prize by name (Palme d'Or, Golden Lion, Golden Bear, Golden Leopard, Sundance GJ), or "Cannes Winner"-style wording for any other prize at those five festivals |
 | Oscar Nominee, Emmy Nominee | Oscar Best Picture nominee, Emmy Outstanding nominee |
 | Globe Nominee | Golden Globe nominee (same categories as above) |
 | Notable Studio | A24, Neon, Pixar, and other curated studios |

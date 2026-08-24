@@ -27,7 +27,8 @@ class RatingCachePolicyTests(unittest.TestCase):
                 is_cult INTEGER,
                 is_true_story INTEGER,
                 is_metacritic INTEGER,
-                rating_min_votes INTEGER
+                rating_min_votes INTEGER,
+                festival_keyword TEXT
             )
             """
         )
@@ -49,7 +50,7 @@ class RatingCachePolicyTests(unittest.TestCase):
         self.conn.execute(
             """
             INSERT INTO rating_cache VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
             """,
             (
@@ -67,6 +68,7 @@ class RatingCachePolicyTests(unittest.TestCase):
                 0,
                 0,
                 policy,
+                None,
             ),
         )
         self.conn.commit()

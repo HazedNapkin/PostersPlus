@@ -560,6 +560,7 @@ from age_badge import draw_quality_age_badge, draw_quality_corner_bookmark, draw
 from landscape import build_landscape
 from awards import _dominant_cluster, _is_skin_tone, dominant_frost_rgb
 from awards import FETCH_FAILED, _RateLimited, draw_award_badge, draw_award_sash, parse_mdblist_awards
+from festivals import match_festival_keyword
 from i18n import load_languages, translate_genre, translate_sash
 from cache import (
     get_cached_quality,
@@ -586,7 +587,6 @@ from digital_release import digital_release_poll_loop
 import config as _cfg
 from discovery import (
     ALL_PRIORITY_SLOTS,
-    FESTIVAL_KEYWORDS,
     DiscoveryMeta,
     extract_discovery_meta,
     pick_sash,
@@ -3538,10 +3538,7 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
         ratings_dict, genre, rel, keywords, age_rating = result
         award_wins, award_noms = parse_mdblist_awards(keywords, tmdb_id=tmdb_id)
         kw_names = {(kw.get("name") or "").lower().strip() for kw in keywords}
-        festival_label = next(
-            (label for kw, label in FESTIVAL_KEYWORDS.items() if kw in kw_names),
-            None,
-        )
+        festival_keyword = match_festival_keyword(kw_names)
         is_cult       = bool({"cult-classic", "cult-film"} & kw_names)
         is_true_story = "based-on-true-story" in kw_names
         is_metacritic = "metacritic-must-see" in kw_names
@@ -3554,7 +3551,7 @@ async def _run_cache_warm_cycle(client: httpx.AsyncClient) -> None:
             award_wins,
             award_noms,
             awards_fetched=True,
-            festival_label=festival_label,
+            festival_keyword=festival_keyword,
             age_rating=age_rating,
             is_cult=is_cult,
             is_true_story=is_true_story,
@@ -4836,24 +4833,24 @@ async def get_poster(
             cached_award_wins,
             cached_award_noms,
             cached_awards_fetched,
-            cached_festival_label,
+            cached_festival_keyword,
             cached_age_rating,
             cached_is_cult,
             cached_is_true_story,
             cached_is_metacritic,
         ) = cached_rating
     else:
-        cached_ratings_dict   = None
-        cached_genre          = None
-        cached_release_date   = None
-        cached_award_wins     = []
-        cached_award_noms     = []
-        cached_awards_fetched = False
-        cached_festival_label = None
-        cached_age_rating     = None
-        cached_is_cult        = False
-        cached_is_true_story  = False
-        cached_is_metacritic  = False
+        cached_ratings_dict     = None
+        cached_genre            = None
+        cached_release_date     = None
+        cached_award_wins       = []
+        cached_award_noms       = []
+        cached_awards_fetched   = False
+        cached_festival_keyword = None
+        cached_age_rating       = None
+        cached_is_cult          = False
+        cached_is_true_story    = False
+        cached_is_metacritic    = False
 
     release_date_for_quality_ttl = cached_release_date
     rating_already_cached        = cached_rating is not None
@@ -4929,7 +4926,7 @@ async def get_poster(
                     cached_award_wins,
                     cached_award_noms,
                     cached_awards_fetched,
-                    cached_festival_label,
+                    cached_festival_keyword,
                     cached_age_rating,
                     cached_is_cult,
                     cached_is_true_story,
@@ -5744,18 +5741,18 @@ async def get_poster(
             if not rate_limited:
                 _failed_retry_key = _rating_retry_key(canonical_id, effective_mdblist_key)
                 _rating_backoff[_failed_retry_key] = asyncio.get_running_loop().time() + backoff_secs
-            ratings_dict   = {}
-            genre          = cached_genre or _tmdb_genre
-            rel            = cached_release_date
-            score          = "N/A"
-            keywords       = []
-            award_wins     = cached_award_wins
-            award_noms     = cached_award_noms
-            festival_label = cached_festival_label
-            age_rating     = cached_age_rating
-            is_cult        = cached_is_cult
-            is_true_story  = cached_is_true_story
-            is_metacritic  = cached_is_metacritic
+            ratings_dict     = {}
+            genre            = cached_genre or _tmdb_genre
+            rel              = cached_release_date
+            score            = "N/A"
+            keywords         = []
+            award_wins       = cached_award_wins
+            award_noms       = cached_award_noms
+            festival_keyword = cached_festival_keyword
+            age_rating       = cached_age_rating
+            is_cult          = cached_is_cult
+            is_true_story    = cached_is_true_story
+            is_metacritic    = cached_is_metacritic
         else:
             ratings_dict, genre, rel, keywords, age_rating = rating_result
             # genre from MDBlist/cache may be None when the key is absent and
@@ -5814,28 +5811,25 @@ async def get_poster(
                 score = ratings_dict
 
             if rating_already_cached:
-                award_wins     = cached_award_wins
-                award_noms     = cached_award_noms
-                festival_label = cached_festival_label
-                age_rating     = cached_age_rating
-                is_cult        = cached_is_cult
-                is_true_story  = cached_is_true_story
-                is_metacritic  = cached_is_metacritic
+                award_wins       = cached_award_wins
+                award_noms       = cached_award_noms
+                festival_keyword = cached_festival_keyword
+                age_rating       = cached_age_rating
+                is_cult          = cached_is_cult
+                is_true_story    = cached_is_true_story
+                is_metacritic    = cached_is_metacritic
             else:
                 award_wins, award_noms = parse_mdblist_awards(
                     keywords,
                     tmdb_id=tmdb_id,
                 )
                 kw_names = {(kw.get("name") or "").lower().strip() for kw in keywords}
-                festival_label = next(
-                    (label for kw, label in FESTIVAL_KEYWORDS.items() if kw in kw_names),
-                    None,
-                )
+                festival_keyword = match_festival_keyword(kw_names)
                 is_cult       = bool({"cult-classic", "cult-film"} & kw_names)
                 is_true_story = "based-on-true-story" in kw_names
                 is_metacritic = "metacritic-must-see" in kw_names
                 logger.info(f"Awards for {canonical_id}: wins={award_wins} noms={award_noms} "
-                            f"festival={festival_label} age_rating={age_rating} "
+                            f"festival={festival_keyword} age_rating={age_rating} "
                             f"cult={is_cult} true_story={is_true_story} metacritic={is_metacritic}")
 
         # ------------------------------------------------------------------
@@ -5854,14 +5848,14 @@ async def get_poster(
                 award_wins,
                 award_noms,
                 awards_fetched=True,
-                festival_label=festival_label,
+                festival_keyword=festival_keyword,
                 age_rating=age_rating,
                 is_cult=is_cult,
                 is_true_story=is_true_story,
                 is_metacritic=is_metacritic,
             )
             logger.info(f"Rating cached for {canonical_id}: score={score} genre={genre} "
-                        f"wins={award_wins} noms={award_noms} festival={festival_label} "
+                        f"wins={award_wins} noms={award_noms} festival={festival_keyword} "
                         f"age_rating={age_rating}")
 
         # Publish completion only after success is cached or failure backoff is
@@ -5932,9 +5926,10 @@ async def get_poster(
             award_wins=award_wins,
             award_noms=award_noms,
             trending_rank=trending_rank,
+            tmdb_id=tmdb_id,
             release_date=rel,
             keywords=keywords if not rating_already_cached else [],
-            festival_label_override=festival_label,
+            festival_keyword=festival_keyword,
             is_cult_override=is_cult,
             is_true_story_override=is_true_story,
             is_metacritic_override=is_metacritic,
@@ -5971,7 +5966,8 @@ async def get_poster(
                 "age_rating":        age_rating,
                 "award_wins":        award_wins,
                 "award_noms":        award_noms,
-                "festival_label":    festival_label,
+                "festival_keyword":  festival_keyword,
+                "festival_label":    discovery_meta.festival_label,
                 "sash":              {"label": _sash_result[0], "type": _sash_result[1]} if _sash_result else None,
                 "is_cult":           discovery_meta.is_cult,
                 "is_true_story":     discovery_meta.is_true_story,
@@ -6089,7 +6085,7 @@ async def get_poster(
         #                            the whole composite TTL, so let it re-render.
         #
         # The same flag decides what the *client* is told: a render we won't
-        # keep must not be handed an ETag either (see _provisional_cache_headers).
+        # keep must not be handed an ETag either (see _apply_poster_cache_headers).
         _render_provisional = bool(
             quality_pending or _detection_deferred or rating_failed
             or _rating_backoff_active or _anime_art_missing

@@ -10,6 +10,8 @@ import json
 from collections import OrderedDict
 from datetime import datetime
 
+from festivals import LEGACY_LABEL_KEYWORDS
+
 logger = logging.getLogger(__name__)
 
 from config import (
@@ -96,19 +98,25 @@ def get_db() -> sqlite3.Connection:
 
 def _add_column_if_missing(
     conn: sqlite3.Connection, table: str, column: str, definition: str
-) -> None:
-    """Apply an additive migration safely when multiple workers start together."""
+) -> bool:
+    """Apply an additive migration safely when multiple workers start together.
+
+    Returns True only for the caller that actually added the column, so a
+    one-shot backfill can be hung off the same call and run exactly once.
+    """
     columns = {
         row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
     }
     if column in columns:
-        return
+        return False
     try:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
     except sqlite3.OperationalError as exc:
         # Another worker may have added the column after our PRAGMA snapshot.
         if "duplicate column name" not in str(exc).lower():
             raise
+        return False
+    return True
 
 
 def init_db() -> None:
@@ -148,7 +156,8 @@ def init_db() -> None:
         is_cult        INTEGER NOT NULL DEFAULT 0,
         is_true_story  INTEGER NOT NULL DEFAULT 0,
         is_metacritic  INTEGER NOT NULL DEFAULT 0,
-        rating_min_votes INTEGER
+        rating_min_votes INTEGER,
+        festival_keyword TEXT
     )
     """)
 
@@ -164,6 +173,23 @@ def init_db() -> None:
         ("rating_min_votes", "INTEGER"),
     ):
         _add_column_if_missing(conn, "rating_cache", col, definition)
+
+    # festival_keyword replaces festival_label: the cache now remembers *which
+    # festival* a title won something at and lets festivals.py decide the wording
+    # at render time.  Storing the wording was the bug — rows written while
+    # "festival-cannes-winner" was read as "Palme d'Or" kept saying Palme d'Or
+    # long after the code stopped believing it.
+    #
+    # The old labels map back to their keyword exactly, so existing rows convert
+    # in place instead of costing one MDblist request each.  The five festivals
+    # dropped for want of a trustworthy top-prize list have no entry in the map
+    # and land on NULL, losing a sash that was never earned.  festival_label is
+    # left in the table, unread, so a rollback still finds its data.
+    if _add_column_if_missing(conn, "rating_cache", "festival_keyword", "TEXT"):
+        conn.executemany(
+            "UPDATE rating_cache SET festival_keyword = ? WHERE festival_label = ?",
+            [(keyword, label) for label, keyword in LEGACY_LABEL_KEYWORDS.items()],
+        )
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS quality_cache (
@@ -767,15 +793,18 @@ def get_cached_rating(
     """
     Returns an 11-tuple:
         (ratings_dict, genre, release_date, award_wins, award_noms,
-         awards_fetched, festival_label, age_rating,
+         awards_fetched, festival_keyword, age_rating,
          is_cult, is_true_story, is_metacritic)
     Returns None if the row is absent or expired.
+
+    *festival_keyword* is the raw MDblist keyword ("festival-cannes-winner"),
+    not a sash label — festivals.py turns it into wording at render time.
     """
     try:
         row = get_db().execute(
             """
             SELECT ratings_json, genre, cached_at, release_date,
-                   award_wins, award_noms, awards_fetched, festival_label,
+                   award_wins, award_noms, awards_fetched, festival_keyword,
                    age_rating, is_cult, is_true_story, is_metacritic,
                    rating_min_votes
             FROM rating_cache
@@ -788,7 +817,7 @@ def get_cached_rating(
             return None
 
         (ratings_json, genre, cached_at, release_date,
-         wins_raw, noms_raw, awards_fetched_int, festival_label,
+         wins_raw, noms_raw, awards_fetched_int, festival_keyword,
          age_rating, is_cult_int, is_true_story_int, is_metacritic_int,
          rating_min_votes) = row
 
@@ -836,7 +865,7 @@ def get_cached_rating(
         awards_fetched = bool(awards_fetched_int)
 
         return (ratings_dict, genre, release_date, wins, noms,
-                awards_fetched, festival_label, age_rating,
+                awards_fetched, festival_keyword, age_rating,
                 bool(is_cult_int), bool(is_true_story_int), bool(is_metacritic_int))
 
     except Exception as exc:
@@ -852,7 +881,7 @@ def set_cached_rating(
     award_wins: list[str],
     award_noms: list[str],
     awards_fetched: bool = False,
-    festival_label: str | None = None,
+    festival_keyword: str | None = None,
     age_rating: int | None = None,
     is_cult: bool = False,
     is_true_story: bool = False,
@@ -872,7 +901,7 @@ def set_cached_rating(
                         award_wins,
                         award_noms,
                         awards_fetched,
-                        festival_label,
+                        festival_keyword,
                         age_rating,
                         is_cult,
                         is_true_story,
@@ -890,7 +919,7 @@ def set_cached_rating(
                     "|".join(award_wins or []),
                     "|".join(award_noms or []),
                     int(awards_fetched),
-                    festival_label,
+                    festival_keyword,
                     age_rating,
                     int(is_cult),
                     int(is_true_story),

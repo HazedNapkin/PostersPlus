@@ -8,7 +8,7 @@ Priority slots
 --------------
 wins         Oscar Best Picture win / Major Emmy (Outstanding) Series win
 gg_wins      Golden Globe win (all top film + TV categories)
-festival     Major international festival winner (Cannes, Berlin, Venice, Sundance, …)
+festival     Festival prize (Cannes, Venice, Berlin, Locarno, Sundance) — see festivals.py
 pic_noms     Best Picture nomination (film) / Major Emmy nomination (TV)
 gg_noms      Golden Globe nomination (all top film + TV categories)
 studio       Produced by a notable studio (A24, Pixar, …)
@@ -72,6 +72,7 @@ from datetime import date, datetime
 
 from config import SASH_PRIORITY as DEFAULT_SASH_PRIORITY  # single source of truth
 import config as _cfg
+from festivals import festival_label as resolve_festival_label, match_festival_keyword
 
 logger = logging.getLogger(__name__)
 
@@ -219,22 +220,9 @@ _STRUCTURAL_LABELS: dict[str, str] = {
     "binge_ready": "Binge Ready",
 }
 
-# MDblist keyword name → sash display label.
-# Checked in order; first match wins within the festival slot.
-# Add new festivals here — keyword pattern is typically festival-<name>-winner.
-# Ordered roughly by prestige (up for debate)
-FESTIVAL_KEYWORDS: dict[str, str] = { 
-    "festival-cannes-winner":      "Palme d'Or",
-    "festival-venice-winner":      "Golden Lion",
-    "festival-berlin-winner":      "Golden Bear",
-    "festival-toronto-winner":     "People's Choice",
-    "festival-sundance-winner":    "Sundance GJ",
-    "festival-busan-winner":       "New Currents",
-    "festival-locarno-winner":     "Golden Leopard",
-    "festival-rotterdam-winner":   "Tiger Award",
-    "festival-sxsw-winner":        "SXSW Jury",
-    "festival-tribeca-winner":     "Tribeca AA",
-}
+# Festival sashes live in festivals.py — the keyword table, the top-prize TMDB
+# id sets, and the two-tier label rule.  See that module for why an MDblist
+# festival keyword cannot be read as "won the top prize" on its own.
 
 # ISO 639-1 language code → display label shown on the sash.
 # English is intentionally absent — foreign slot only fires for non-English.
@@ -411,8 +399,10 @@ class DiscoveryMeta:
     matched_directors: list[str] = field(default_factory=list)
     matched_cast:      list[str] = field(default_factory=list)
 
-    # Festival winner (from MDblist keywords)
-    festival_label: str | None = None   # e.g. "Palme d'Or Winner"
+    # Festival prize, already resolved to a display label by festivals.py:
+    # the top prize ("Palme d'Or") when the TMDB id is a known winner of it,
+    # otherwise the honest weaker claim ("Cannes Winner").
+    festival_label: str | None = None
 
     # Structural facts (computed from TMDB metadata)
     is_short_film:  bool = False   # movie, runtime < 40 min
@@ -458,9 +448,10 @@ def extract_discovery_meta(
     award_noms: list[str],
     trending_rank: int | None,
     *,
+    tmdb_id: int | str | None = None,
     release_date: str | None = None,
     keywords: list[dict] | None = None,
-    festival_label_override:  str | None  = None,
+    festival_keyword:         str | None  = None,
     is_cult_override:         bool | None = None,
     is_true_story_override:   bool | None = None,
     is_metacritic_override:   bool | None = None,
@@ -470,13 +461,11 @@ def extract_discovery_meta(
     notable_studios:   dict[str, str] | None = None,
     notable_directors: dict[str, str] | None = None,
     notable_cast:      dict[str, str] | None = None,
-    festival_keywords: dict[str, str] | None = None,
     language_labels:   dict[str, str] | None = None,
 ) -> DiscoveryMeta:
     studios        = notable_studios   or NOTABLE_STUDIOS
     directors      = notable_directors or NOTABLE_DIRECTORS
     cast_list      = notable_cast      or NOTABLE_CAST
-    fest_keywords  = festival_keywords or FESTIVAL_KEYWORDS
 
     meta = DiscoveryMeta(
         award_wins=award_wins,
@@ -492,15 +481,17 @@ def extract_discovery_meta(
         if keywords else set()
     )
 
-    # --- Festival winners ---
-    # Prefer a pre-resolved label (from cache) to avoid re-scanning keywords.
-    if festival_label_override is not None:
-        meta.festival_label = festival_label_override
-    elif keyword_names:
-        for kw_name, label in fest_keywords.items():
-            if kw_name in keyword_names:
-                meta.festival_label = label
-                break
+    # --- Festival prize ---
+    # The label is resolved here rather than read from the cache, because a
+    # resolved label in the cache is a label that outlives its own correction.
+    # *festival_keyword* is the cached half — which festival, not which prize —
+    # and a fresh MDblist fetch supplies it from the keywords instead.  The
+    # top-prize half comes from the TMDB id, so it lands even when neither does.
+    meta.festival_label = resolve_festival_label(
+        festival_keyword if festival_keyword is not None
+        else match_festival_keyword(keyword_names),
+        tmdb_id if tmdb_id is not None else tmdb_data.get("id"),
+    )
 
     # --- Keyword-based discovery signals ---
     # Each signal uses an override (from cache) when available; otherwise

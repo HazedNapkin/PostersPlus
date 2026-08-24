@@ -147,6 +147,31 @@
 
 ### Fixes And Documentation
 
+- Fixed festival sashes naming a top prize the film did not win. MDblist tags a
+  title `festival-cannes-winner` if it won *anything* at Cannes, and that was
+  read as "Palme d'Or" — so the whole 2023 slate, from the Grand Prix winner
+  down to the Un Certain Regard one, wore a Palme d'Or sash — nine films, of
+  which one had won it. Every festival in the list had the same fault.
+  The top prize is now looked up by TMDB id against a list built from Wikidata,
+  and the keyword only supports the weaker claim it can actually carry: a title
+  that won something at Cannes but not the Palme reads "Cannes Winner". A top
+  prize now also shows when MDblist is unreachable, since the list is local.
+  Cached titles convert on first startup without re-fetching anything.
+- Cross-checked every top-prize list against the festivals' own winners tables,
+  edition by edition. That restored 34 winners the first source had no record
+  of — Joker's 2019 Golden Lion, four recent Locarno Leopards, Cannes' 1946
+  eleven-way tie — each of which had been showing the weaker sash.
+- Removed 9 films that were wearing a top prize they did not win. Three were
+  Golden Bear winners for Best Short Film rather than the Golden Bear, two were
+  Berlinale and Locarno sidebar prizes, and one was a mismatched id: Precious
+  premiered at Sundance as "Push: Based on the Novel by Sapphire", and its Grand
+  Jury Prize had landed on the unrelated 2009 science-fiction film Push, which
+  wore the sash while Precious went without.
+- Removed the Toronto, Busan, Rotterdam, SXSW and Tribeca festival sashes. Their
+  labels — People's Choice, New Currents, Tiger Award, SXSW Jury, Tribeca AA —
+  named specific prizes no available source can confirm, and unlike the five
+  festivals that remain there is no list to check them against. Cannes, Venice,
+  Berlin, Locarno and Sundance are unaffected.
 - Fixed quality badges never appearing unless Wait for Quality was on. A poster
   served before its quality arrived was correctly kept out of the composite
   cache, but still carried an ETag identical to the finished render's, so
