@@ -4658,7 +4658,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null } = {}
       if (c('tog-badge-stacked')) params.set('combined_badge_stacked', 'true');
     }
   }
-  if (c('tog-wait-quality') && [1,2,4,6].includes(badgeMode)) {
+  if (c('tog-wait-quality') && [1,2,4,5,6].includes(badgeMode)) {
     params.set('wait_for_quality', 'true');
     if (c('tog-greyscale-noquality')) params.set('greyscale_no_quality', 'true');
   }

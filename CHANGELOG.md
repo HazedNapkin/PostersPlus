@@ -65,6 +65,8 @@
   IMDb id. Quality badges from the local file continue to work for those items,
   and an `imdb_id` baked into a copied recipe URL can no longer be applied to
   items it does not belong to.
+- Wait for Quality is now sent for the Combined badge mode, which offered the
+  toggle but left it out of the generated URL.
 
 ### Quality
 
@@ -145,6 +147,13 @@
 
 ### Fixes And Documentation
 
+- Fixed quality badges never appearing unless Wait for Quality was on. A poster
+  served before its quality arrived was correctly kept out of the composite
+  cache, but still carried an ETag identical to the finished render's, so
+  clients and CDNs revalidated their badge-less copy and were told it was still
+  current. Renders the server declines to keep now ship no validator and ask not
+  to be stored. Clients holding a badge-less poster from before this fix keep it
+  until the composite TTL lapses or the URL changes.
 - Fixed missing ratings leaving an empty score in the information strip, and
   fixed fallback titles that could be clipped instead of resized to fit.
 - Fixed landscape fallbacks losing their title, TV shows retaining a stale

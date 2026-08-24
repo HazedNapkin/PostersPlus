@@ -123,7 +123,10 @@ logger = logging.getLogger(__name__)
 # This dict is per-worker-process — cross-process deduplication would require
 # a shared store like Redis, but intra-process coalescing handles the common
 # burst pattern well enough at this scale.
-_render_inflight: dict[str, "asyncio.Future[bytes]"] = {}
+# The future carries (jpeg_bytes, provisional): a coalesced request has to know
+# whether the render it is riding on was one the pipeline refused to persist, or
+# it would hand out a validator for a poster the server never committed to.
+_render_inflight: dict[str, "asyncio.Future[tuple[bytes, bool]]"] = {}
 
 # Coalesces concurrent fetch_poster_metadata calls for the same (tmdb_id,
 # media_type, language) tuple.  Without this, simultaneous /poster + /logo
@@ -4457,6 +4460,37 @@ async def get_logo(
 # Poster endpoint
 # ---------------------------------------------------------------------------
 
+def _apply_poster_cache_headers(
+    response: Response, final_cache_key: str | None, provisional: bool
+) -> None:
+    """Attach the validator and freshness headers a poster response has earned.
+
+    *provisional* marks a render the pipeline itself declined to keep: quality
+    is still being fetched, OCR is queued, MDBlist just failed.  Leaving those
+    out of the composite cache only helps if the *client* comes back for the
+    finished render — and with an ETag attached it doesn't.  The composite key
+    is built from ids and render params alone, so the badge-less bytes and the
+    finished poster validate against the same value: a client that cached the
+    provisional one revalidates, gets a 304 off the now-complete composite, and
+    keeps the badge-less image indefinitely.  That is why quality appeared never
+    to arrive until a setting change rewrote the URL and minted a new key.
+
+    A provisional render therefore ships no validator and asks not to be stored.
+    """
+    if provisional:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        return
+
+    if final_cache_key is not None:
+        response.headers["ETag"] = f'"{final_cache_key}"'
+    if _cfg.DISABLE_COMPOSITE_CACHE:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+    elif _cfg.CDN_CACHE_TTL > 0:
+        response.headers["Cache-Control"] = f"public, max-age={_cfg.CDN_CACHE_TTL}"
+
+
 @app.get("/poster")
 async def get_poster(
     request: Request,
@@ -4751,11 +4785,9 @@ async def get_poster(
             if request.headers.get("if-none-match") == etag:
                 return Response(status_code=304)
             _hit_resp = Response(content=cached_jpeg, media_type=f"image/{_cfg.IMAGE_FORMAT}")
-            _hit_resp.headers["ETag"] = etag
-            # This path is only reached when composite caching is enabled, so a
-            # no-store branch would be dead here — CDN TTL is the only option.
-            if _cfg.CDN_CACHE_TTL > 0:
-                _hit_resp.headers["Cache-Control"] = f"public, max-age={_cfg.CDN_CACHE_TTL}"
+            # Only a finished render is ever written to the composite cache, so
+            # a cache hit is never provisional.
+            _apply_poster_cache_headers(_hit_resp, final_cache_key, False)
             return _hit_resp
     else:
         final_cache_key = None
@@ -4766,18 +4798,18 @@ async def get_poster(
     # the pipeline.  Quality-override requests (final_cache_key=None) are
     # always rendered independently.
     # ------------------------------------------------------------------
-    _render_fut: "asyncio.Future[bytes] | None" = None
+    _render_fut: "asyncio.Future[tuple[bytes, bool]] | None" = None
     if final_cache_key is not None:
         _existing_fut = _render_inflight.get(final_cache_key)
         if _existing_fut is not None:
             logger.info(f"Coalescing request for {final_cache_key}")
             try:
-                _coal_resp = Response(content=await _existing_fut, media_type=f"image/{_cfg.IMAGE_FORMAT}")
-                _coal_resp.headers["ETag"] = f'"{final_cache_key}"'
-                # Coalescing only happens when caching is on (final_cache_key set),
-                # so no-store can't apply here — CDN TTL only.
-                if _cfg.CDN_CACHE_TTL > 0:
-                    _coal_resp.headers["Cache-Control"] = f"public, max-age={_cfg.CDN_CACHE_TTL}"
+                # The render we rode on decides our headers too: riding on a
+                # provisional one and then stamping an ETag would cache exactly
+                # the poster it was withheld to avoid.
+                _coal_bytes, _coal_provisional = await _existing_fut
+                _coal_resp = Response(content=_coal_bytes, media_type=f"image/{_cfg.IMAGE_FORMAT}")
+                _apply_poster_cache_headers(_coal_resp, final_cache_key, _coal_provisional)
                 return _coal_resp
             except Exception:
                 # The in-flight render failed; fall through and try ourselves.
@@ -6055,9 +6087,14 @@ async def get_poster(
         #                            throttle or a blip rather than a real absence.
         #                            Caching the fallback would pin TMDB art for
         #                            the whole composite TTL, so let it re-render.
-        if (final_cache_key is not None and not quality_pending and not _detection_deferred
-                and not rating_failed and not _rating_backoff_active
-                and not _anime_art_missing):
+        #
+        # The same flag decides what the *client* is told: a render we won't
+        # keep must not be handed an ETag either (see _provisional_cache_headers).
+        _render_provisional = bool(
+            quality_pending or _detection_deferred or rating_failed
+            or _rating_backoff_active or _anime_art_missing
+        )
+        if final_cache_key is not None and not _render_provisional:
             # A composite must not outlive the facts baked into it.  Trending
             # rank turns over daily; release status has its own tier (Cinema and
             # Production re-check every day, Physical every 90).  Without this
@@ -6085,16 +6122,10 @@ async def get_poster(
             logger.info(f"Final poster cached for {final_cache_key}")
 
         if _render_fut is not None:
-            _render_fut.set_result(img_bytes)
+            _render_fut.set_result((img_bytes, _render_provisional))
 
         response = Response(content=img_bytes, media_type=f"image/{_cfg.IMAGE_FORMAT}")
-        if final_cache_key is not None:
-            response.headers["ETag"] = f'"{final_cache_key}"'
-        if _cfg.DISABLE_COMPOSITE_CACHE:
-            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
-            response.headers["Pragma"] = "no-cache"
-        elif _cfg.CDN_CACHE_TTL > 0:
-            response.headers["Cache-Control"] = f"public, max-age={_cfg.CDN_CACHE_TTL}"
+        _apply_poster_cache_headers(response, final_cache_key, _render_provisional)
         return response
 
     except ValueError as exc:
