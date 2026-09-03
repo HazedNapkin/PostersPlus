@@ -583,6 +583,7 @@ from cache import (
     get_app_state,
     set_app_state,
     get_db,
+    get_cached_movie_release_info,
 )
 from digital_release import digital_release_poll_loop
 import imdb_dataset
@@ -593,6 +594,7 @@ from discovery import (
     DiscoveryMeta,
     extract_discovery_meta,
     pick_sash,
+    is_recently_released_or_available,
 )
 from quality import (
     QUALITY_PENDING,
@@ -6435,6 +6437,28 @@ async def get_poster(
                 _status_ttl if _ttl_override is None
                 else min(_ttl_override, _status_ttl)
             )
+
+        # ------------------------------------------------------------------
+        # Recency override: items released or recently made available in the
+        # last 30 days turn over rapidly (ratings fluctuate, reviews arrive,
+        # digital releases drop), so cap their downstream and composite TTL
+        # to 1 day.
+        # ------------------------------------------------------------------
+        _m_info = (
+            get_cached_movie_release_info(f"movie_{tmdb_id}")
+            if type not in ("tv", "series")
+            else None
+        )
+        if is_recently_released_or_available(
+            discovery_meta,
+            release_date=rel,
+            tmdb_release_date=tmdb_data.get("tmdb_release_date") if tmdb_data else None,
+            digital_release_date=_recent_digital_release_date,
+            last_air_date=tmdb_data.get("last_air_date") if tmdb_data else None,
+            movie_release_info=_m_info,
+            max_days=30,
+        ):
+            _ttl_override = 86400 if _ttl_override is None else min(_ttl_override, 86400)
 
         if final_cache_key is not None and not _render_provisional:
             set_cached_final_poster(

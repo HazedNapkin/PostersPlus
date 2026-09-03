@@ -126,6 +126,18 @@ class ProvisionalHeaderTests(unittest.TestCase):
         main._apply_poster_cache_headers(resp, "key", False, cache_ttl=None)
         self.assertNotIn("cache-control", resp.headers)
 
+    def test_dynamic_cache_ttl_recency_override_1_day(self):
+        """1-day recency override (86400s) sets max-age=86400 with CORS headers."""
+        main._cfg.AUTO_CACHE_TTL = True
+        resp = Response(content=b"")
+        main._apply_poster_cache_headers(resp, "key", False, cache_ttl=86400)
+        self.assertEqual(
+            resp.headers["cache-control"],
+            "public, max-age=86400, stale-while-revalidate=3600, stale-if-error=14400",
+        )
+        self.assertEqual(resp.headers["access-control-allow-origin"], "*")
+        self.assertEqual(resp.headers["access-control-allow-headers"], "*")
+
 class CoalescedRenderTests(unittest.TestCase):
     """A request coalesced onto a provisional render inherits its status.
 
