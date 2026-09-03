@@ -417,8 +417,13 @@ def _composite_expiry(cache_key: str, cached_at: float) -> float:
     return cached_at + COMPOSITE_CACHE_TTL + _ttl_jitter(cache_key, COMPOSITE_CACHE_TTL_JITTER)
 
 
-def get_cached_final_poster(cache_key: str) -> bytes | None:
-    """Return cached JPEG bytes for a fully composited poster, or None on miss/expiry.
+def get_cached_final_poster(cache_key: str) -> tuple[bytes, int] | None:
+    """Return cached poster bytes and expiry for a fully composited poster, or None on miss.
+
+    On a cache hit the return value is ``(jpeg_bytes, expires_at)`` where
+    *expires_at* is the unix timestamp when the entry becomes stale.  Callers
+    can derive the remaining TTL as ``max(0, expires_at - now)`` for downstream
+    Cache-Control headers.
 
     Checks the in-memory LRU (L1) first; falls through to SQLite (L2) on miss
     and promotes the result to L1 so the next hit is served entirely from RAM.
@@ -433,7 +438,7 @@ def get_cached_final_poster(cache_key: str) -> bytes | None:
                 expires_at, data = entry
                 if now <= expires_at:
                     _composite_l1.move_to_end(cache_key)
-                    return data
+                    return data, int(expires_at)
                 # Nothing sweeps L1 on a timer, so an aged-out entry is dropped
                 # on the read that finds it and the L2 check below takes over.
                 del _composite_l1[cache_key]
@@ -461,14 +466,15 @@ def get_cached_final_poster(cache_key: str) -> bytes | None:
                 get_db().commit()
             return None
         data = bytes(jpeg_bytes)
+        expires_at_int = int(expires_at)
         # Promote to L1
         if COMPOSITE_MEM_ENTRIES > 0:
             with _composite_l1_lock:
-                _composite_l1[cache_key] = (int(expires_at), data)
+                _composite_l1[cache_key] = (expires_at_int, data)
                 _composite_l1.move_to_end(cache_key)
                 while len(_composite_l1) > COMPOSITE_MEM_ENTRIES:
                     _composite_l1.popitem(last=False)
-        return data
+        return data, expires_at_int
     except Exception as exc:
         logger.error(f"Final poster cache read error: {exc}")
         return None

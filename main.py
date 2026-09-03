@@ -4722,9 +4722,10 @@ async def get_logo(
 # ---------------------------------------------------------------------------
 
 def _apply_poster_cache_headers(
-    response: Response, final_cache_key: str | None, provisional: bool
+    response: Response, final_cache_key: str | None, provisional: bool,
+    cache_ttl: int | None = None,
 ) -> None:
-    """Attach the validator and freshness headers a poster response has earned.
+    """Attach the validator, freshness and CORS headers a poster response has earned.
 
     *provisional* marks a render the pipeline itself declined to keep: quality
     is still being fetched, OCR is queued, MDBlist just failed.  Leaving those
@@ -4737,7 +4738,16 @@ def _apply_poster_cache_headers(
     to arrive until a setting change rewrote the URL and minted a new key.
 
     A provisional render therefore ships no validator and asks not to be stored.
+
+    *cache_ttl* is a status-derived TTL in seconds (trending, release status)
+    that caps the downstream max-age so Cloudflare and Nuvio clients respect the
+    same lifecycle the server-side composite cache does.  When ``None``, the
+    flat ``CDN_CACHE_TTL`` env-var is used as a fallback.
     """
+    # CORS — required for Nuvio web clients making cross-origin image requests.
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+
     if provisional:
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
         response.headers["Pragma"] = "no-cache"
@@ -4748,8 +4758,20 @@ def _apply_poster_cache_headers(
     if _cfg.DISABLE_COMPOSITE_CACHE:
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
         response.headers["Pragma"] = "no-cache"
-    elif _cfg.CDN_CACHE_TTL > 0:
-        response.headers["Cache-Control"] = f"public, max-age={_cfg.CDN_CACHE_TTL}"
+    else:
+        # When AUTO_CACHE_TTL is enabled, prefer the status-derived TTL
+        # (trending = 1 day, Cinema/Production = 1 day, Airing/Returning =
+        # 3 days, …).  Otherwise use the flat CDN_CACHE_TTL env-var.
+        # stale-while-revalidate lets CDN edges serve while fetching a fresh
+        # copy; stale-if-error covers origin outages.
+        if _cfg.AUTO_CACHE_TTL and cache_ttl is not None:
+            _effective_ttl = cache_ttl
+        else:
+            _effective_ttl = _cfg.CDN_CACHE_TTL
+        if _effective_ttl > 0:
+            response.headers["Cache-Control"] = (
+                f"public, max-age={_effective_ttl}, stale-while-revalidate=3600, stale-if-error=14400"
+            )
 
 
 @app.get("/poster")
@@ -5052,18 +5074,23 @@ async def get_poster(
             if is_anime
             else f"{canonical_id}:{tmdb_id}:{type}:{_params_hash}"
         )
-        cached_jpeg = None if _force_refresh else get_cached_final_poster(final_cache_key)
+        _cache_result = None if _force_refresh else get_cached_final_poster(final_cache_key)
         if _force_refresh:
             logger.info(f"Force refresh (nocache) for {final_cache_key} — bypassing cache read")
-        if cached_jpeg is not None:
+        if _cache_result is not None:
+            cached_jpeg, _expires_at = _cache_result
+            _remaining_ttl = max(0, _expires_at - int(time.time()))
             logger.info(f"Final poster cache hit for {final_cache_key}")
             etag = f'"{final_cache_key}"'
             if request.headers.get("if-none-match") == etag:
-                return Response(status_code=304)
+                _304_resp = Response(status_code=304)
+                _304_resp.headers["Access-Control-Allow-Origin"] = "*"
+                _304_resp.headers["Access-Control-Allow-Headers"] = "*"
+                return _304_resp
             _hit_resp = Response(content=cached_jpeg, media_type=f"image/{_cfg.IMAGE_FORMAT}")
             # Only a finished render is ever written to the composite cache, so
             # a cache hit is never provisional.
-            _apply_poster_cache_headers(_hit_resp, final_cache_key, False)
+            _apply_poster_cache_headers(_hit_resp, final_cache_key, False, cache_ttl=_remaining_ttl)
             return _hit_resp
     else:
         final_cache_key = None
@@ -6386,25 +6413,30 @@ async def get_poster(
             quality_pending or _detection_deferred or rating_failed
             or _rating_backoff_active or _anime_art_missing
         )
-        if final_cache_key is not None and not _render_provisional:
-            # A composite must not outlive the facts baked into it.  Trending
-            # rank turns over daily; release status has its own tier (Cinema and
-            # Production re-check every day, Physical every 90).  Without this
-            # the render kept a "Cinema" sash — and the greyscale treatment that
-            # keys off the same field — for the flat 7-day composite TTL, long
-            # after the status row it came from had moved on.
-            _ttl_override = None
-            if discovery_meta is not None:
-                _sash_result = pick_sash(discovery_meta, _sash_priority)
-                if _sash_result and _sash_result[1] in ("trending", "trending_broad"):
-                    _ttl_override = 86400
-            if _release_status:
-                _status_ttl = release_status_ttl_seconds(_release_status)
-                _ttl_override = (
-                    _status_ttl if _ttl_override is None
-                    else min(_ttl_override, _status_ttl)
-                )
+        # ------------------------------------------------------------------
+        # Dynamic TTL for the downstream Cache-Control header and composite
+        # cache.  Trending rank turns over daily; release status has its own
+        # tier (Cinema and Production re-check every day, Physical every 90).
+        # Without this the render kept a "Cinema" sash — and the greyscale
+        # treatment that keys off the same field — for the flat 7-day
+        # composite TTL, long after the status row it came from had moved on.
+        #
+        # Computed unconditionally so the header function always has a value,
+        # even when the render is provisional (where it's ignored anyway).
+        # ------------------------------------------------------------------
+        _ttl_override = None
+        if discovery_meta is not None:
+            _sash_result = pick_sash(discovery_meta, _sash_priority)
+            if _sash_result and _sash_result[1] in ("trending", "trending_broad"):
+                _ttl_override = 86400
+        if _release_status:
+            _status_ttl = release_status_ttl_seconds(_release_status)
+            _ttl_override = (
+                _status_ttl if _ttl_override is None
+                else min(_ttl_override, _status_ttl)
+            )
 
+        if final_cache_key is not None and not _render_provisional:
             set_cached_final_poster(
                 final_cache_key,
                 img_bytes,
@@ -6417,7 +6449,7 @@ async def get_poster(
             _render_fut.set_result((img_bytes, _render_provisional))
 
         response = Response(content=img_bytes, media_type=f"image/{_cfg.IMAGE_FORMAT}")
-        _apply_poster_cache_headers(response, final_cache_key, _render_provisional)
+        _apply_poster_cache_headers(response, final_cache_key, _render_provisional, cache_ttl=_ttl_override)
         return response
 
     except ValueError as exc:

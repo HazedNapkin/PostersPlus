@@ -11,6 +11,7 @@ provisionally before any tokens exist.
 """
 
 import asyncio
+import time
 import unittest
 
 from fastapi import Response
@@ -23,12 +24,15 @@ class ProvisionalHeaderTests(unittest.TestCase):
     def setUp(self):
         self.disable_composite = main._cfg.DISABLE_COMPOSITE_CACHE
         self.cdn_ttl = main._cfg.CDN_CACHE_TTL
+        self.auto_cache_ttl = main._cfg.AUTO_CACHE_TTL
         main._cfg.DISABLE_COMPOSITE_CACHE = False
         main._cfg.CDN_CACHE_TTL = 0
+        main._cfg.AUTO_CACHE_TTL = False
 
     def tearDown(self):
         main._cfg.DISABLE_COMPOSITE_CACHE = self.disable_composite
         main._cfg.CDN_CACHE_TTL = self.cdn_ttl
+        main._cfg.AUTO_CACHE_TTL = self.auto_cache_ttl
 
     def _headers(self, provisional, key="tt0087332:620:movie:abc123"):
         resp = Response(content=b"")
@@ -57,7 +61,7 @@ class ProvisionalHeaderTests(unittest.TestCase):
 
     def test_a_finished_render_still_gets_the_cdn_ttl(self):
         main._cfg.CDN_CACHE_TTL = 86400
-        self.assertEqual(self._headers(False)["cache-control"], "public, max-age=86400")
+        self.assertEqual(self._headers(False)["cache-control"], "public, max-age=86400, stale-while-revalidate=3600, stale-if-error=14400")
 
     def test_a_quality_override_has_no_key_to_validate_against(self):
         # quality= renders are one-offs and never enter the composite cache.
@@ -68,6 +72,59 @@ class ProvisionalHeaderTests(unittest.TestCase):
         headers = self._headers(False, key=None)
         self.assertEqual(headers["cache-control"], "no-store, no-cache, must-revalidate")
 
+    # ---- CORS headers ----
+
+    def test_cors_headers_on_provisional_render(self):
+        headers = self._headers(True)
+        self.assertEqual(headers["access-control-allow-origin"], "*")
+        self.assertEqual(headers["access-control-allow-headers"], "*")
+
+    def test_cors_headers_on_finished_render(self):
+        headers = self._headers(False)
+        self.assertEqual(headers["access-control-allow-origin"], "*")
+        self.assertEqual(headers["access-control-allow-headers"], "*")
+
+    # ---- Dynamic cache_ttl ----
+
+    def test_dynamic_cache_ttl_overrides_cdn_ttl(self):
+        """A status-derived TTL (e.g. Cinema = 1 day) takes precedence when AUTO_CACHE_TTL is on."""
+        main._cfg.AUTO_CACHE_TTL = True
+        main._cfg.CDN_CACHE_TTL = 86400
+        resp = Response(content=b"")
+        main._apply_poster_cache_headers(resp, "key", False, cache_ttl=3600)
+        self.assertEqual(
+            resp.headers["cache-control"],
+            "public, max-age=3600, stale-while-revalidate=3600, stale-if-error=14400",
+        )
+
+    def test_dynamic_cache_ttl_ignored_when_auto_disabled(self):
+        """When AUTO_CACHE_TTL is off, cache_ttl is ignored and CDN_CACHE_TTL is used."""
+        main._cfg.AUTO_CACHE_TTL = False
+        main._cfg.CDN_CACHE_TTL = 86400
+        resp = Response(content=b"")
+        main._apply_poster_cache_headers(resp, "key", False, cache_ttl=3600)
+        self.assertEqual(
+            resp.headers["cache-control"],
+            "public, max-age=86400, stale-while-revalidate=3600, stale-if-error=14400",
+        )
+
+    def test_dynamic_cache_ttl_none_falls_back_to_cdn_ttl(self):
+        """When no status-derived TTL is available, CDN_CACHE_TTL is used."""
+        main._cfg.AUTO_CACHE_TTL = True
+        main._cfg.CDN_CACHE_TTL = 7200
+        resp = Response(content=b"")
+        main._apply_poster_cache_headers(resp, "key", False, cache_ttl=None)
+        self.assertEqual(
+            resp.headers["cache-control"],
+            "public, max-age=7200, stale-while-revalidate=3600, stale-if-error=14400",
+        )
+
+    def test_no_cache_control_when_both_ttls_are_zero(self):
+        """No Cache-Control is emitted when CDN_CACHE_TTL=0 and no override."""
+        main._cfg.CDN_CACHE_TTL = 0
+        resp = Response(content=b"")
+        main._apply_poster_cache_headers(resp, "key", False, cache_ttl=None)
+        self.assertNotIn("cache-control", resp.headers)
 
 class CoalescedRenderTests(unittest.TestCase):
     """A request coalesced onto a provisional render inherits its status.
@@ -108,7 +165,8 @@ class CoalescedRenderTests(unittest.TestCase):
         """
         seen = []
         with TestClient(main.app) as client:
-            main.get_cached_final_poster = lambda key: (seen.append(key), b"jpeg")[1]
+            _far_future = int(time.time()) + 86400
+            main.get_cached_final_poster = lambda key: (seen.append(key), (b"jpeg", _far_future))[1]
             self.assertEqual(client.get("/poster", params=self.PARAMS).status_code, 200)
             key = seen[0]
 
