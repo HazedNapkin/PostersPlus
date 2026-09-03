@@ -17,6 +17,7 @@ identify.
 """
 
 import asyncio
+import time
 import unittest
 
 from fastapi import Response
@@ -39,12 +40,15 @@ class PosterResponseTests(unittest.TestCase):
     def setUp(self):
         self.disable_composite = main._cfg.DISABLE_COMPOSITE_CACHE
         self.cdn_ttl = main._cfg.CDN_CACHE_TTL
+        self.auto_cache_ttl = main._cfg.AUTO_CACHE_TTL
         main._cfg.DISABLE_COMPOSITE_CACHE = False
         main._cfg.CDN_CACHE_TTL = 0
+        main._cfg.AUTO_CACHE_TTL = False
 
     def tearDown(self):
         main._cfg.DISABLE_COMPOSITE_CACHE = self.disable_composite
         main._cfg.CDN_CACHE_TTL = self.cdn_ttl
+        main._cfg.AUTO_CACHE_TTL = self.auto_cache_ttl
 
     def _response(self, provisional, key=KEY, body=BODY, if_none_match=None):
         return main._poster_response(
@@ -86,7 +90,7 @@ class PosterResponseTests(unittest.TestCase):
     def test_a_finished_render_still_gets_the_cdn_ttl(self):
         main._cfg.CDN_CACHE_TTL = 86400
         self.assertEqual(
-            self._response(False).headers["cache-control"], "public, max-age=86400"
+            self._response(False).headers["cache-control"], "public, max-age=86400, stale-if-error=14400"
         )
 
     def test_a_quality_override_has_no_key_to_validate_against(self):
@@ -143,7 +147,61 @@ class PosterResponseTests(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 304)
         self.assertEqual(resp.headers["etag"], main._poster_etag(self.BODY))
-        self.assertEqual(resp.headers["cache-control"], "public, max-age=86400")
+        self.assertEqual(resp.headers["cache-control"], "public, max-age=86400, stale-if-error=14400")
+
+    # ---- CORS headers ----
+
+    def test_cors_headers_on_provisional_render(self):
+        headers = self._response(True).headers
+        self.assertEqual(headers["access-control-allow-origin"], "*")
+        self.assertEqual(headers["access-control-allow-headers"], "*")
+
+    def test_cors_headers_on_finished_render(self):
+        headers = self._response(False).headers
+        self.assertEqual(headers["access-control-allow-origin"], "*")
+        self.assertEqual(headers["access-control-allow-headers"], "*")
+
+    # ---- Dynamic cache_ttl ----
+
+    def test_dynamic_cache_ttl_overrides_cdn_ttl(self):
+        """A status-derived TTL (e.g. Cinema = 1 day) takes precedence when AUTO_CACHE_TTL is on."""
+        main._cfg.AUTO_CACHE_TTL = True
+        main._cfg.CDN_CACHE_TTL = 86400
+        resp = Response(content=b"")
+        main._apply_poster_cache_headers(resp, False, cache_ttl=3600)
+        self.assertEqual(
+            resp.headers["cache-control"],
+            "public, max-age=3600, stale-if-error=14400",
+        )
+
+    def test_dynamic_cache_ttl_ignored_when_auto_disabled(self):
+        """When AUTO_CACHE_TTL is off, cache_ttl is ignored and CDN_CACHE_TTL is used."""
+        main._cfg.AUTO_CACHE_TTL = False
+        main._cfg.CDN_CACHE_TTL = 86400
+        resp = Response(content=b"")
+        main._apply_poster_cache_headers(resp, False, cache_ttl=3600)
+        self.assertEqual(
+            resp.headers["cache-control"],
+            "public, max-age=86400, stale-if-error=14400",
+        )
+
+    def test_dynamic_cache_ttl_none_falls_back_to_cdn_ttl(self):
+        """When no status-derived TTL is available, CDN_CACHE_TTL is used."""
+        main._cfg.AUTO_CACHE_TTL = True
+        main._cfg.CDN_CACHE_TTL = 7200
+        resp = Response(content=b"")
+        main._apply_poster_cache_headers(resp, False, cache_ttl=None)
+        self.assertEqual(
+            resp.headers["cache-control"],
+            "public, max-age=7200, stale-if-error=14400",
+        )
+
+    def test_no_cache_control_when_both_ttls_are_zero(self):
+        """No Cache-Control is emitted when CDN_CACHE_TTL=0 and no override."""
+        main._cfg.CDN_CACHE_TTL = 0
+        resp = Response(content=b"")
+        main._apply_poster_cache_headers(resp, False, cache_ttl=None)
+        self.assertNotIn("cache-control", resp.headers)
 
 
 class CoalescedRenderTests(unittest.TestCase):
@@ -185,7 +243,8 @@ class CoalescedRenderTests(unittest.TestCase):
         """
         seen = []
         with TestClient(main.app) as client:
-            main.get_cached_final_poster = lambda key: (seen.append(key), b"jpeg")[1]
+            _far_future = int(time.time()) + 86400
+            main.get_cached_final_poster = lambda key: (seen.append(key), (b"jpeg", _far_future))[1]
             self.assertEqual(client.get("/poster", params=self.PARAMS).status_code, 200)
             key = seen[0]
 
