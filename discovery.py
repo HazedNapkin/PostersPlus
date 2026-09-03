@@ -632,6 +632,45 @@ def extract_discovery_meta(
     return meta
 
 
+def is_recently_released_or_available(
+    meta: DiscoveryMeta | None = None,
+    *,
+    release_date: str | None = None,
+    tmdb_release_date: str | None = None,
+    digital_release_date: str | None = None,
+    last_air_date: str | None = None,
+    movie_release_info: dict | None = None,
+    max_days: int = 30,
+) -> bool:
+    """Return True if the title was released or made available within *max_days*.
+
+    Used to apply a 1-day TTL override to fast-moving newly-released content
+    (reviews, ratings, digital availability shifts), ensuring CDNs and clients
+    recheck daily rather than holding 30- or 90-day status-tier caches.
+    """
+    for dt_str in (release_date, tmdb_release_date, digital_release_date, last_air_date):
+        if _is_recent(dt_str, max_days=max_days):
+            return True
+
+    if movie_release_info:
+        for key in ("digital_latest_date", "digital_date", "physical_date", "theatrical_date"):
+            if _is_recent(movie_release_info.get(key), max_days=max_days):
+                return True
+
+    if meta is not None:
+        if (
+            meta.is_digital_release
+            or meta.is_just_added
+            or meta.is_premiere
+            or meta.is_new_season
+            or meta.is_returning
+            or meta.is_new_release
+        ):
+            return True
+
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Priority picker
 # ---------------------------------------------------------------------------

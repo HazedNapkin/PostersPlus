@@ -1,7 +1,12 @@
 import unittest
 from datetime import date, timedelta
 
-from discovery import extract_discovery_meta, pick_sash
+from discovery import (
+    DiscoveryMeta,
+    extract_discovery_meta,
+    is_recently_released_or_available,
+    pick_sash,
+)
 
 
 def _iso(days: int) -> str:
@@ -71,6 +76,45 @@ class SashLifecycleTests(unittest.TestCase):
 
         self.assertEqual(pick_sash(meta, ["season_finale"]), ("Season Finale", "alert"))
 
+    def test_is_recently_released_or_available_within_30_days(self):
+        # 10 days ago -> True
+        self.assertTrue(is_recently_released_or_available(release_date=_iso(-10)))
+        # 30 days ago -> True
+        self.assertTrue(is_recently_released_or_available(release_date=_iso(-30)))
+        # 31 days ago -> False
+        self.assertFalse(is_recently_released_or_available(release_date=_iso(-31)))
+
+    def test_is_recently_released_or_available_via_digital_or_physical(self):
+        # Movie released in theaters 100 days ago, but digital release 5 days ago
+        self.assertTrue(
+            is_recently_released_or_available(
+                release_date=_iso(-100),
+                digital_release_date=_iso(-5),
+            )
+        )
+        # Via cached movie_release_info
+        self.assertTrue(
+            is_recently_released_or_available(
+                movie_release_info={"digital_latest_date": _iso(-12)}
+            )
+        )
+        self.assertTrue(
+            is_recently_released_or_available(
+                movie_release_info={"physical_date": _iso(-20)}
+            )
+        )
+
+    def test_is_recently_released_or_available_via_discovery_meta_flags(self):
+        meta_digital = DiscoveryMeta(is_digital_release=True)
+        self.assertTrue(is_recently_released_or_available(meta_digital))
+
+        meta_just_added = DiscoveryMeta(is_just_added=True)
+        self.assertTrue(is_recently_released_or_available(meta_just_added))
+
+        meta_old = DiscoveryMeta()
+        self.assertFalse(is_recently_released_or_available(meta_old, release_date=_iso(-100)))
+
 
 if __name__ == "__main__":
     unittest.main()
+
