@@ -480,6 +480,45 @@ def get_cached_final_poster(cache_key: str) -> tuple[bytes, int] | None:
         return None
 
 
+def get_cached_final_poster_expiry(cache_key: str) -> int | None:
+    """Return the unix expiry timestamp for a composite cache entry, or None.
+
+    A lightweight alternative to ``get_cached_final_poster`` that avoids loading
+    the full JPEG bytes.  Used by the fresh render path to inherit the remaining
+    TTL of a pre-rendered poster (e.g. from the daily trending fetch) so the
+    downstream ``Cache-Control: max-age`` reflects how long the server-side
+    cache actually has left rather than starting a fresh countdown.
+    """
+    now = time.time()
+
+    # L1
+    if COMPOSITE_MEM_ENTRIES > 0:
+        with _composite_l1_lock:
+            entry = _composite_l1.get(cache_key)
+            if entry is not None:
+                expires_at, _data = entry
+                if now <= expires_at:
+                    return int(expires_at)
+
+    # L2
+    try:
+        row = get_db().execute(
+            "SELECT cached_at, expires_at FROM final_poster_cache WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
+        if not row:
+            return None
+        cached_at, expires_at = row
+        if expires_at is None:
+            expires_at = _composite_expiry(cache_key, cached_at)
+        if now > expires_at:
+            return None
+        return int(expires_at)
+    except Exception as exc:
+        logger.error(f"Final poster expiry read error: {exc}")
+        return None
+
+
 def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes, request_params: str = None, ttl_override: int = None) -> None:
     """Store a fully composited JPEG poster into L1 (RAM) and L2 (SQLite).
 

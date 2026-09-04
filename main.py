@@ -584,6 +584,7 @@ from cache import (
     set_app_state,
     get_db,
     get_cached_movie_release_info,
+    get_cached_final_poster_expiry,
 )
 from digital_release import digital_release_poll_loop
 import imdb_dataset
@@ -5146,8 +5147,14 @@ async def get_poster(
                 # provisional one and then stamping an ETag would cache exactly
                 # the poster it was withheld to avoid.
                 _coal_bytes, _coal_provisional = await _existing_fut
+                # Inherit the composite cache's remaining TTL so the client's
+                # max-age reflects the server-side countdown, not a fresh one.
+                _coal_ttl = None
+                _coal_expiry = get_cached_final_poster_expiry(final_cache_key)
+                if _coal_expiry is not None:
+                    _coal_ttl = max(0, _coal_expiry - int(time.time())) or None
                 return _poster_response(
-                    request, _coal_bytes, final_cache_key, _coal_provisional
+                    request, _coal_bytes, final_cache_key, _coal_provisional, _coal_ttl
                 )
             except Exception:
                 # The in-flight render failed; fall through and try ourselves.
@@ -6493,6 +6500,21 @@ async def get_poster(
         ):
             _ttl_override = 86400 if _ttl_override is None else min(_ttl_override, 86400)
 
+        # ------------------------------------------------------------------
+        # Downstream TTL: if a composite cache entry already exists (e.g. from
+        # the daily trending pre-render), use its remaining TTL for the
+        # client's Cache-Control max-age so the countdown reflects how long
+        # the server-side cache actually has left, not a fresh full interval.
+        # The server-side store below still writes with the full _ttl_override
+        # so its own expiry is not extended.
+        # ------------------------------------------------------------------
+        _client_ttl = _ttl_override
+        if final_cache_key is not None and _ttl_override is not None:
+            _existing_expiry = get_cached_final_poster_expiry(final_cache_key)
+            if _existing_expiry is not None:
+                _remaining = max(0, _existing_expiry - int(time.time()))
+                _client_ttl = min(_ttl_override, _remaining) if _remaining > 0 else _ttl_override
+
         if final_cache_key is not None and not _render_provisional:
             set_cached_final_poster(
                 final_cache_key,
@@ -6505,7 +6527,7 @@ async def get_poster(
         if _render_fut is not None:
             _render_fut.set_result((img_bytes, _render_provisional))
 
-        return _poster_response(request, img_bytes, final_cache_key, _render_provisional, _ttl_override)
+        return _poster_response(request, img_bytes, final_cache_key, _render_provisional, _client_ttl)
 
     except ValueError as exc:
         if _render_fut is not None and not _render_fut.done():
