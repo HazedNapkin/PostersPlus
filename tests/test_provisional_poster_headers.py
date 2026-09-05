@@ -61,7 +61,7 @@ class ProvisionalHeaderTests(unittest.TestCase):
 
     def test_a_finished_render_still_gets_the_cdn_ttl(self):
         main._cfg.CDN_CACHE_TTL = 86400
-        self.assertEqual(self._headers(False)["cache-control"], "public, max-age=86400, stale-while-revalidate=3600, stale-if-error=14400")
+        self.assertEqual(self._headers(False)["cache-control"], "public, max-age=86400, stale-if-error=14400")
 
     def test_a_quality_override_has_no_key_to_validate_against(self):
         # quality= renders are one-offs and never enter the composite cache.
@@ -94,7 +94,7 @@ class ProvisionalHeaderTests(unittest.TestCase):
         main._apply_poster_cache_headers(resp, "key", False, cache_ttl=3600)
         self.assertEqual(
             resp.headers["cache-control"],
-            "public, max-age=3600, stale-while-revalidate=3600, stale-if-error=14400",
+            "public, max-age=3600, stale-if-error=14400",
         )
 
     def test_dynamic_cache_ttl_ignored_when_auto_disabled(self):
@@ -105,7 +105,7 @@ class ProvisionalHeaderTests(unittest.TestCase):
         main._apply_poster_cache_headers(resp, "key", False, cache_ttl=3600)
         self.assertEqual(
             resp.headers["cache-control"],
-            "public, max-age=86400, stale-while-revalidate=3600, stale-if-error=14400",
+            "public, max-age=86400, stale-if-error=14400",
         )
 
     def test_dynamic_cache_ttl_none_falls_back_to_cdn_ttl(self):
@@ -116,7 +116,7 @@ class ProvisionalHeaderTests(unittest.TestCase):
         main._apply_poster_cache_headers(resp, "key", False, cache_ttl=None)
         self.assertEqual(
             resp.headers["cache-control"],
-            "public, max-age=7200, stale-while-revalidate=3600, stale-if-error=14400",
+            "public, max-age=7200, stale-if-error=14400",
         )
 
     def test_no_cache_control_when_both_ttls_are_zero(self):
@@ -133,7 +133,7 @@ class ProvisionalHeaderTests(unittest.TestCase):
         main._apply_poster_cache_headers(resp, "key", False, cache_ttl=86400)
         self.assertEqual(
             resp.headers["cache-control"],
-            "public, max-age=86400, stale-while-revalidate=3600, stale-if-error=14400",
+            "public, max-age=86400, stale-if-error=14400",
         )
         self.assertEqual(resp.headers["access-control-allow-origin"], "*")
         self.assertEqual(resp.headers["access-control-allow-headers"], "*")
