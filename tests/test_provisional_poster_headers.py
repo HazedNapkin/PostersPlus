@@ -210,7 +210,7 @@ class PosterResponseTests(unittest.TestCase):
         main._apply_poster_cache_headers(resp, "key", False, cache_ttl=86400)
         self.assertEqual(
             resp.headers["cache-control"],
-            "public, max-age=86400, stale-while-revalidate=3600, stale-if-error=14400",
+            "public, max-age=86400, stale-if-error=14400",
         )
         self.assertEqual(resp.headers["access-control-allow-origin"], "*")
         self.assertEqual(resp.headers["access-control-allow-headers"], "*")
