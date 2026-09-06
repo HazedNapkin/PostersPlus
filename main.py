@@ -3818,7 +3818,7 @@ def _sanitize_request_params(query: str) -> str:
     return urlencode(kept)
 
 
-async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
+async def _run_trending_fetch_cycle(client: httpx.AsyncClient, max_ttl: int | None = None) -> None:
     logger.info("Starting scheduled trending fetch cycle")
     if not _cfg.SERVER_TMDB_KEY:
         logger.info("Trending fetch: skipped - no server TMDB key configured")
@@ -3876,7 +3876,10 @@ async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
                 # Delete first so the replay misses the cache and re-renders with
                 # the fresh trending rank instead of serving the stale composite.
                 delete_cached_final_poster(cache_key)
-                resp = await local_client.get(f"/poster?{req_params_str}")
+                headers = {}
+                if max_ttl is not None:
+                    headers["x-internal-max-ttl"] = str(max_ttl)
+                resp = await local_client.get(f"/poster?{req_params_str}", headers=headers)
                 if resp.status_code >= 400:
                     logger.warning(f"Trending fetch: regenerate for {cache_key} returned HTTP {resp.status_code}")
                 else:
@@ -3887,42 +3890,46 @@ async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
     logger.info(f"Trending fetch cycle completed. Regenerated {regenerated_count} posters.")
 
 
+def _get_trending_fetch_wait_seconds() -> float:
+    if not _cfg.TRENDING_FETCH_TIME:
+        return 86400.0
+    try:
+        tz = zoneinfo.ZoneInfo(_cfg.TRENDING_FETCH_TIMEZONE)
+    except Exception as exc:
+        logger.error(f"Trending fetch: invalid timezone {_cfg.TRENDING_FETCH_TIMEZONE}: {exc}, using UTC")
+        tz = zoneinfo.ZoneInfo("UTC")
+
+    try:
+        h, m = map(int, _cfg.TRENDING_FETCH_TIME.split(':'))
+    except ValueError:
+        h, m = 0, 0
+        
+    now_dt = datetime.now(tz)
+    target_dt = now_dt.replace(hour=h, minute=m, second=0, microsecond=0)
+    if target_dt <= now_dt:
+        target_dt += timedelta(days=1)
+    return (target_dt - now_dt).total_seconds()
+
+
 async def _trending_fetch_loop() -> None:
     """Periodically fetch trending items and regenerate cached posters."""
     # First run immediately on startup
     await asyncio.sleep(10)
     try:
         if _HTTP_CLIENT is not None:
-            await _run_trending_fetch_cycle(_HTTP_CLIENT)
+            wait = _get_trending_fetch_wait_seconds()
+            await _run_trending_fetch_cycle(_HTTP_CLIENT, max_ttl=int(wait))
     except Exception as exc:
         logger.error(f"Trending fetch: startup cycle failed: {exc}")
 
     while True:
-        if not _cfg.TRENDING_FETCH_TIME:
-            wait = 86400.0
-        else:
-            try:
-                tz = zoneinfo.ZoneInfo(_cfg.TRENDING_FETCH_TIMEZONE)
-            except Exception as exc:
-                logger.error(f"Trending fetch: invalid timezone {_cfg.TRENDING_FETCH_TIMEZONE}: {exc}, using UTC")
-                tz = zoneinfo.ZoneInfo("UTC")
-
-            try:
-                h, m = map(int, _cfg.TRENDING_FETCH_TIME.split(':'))
-            except ValueError:
-                h, m = 0, 0
-                
-            now_dt = datetime.now(tz)
-            target_dt = now_dt.replace(hour=h, minute=m, second=0, microsecond=0)
-            if target_dt <= now_dt:
-                target_dt += timedelta(days=1)
-            wait = (target_dt - now_dt).total_seconds()
-            
+        wait = _get_trending_fetch_wait_seconds()
         logger.info(f"Trending fetch: next cycle scheduled in {wait / 3600:.1f} hours")
         await asyncio.sleep(wait)
         try:
             if _HTTP_CLIENT is not None:
-                await _run_trending_fetch_cycle(_HTTP_CLIENT)
+                next_wait = _get_trending_fetch_wait_seconds()
+                await _run_trending_fetch_cycle(_HTTP_CLIENT, max_ttl=int(next_wait))
         except Exception as exc:
             logger.error(f"Trending fetch: cycle failed: {exc}")
 
@@ -4780,7 +4787,12 @@ def _apply_poster_cache_headers(
         # stale-while-revalidate lets CDN edges serve while fetching a fresh
         # copy; stale-if-error covers origin outages.
         if _cfg.AUTO_CACHE_TTL and cache_ttl is not None:
-            _effective_ttl = cache_ttl
+            # We cap the client's max-age to leverage the new content-derived ETag system.
+            # This ensures clients revalidate frequently (getting a cheap 304 if unchanged) rather 
+            # than being stuck on a stale poster for days if trending/sash status updates mid-cycle.
+            # The cap defaults to 6 hours (21600s), or the user-configured CDN_CACHE_TTL if set.
+            _cap = _cfg.CDN_CACHE_TTL if _cfg.CDN_CACHE_TTL > 0 else 21600
+            _effective_ttl = min(cache_ttl, _cap)
         else:
             _effective_ttl = _cfg.CDN_CACHE_TTL
         if _effective_ttl > 0:
@@ -6499,6 +6511,22 @@ async def get_poster(
             max_days=30,
         ):
             _ttl_override = 86400 if _ttl_override is None else min(_ttl_override, 86400)
+
+        # ------------------------------------------------------------------
+        # Internal Max TTL: If invoked by a background job (e.g. startup
+        # trending fetch), cap the TTL so the poster is only valid until
+        # the next scheduled run.
+        # ------------------------------------------------------------------
+        _internal_max_ttl_str = request.headers.get("x-internal-max-ttl")
+        if _internal_max_ttl_str:
+            try:
+                _internal_max_ttl = int(_internal_max_ttl_str)
+                _ttl_override = (
+                    _internal_max_ttl if _ttl_override is None
+                    else min(_ttl_override, _internal_max_ttl)
+                )
+            except ValueError:
+                pass
 
         # ------------------------------------------------------------------
         # Downstream TTL: if a composite cache entry already exists (e.g. from

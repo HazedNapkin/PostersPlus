@@ -163,12 +163,23 @@ class PosterResponseTests(unittest.TestCase):
 
     # ---- Dynamic cache_ttl ----
 
-    def test_dynamic_cache_ttl_overrides_cdn_ttl(self):
-        """A status-derived TTL (e.g. Cinema = 1 day) takes precedence when AUTO_CACHE_TTL is on."""
+    def test_dynamic_cache_ttl_cap_defaults_to_6_hours(self):
+        """When AUTO_CACHE_TTL is on and CDN_CACHE_TTL is 0, the cap is 6 hours (21600s)."""
         main._cfg.AUTO_CACHE_TTL = True
-        main._cfg.CDN_CACHE_TTL = 86400
+        main._cfg.CDN_CACHE_TTL = 0
         resp = Response(content=b"")
-        main._apply_poster_cache_headers(resp, False, cache_ttl=3600)
+        main._apply_poster_cache_headers(resp, False, cache_ttl=86400)
+        self.assertEqual(
+            resp.headers["cache-control"],
+            "public, max-age=21600, stale-if-error=14400",
+        )
+
+    def test_dynamic_cache_ttl_cap_uses_cdn_ttl(self):
+        """When AUTO_CACHE_TTL is on and CDN_CACHE_TTL > 0, the cap is CDN_CACHE_TTL."""
+        main._cfg.AUTO_CACHE_TTL = True
+        main._cfg.CDN_CACHE_TTL = 3600
+        resp = Response(content=b"")
+        main._apply_poster_cache_headers(resp, False, cache_ttl=86400)
         self.assertEqual(
             resp.headers["cache-control"],
             "public, max-age=3600, stale-if-error=14400",
@@ -204,13 +215,14 @@ class PosterResponseTests(unittest.TestCase):
         self.assertNotIn("cache-control", resp.headers)
 
     def test_dynamic_cache_ttl_recency_override_1_day(self):
-        """1-day recency override (86400s) sets max-age=86400 with CORS headers."""
+        """1-day recency override sets client max-age=21600 (due to 6-hour default cap) with CORS headers."""
         main._cfg.AUTO_CACHE_TTL = True
+        main._cfg.CDN_CACHE_TTL = 0
         resp = Response(content=b"")
         main._apply_poster_cache_headers(resp, False, cache_ttl=86400)
         self.assertEqual(
             resp.headers["cache-control"],
-            "public, max-age=86400, stale-if-error=14400",
+            "public, max-age=21600, stale-if-error=14400",
         )
         self.assertEqual(resp.headers["access-control-allow-origin"], "*")
         self.assertEqual(resp.headers["access-control-allow-headers"], "*")
