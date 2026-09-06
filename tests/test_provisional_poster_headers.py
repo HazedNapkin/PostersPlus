@@ -207,7 +207,7 @@ class PosterResponseTests(unittest.TestCase):
         """1-day recency override (86400s) sets max-age=86400 with CORS headers."""
         main._cfg.AUTO_CACHE_TTL = True
         resp = Response(content=b"")
-        main._apply_poster_cache_headers(resp, "key", False, cache_ttl=86400)
+        main._apply_poster_cache_headers(resp, False, cache_ttl=86400)
         self.assertEqual(
             resp.headers["cache-control"],
             "public, max-age=86400, stale-if-error=14400",
