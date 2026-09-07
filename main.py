@@ -4827,7 +4827,7 @@ def _apply_poster_cache_headers(
             _effective_ttl = max(0, min(_base_ttl, _cap))
             if _effective_ttl > 0:
                 response.headers["Cache-Control"] = (
-                    f"public, max-age={_effective_ttl}, stale-if-error=14400"
+                    f"public, max-age={_effective_ttl}, must-revalidate, stale-if-error=14400"
                 )
             else:
                 response.headers["Cache-Control"] = "public, max-age=0, must-revalidate"
@@ -4835,7 +4835,7 @@ def _apply_poster_cache_headers(
             _effective_ttl = _cfg.CDN_CACHE_TTL
             if _effective_ttl > 0:
                 response.headers["Cache-Control"] = (
-                    f"public, max-age={_effective_ttl}, stale-if-error=14400"
+                    f"public, max-age={_effective_ttl}, must-revalidate, stale-if-error=14400"
                 )
 
 

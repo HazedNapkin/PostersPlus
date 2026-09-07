@@ -90,7 +90,7 @@ class PosterResponseTests(unittest.TestCase):
     def test_a_finished_render_still_gets_the_cdn_ttl(self):
         main._cfg.CDN_CACHE_TTL = 86400
         self.assertEqual(
-            self._response(False).headers["cache-control"], "public, max-age=86400, stale-if-error=14400"
+            self._response(False).headers["cache-control"], "public, max-age=86400, must-revalidate, stale-if-error=14400"
         )
 
     def test_a_quality_override_has_no_key_to_validate_against(self):
@@ -169,7 +169,7 @@ class PosterResponseTests(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 304)
         self.assertEqual(resp.headers["etag"], main._poster_etag(self.BODY))
-        self.assertEqual(resp.headers["cache-control"], "public, max-age=86400, stale-if-error=14400")
+        self.assertEqual(resp.headers["cache-control"], "public, max-age=86400, must-revalidate, stale-if-error=14400")
 
     # ---- CORS headers ----
 
@@ -193,7 +193,7 @@ class PosterResponseTests(unittest.TestCase):
         main._apply_poster_cache_headers(resp, False, cache_ttl=86400)
         self.assertEqual(
             resp.headers["cache-control"],
-            "public, max-age=21600, stale-if-error=14400",
+            "public, max-age=21600, must-revalidate, stale-if-error=14400",
         )
 
     def test_dynamic_cache_ttl_cap_uses_cdn_ttl(self):
@@ -204,7 +204,7 @@ class PosterResponseTests(unittest.TestCase):
         main._apply_poster_cache_headers(resp, False, cache_ttl=86400)
         self.assertEqual(
             resp.headers["cache-control"],
-            "public, max-age=3600, stale-if-error=14400",
+            "public, max-age=3600, must-revalidate, stale-if-error=14400",
         )
 
     def test_dynamic_cache_ttl_ignored_when_auto_disabled(self):
@@ -215,7 +215,7 @@ class PosterResponseTests(unittest.TestCase):
         main._apply_poster_cache_headers(resp, False, cache_ttl=3600)
         self.assertEqual(
             resp.headers["cache-control"],
-            "public, max-age=86400, stale-if-error=14400",
+            "public, max-age=86400, must-revalidate, stale-if-error=14400",
         )
 
     def test_dynamic_cache_ttl_none_falls_back_to_cdn_ttl(self):
@@ -226,7 +226,7 @@ class PosterResponseTests(unittest.TestCase):
         main._apply_poster_cache_headers(resp, False, cache_ttl=None)
         self.assertEqual(
             resp.headers["cache-control"],
-            "public, max-age=7200, stale-if-error=14400",
+            "public, max-age=7200, must-revalidate, stale-if-error=14400",
         )
 
     def test_dynamic_cache_ttl_none_falls_back_to_composite_capped(self):
@@ -237,7 +237,7 @@ class PosterResponseTests(unittest.TestCase):
         main._apply_poster_cache_headers(resp, False, cache_ttl=None)
         self.assertEqual(
             resp.headers["cache-control"],
-            "public, max-age=21600, stale-if-error=14400",
+            "public, max-age=21600, must-revalidate, stale-if-error=14400",
         )
 
     def test_no_cache_control_when_both_ttls_are_zero(self):
@@ -266,7 +266,7 @@ class PosterResponseTests(unittest.TestCase):
         main._apply_poster_cache_headers(resp, False, cache_ttl=86400)
         self.assertEqual(
             resp.headers["cache-control"],
-            "public, max-age=21600, stale-if-error=14400",
+            "public, max-age=21600, must-revalidate, stale-if-error=14400",
         )
         self.assertEqual(resp.headers["access-control-allow-origin"], "*")
         self.assertEqual(resp.headers["access-control-allow-headers"], "*")
