@@ -3864,24 +3864,45 @@ async def _run_trending_fetch_cycle(client: httpx.AsyncClient, max_ttl: int | No
         logger.error(f"Trending fetch: failed to query cache: {exc}")
         return
 
-    # Use a test client to regenerate posters through the API
+    # Categorize: items currently in trending_pairs vs items no longer in trending_pairs
+    items_to_regenerate = []
+    items_to_delete_only = []
+
+    for cache_key, req_params_str in rows:
+        parts = cache_key.split(":")
+        if len(parts) < 4:
+            continue
+        if not req_params_str:
+            continue
+            
+        # Use negative indexing because canonical_id can contain a colon (e.g. "tmdb:123")
+        # and anime keys have a different number of segments entirely.
+        # final_cache_key format ends with: ...:{tmdb_id}:{type}:{params_hash}
+        if (parts[-3], parts[-2]) in trending_pairs:
+            items_to_regenerate.append((cache_key, req_params_str))
+        else:
+            items_to_delete_only.append(cache_key)
+
+    # Instant Bulk Delete: Clear the database of stale items before any HTTP requests
+    for cache_key in items_to_delete_only:
+        try:
+            delete_cached_final_poster(cache_key)
+        except Exception as exc:
+            logger.error(f"Trending fetch: failed to delete dropped poster {cache_key}: {exc}")
+
+    for cache_key, _ in items_to_regenerate:
+        try:
+            delete_cached_final_poster(cache_key)
+        except Exception as exc:
+            logger.error(f"Trending fetch: failed to delete poster for regeneration {cache_key}: {exc}")
+
+    # Regenerate: Rebuild the active trending posters asynchronously
     regenerated_count = 0
-    
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as local_client:
-        for cache_key, req_params_str in rows:
-            parts = cache_key.split(":")
-            if len(parts) < 4:
-                continue
-            if (parts[1], parts[2]) not in trending_pairs:
-                continue
-            if not req_params_str:
-                continue
+        for cache_key, req_params_str in items_to_regenerate:
             logger.info(f"Trending fetch: regenerating poster for {cache_key}")
             try:
-                # Delete first so the replay misses the cache and re-renders with
-                # the fresh trending rank instead of serving the stale composite.
-                delete_cached_final_poster(cache_key)
                 headers = {}
                 if max_ttl is not None:
                     headers["x-internal-max-ttl"] = str(max_ttl)
