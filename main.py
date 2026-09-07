@@ -4155,7 +4155,17 @@ async def lifespan(app: FastAPI):
     logger.info("HTTP client closed")
 
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "OPTIONS"],
+    allow_headers=["*"],
+    expose_headers=["Cache-Control", "ETag", "Pragma"],
+)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 _FONTS_DIR = os.path.join(BASE_DIR, "fonts")
 
@@ -4796,10 +4806,7 @@ def _apply_poster_cache_headers(
     same lifecycle the server-side composite cache does.  When ``None``, the
     flat ``CDN_CACHE_TTL`` env-var is used as a fallback.
     """
-    # CORS — required for Nuvio web clients making cross-origin image requests.
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = "*"
-    response.headers["Access-Control-Expose-Headers"] = "Cache-Control, ETag, Pragma"
+    # CORS is handled globally by CORSMiddleware.
 
     if provisional:
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
