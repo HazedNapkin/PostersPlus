@@ -4162,9 +4162,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["GET", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Cache-Control", "ETag", "Pragma"],
+    expose_headers=["Cache-Control", "ETag", "Pragma", "Date", "Age", "Expires"],
 )
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 _FONTS_DIR = os.path.join(BASE_DIR, "fonts")
