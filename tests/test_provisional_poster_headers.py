@@ -142,6 +142,12 @@ class PosterResponseTests(unittest.TestCase):
         resp = self._response(False, if_none_match=val)
         self.assertEqual(resp.status_code, 304)
 
+    def test_a_validator_without_quotes_gets_a_304(self):
+        """Server should be robust to clients/proxies that improperly strip quotes from ETags."""
+        unquoted_etag = main._poster_etag(self.BODY).strip('"')
+        resp = self._response(False, if_none_match=unquoted_etag)
+        self.assertEqual(resp.status_code, 304)
+
     def test_wildcard_validator_gets_a_304(self):
         resp = self._response(False, if_none_match="*")
         self.assertEqual(resp.status_code, 304)

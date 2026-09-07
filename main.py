@@ -4839,10 +4839,15 @@ def _poster_response(
         if_none_match = request.headers.get("if-none-match")
         if if_none_match:
             # RFC 9110 §13.1.2 weak comparison: handle strong tags, weak tags (W/"..."),
-            # wildcard (*), and comma-separated lists (common with CDNs like Cloudflare).
+            # wildcard (*), and comma-separated lists. Be robust to stripped quotes.
             client_tags = [t.strip() for t in if_none_match.split(",") if t.strip()]
+            
+            def _normalize(tag: str) -> str:
+                return tag[2:].strip('"') if tag.startswith("W/") else tag.strip('"')
+                
+            norm_etag = _normalize(etag)
             if any(
-                t == "*" or t == etag or (t.startswith("W/") and t[2:] == etag)
+                t == "*" or _normalize(t) == norm_etag
                 for t in client_tags
             ):
                 not_modified = Response(status_code=304)
