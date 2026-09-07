@@ -7,6 +7,7 @@ import io
 import logging
 import os
 import re
+import secrets
 import time
 import httpx
 import numpy as np
@@ -3818,6 +3819,11 @@ def _sanitize_request_params(query: str) -> str:
     return urlencode(kept)
 
 
+# Shared in-memory secret generated on startup to authenticate internal background
+# jobs replay requests to /poster, preventing external manipulation of cache TTLs.
+_INTERNAL_JOB_SECRET = secrets.token_hex(16)
+
+
 async def _run_trending_fetch_cycle(client: httpx.AsyncClient, max_ttl: int | None = None) -> None:
     logger.info("Starting scheduled trending fetch cycle")
     if not _cfg.SERVER_TMDB_KEY:
@@ -3879,6 +3885,7 @@ async def _run_trending_fetch_cycle(client: httpx.AsyncClient, max_ttl: int | No
                 headers = {}
                 if max_ttl is not None:
                     headers["x-internal-max-ttl"] = str(max_ttl)
+                    headers["x-internal-secret"] = _INTERNAL_JOB_SECRET
                 resp = await local_client.get(f"/poster?{req_params_str}", headers=headers)
                 if resp.status_code >= 400:
                     logger.warning(f"Trending fetch: regenerate for {cache_key} returned HTTP {resp.status_code}")
@@ -3906,9 +3913,11 @@ def _get_trending_fetch_wait_seconds() -> float:
         
     now_dt = datetime.now(tz)
     target_dt = now_dt.replace(hour=h, minute=m, second=0, microsecond=0)
-    if target_dt <= now_dt:
+    # If the scheduled time is in the past or within 10 seconds (e.g. waking up right on schedule
+    # or a few milliseconds early due to timer resolution), advance to tomorrow.
+    if (target_dt - now_dt).total_seconds() <= 10:
         target_dt += timedelta(days=1)
-    return (target_dt - now_dt).total_seconds()
+    return max(60.0, (target_dt - now_dt).total_seconds())
 
 
 async def _trending_fetch_loop() -> None:
@@ -4793,13 +4802,19 @@ def _apply_poster_cache_headers(
             # than being stuck on a stale poster for days if trending/sash status updates mid-cycle.
             # The cap defaults to 6 hours (21600s), or the user-configured CDN_CACHE_TTL if set.
             _cap = _cfg.CDN_CACHE_TTL if _cfg.CDN_CACHE_TTL > 0 else 21600
-            _effective_ttl = min(_base_ttl, _cap)
+            _effective_ttl = max(0, min(_base_ttl, _cap))
+            if _effective_ttl > 0:
+                response.headers["Cache-Control"] = (
+                    f"public, max-age={_effective_ttl}, stale-if-error=14400"
+                )
+            else:
+                response.headers["Cache-Control"] = "public, max-age=0, must-revalidate"
         else:
             _effective_ttl = _cfg.CDN_CACHE_TTL
-        if _effective_ttl > 0:
-            response.headers["Cache-Control"] = (
-                f"public, max-age={_effective_ttl}, stale-if-error=14400"
-            )
+            if _effective_ttl > 0:
+                response.headers["Cache-Control"] = (
+                    f"public, max-age={_effective_ttl}, stale-if-error=14400"
+                )
 
 
 def _poster_response(
@@ -4821,10 +4836,18 @@ def _poster_response(
     etag = None
     if final_cache_key is not None and not provisional:
         etag = _poster_etag(body)
-        if request.headers.get("if-none-match") == etag:
-            not_modified = Response(status_code=304)
-            _apply_poster_cache_headers(not_modified, provisional, etag=etag, cache_ttl=cache_ttl)
-            return not_modified
+        if_none_match = request.headers.get("if-none-match")
+        if if_none_match:
+            # RFC 9110 §13.1.2 weak comparison: handle strong tags, weak tags (W/"..."),
+            # wildcard (*), and comma-separated lists (common with CDNs like Cloudflare).
+            client_tags = [t.strip() for t in if_none_match.split(",") if t.strip()]
+            if any(
+                t == "*" or t == etag or (t.startswith("W/") and t[2:] == etag)
+                for t in client_tags
+            ):
+                not_modified = Response(status_code=304)
+                _apply_poster_cache_headers(not_modified, provisional, etag=etag, cache_ttl=cache_ttl)
+                return not_modified
 
     response = Response(content=body, media_type=f"image/{_cfg.IMAGE_FORMAT}")
     _apply_poster_cache_headers(response, provisional, etag=etag, cache_ttl=cache_ttl)
@@ -6514,20 +6537,24 @@ async def get_poster(
             _ttl_override = 86400 if _ttl_override is None else min(_ttl_override, 86400)
 
         # ------------------------------------------------------------------
-        # Internal Max TTL: If invoked by a background job (e.g. startup
+        # Internal Max TTL: If invoked by an authentic background job (e.g. startup
         # trending fetch), cap the TTL so the poster is only valid until
-        # the next scheduled run.
+        # the next scheduled run. Protected by an in-memory secret to prevent
+        # external clients from forcing short cache TTLs.
         # ------------------------------------------------------------------
-        _internal_max_ttl_str = request.headers.get("x-internal-max-ttl")
-        if _internal_max_ttl_str:
-            try:
-                _internal_max_ttl = int(_internal_max_ttl_str)
-                _ttl_override = (
-                    _internal_max_ttl if _ttl_override is None
-                    else min(_ttl_override, _internal_max_ttl)
-                )
-            except ValueError:
-                pass
+        _internal_secret = request.headers.get("x-internal-secret")
+        if _internal_secret and secrets.compare_digest(_internal_secret, _INTERNAL_JOB_SECRET):
+            _internal_max_ttl_str = request.headers.get("x-internal-max-ttl")
+            if _internal_max_ttl_str:
+                try:
+                    _internal_max_ttl = int(_internal_max_ttl_str)
+                    if _internal_max_ttl > 0:
+                        _ttl_override = (
+                            _internal_max_ttl if _ttl_override is None
+                            else min(_ttl_override, _internal_max_ttl)
+                        )
+                except ValueError:
+                    pass
 
         # ------------------------------------------------------------------
         # Downstream TTL: if a composite cache entry already exists (e.g. from

@@ -130,6 +130,22 @@ class PosterResponseTests(unittest.TestCase):
         resp = self._response(False, if_none_match=main._poster_etag(self.BODY))
         self.assertEqual(resp.status_code, 304)
 
+    def test_a_weak_validator_gets_a_304(self):
+        """Cloudflare and intermediate proxies often transform strong ETags into weak ETags (W/...)."""
+        weak_etag = f"W/{main._poster_etag(self.BODY)}"
+        resp = self._response(False, if_none_match=weak_etag)
+        self.assertEqual(resp.status_code, 304)
+
+    def test_comma_separated_validators_gets_a_304(self):
+        """RFC 9110 allows multiple validators in If-None-Match."""
+        val = f'"stale-etag", W/{main._poster_etag(self.BODY)}, "other-etag"'
+        resp = self._response(False, if_none_match=val)
+        self.assertEqual(resp.status_code, 304)
+
+    def test_wildcard_validator_gets_a_304(self):
+        resp = self._response(False, if_none_match="*")
+        self.assertEqual(resp.status_code, 304)
+
     def test_a_stale_validator_gets_the_new_poster(self):
         resp = self._response(
             False, body=b"todays-render", if_none_match=main._poster_etag(b"last-weeks-render")
@@ -224,6 +240,17 @@ class PosterResponseTests(unittest.TestCase):
         resp = Response(content=b"")
         main._apply_poster_cache_headers(resp, False, cache_ttl=None)
         self.assertNotIn("cache-control", resp.headers)
+
+    def test_dynamic_cache_ttl_zero_emits_max_age_zero(self):
+        """When AUTO_CACHE_TTL is on and the remaining TTL is 0, emit max-age=0 to prevent heuristic caching."""
+        main._cfg.AUTO_CACHE_TTL = True
+        main._cfg.CDN_CACHE_TTL = 0
+        resp = Response(content=b"")
+        main._apply_poster_cache_headers(resp, False, cache_ttl=0)
+        self.assertEqual(
+            resp.headers["cache-control"],
+            "public, max-age=0, must-revalidate",
+        )
 
     def test_dynamic_cache_ttl_recency_override_1_day(self):
         """1-day recency override sets client max-age=21600 (due to 6-hour default cap) with CORS headers."""
