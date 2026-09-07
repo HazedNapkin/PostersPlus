@@ -4786,13 +4786,14 @@ def _apply_poster_cache_headers(
         # 3 days, …).  Otherwise use the flat CDN_CACHE_TTL env-var.
         # stale-while-revalidate lets CDN edges serve while fetching a fresh
         # copy; stale-if-error covers origin outages.
-        if _cfg.AUTO_CACHE_TTL and cache_ttl is not None:
+        if _cfg.AUTO_CACHE_TTL:
+            _base_ttl = cache_ttl if cache_ttl is not None else _cfg.COMPOSITE_CACHE_TTL
             # We cap the client's max-age to leverage the new content-derived ETag system.
             # This ensures clients revalidate frequently (getting a cheap 304 if unchanged) rather 
             # than being stuck on a stale poster for days if trending/sash status updates mid-cycle.
             # The cap defaults to 6 hours (21600s), or the user-configured CDN_CACHE_TTL if set.
             _cap = _cfg.CDN_CACHE_TTL if _cfg.CDN_CACHE_TTL > 0 else 21600
-            _effective_ttl = min(cache_ttl, _cap)
+            _effective_ttl = min(_base_ttl, _cap)
         else:
             _effective_ttl = _cfg.CDN_CACHE_TTL
         if _effective_ttl > 0:
@@ -6537,11 +6538,12 @@ async def get_poster(
         # so its own expiry is not extended.
         # ------------------------------------------------------------------
         _client_ttl = _ttl_override
-        if final_cache_key is not None and _ttl_override is not None:
+        if final_cache_key is not None:
             _existing_expiry = get_cached_final_poster_expiry(final_cache_key)
             if _existing_expiry is not None:
                 _remaining = max(0, _existing_expiry - int(time.time()))
-                _client_ttl = min(_ttl_override, _remaining) if _remaining > 0 else _ttl_override
+                if _remaining > 0:
+                    _client_ttl = min(_ttl_override, _remaining) if _ttl_override is not None else _remaining
 
         if final_cache_key is not None and not _render_provisional:
             set_cached_final_poster(

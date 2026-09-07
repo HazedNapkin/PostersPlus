@@ -207,6 +207,17 @@ class PosterResponseTests(unittest.TestCase):
             "public, max-age=7200, stale-if-error=14400",
         )
 
+    def test_dynamic_cache_ttl_none_falls_back_to_composite_capped(self):
+        """When no status-derived TTL is available and no CDN_CACHE_TTL, the base is COMPOSITE_CACHE_TTL capped at 6 hours."""
+        main._cfg.AUTO_CACHE_TTL = True
+        main._cfg.CDN_CACHE_TTL = 0
+        resp = Response(content=b"")
+        main._apply_poster_cache_headers(resp, False, cache_ttl=None)
+        self.assertEqual(
+            resp.headers["cache-control"],
+            "public, max-age=21600, stale-if-error=14400",
+        )
+
     def test_no_cache_control_when_both_ttls_are_zero(self):
         """No Cache-Control is emitted when CDN_CACHE_TTL=0 and no override."""
         main._cfg.CDN_CACHE_TTL = 0
