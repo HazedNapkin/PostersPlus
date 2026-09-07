@@ -170,6 +170,23 @@ class PosterResponseTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 304)
         self.assertEqual(resp.headers["etag"], main._poster_etag(self.BODY))
         self.assertEqual(resp.headers["cache-control"], "public, max-age=86400, must-revalidate, stale-if-error=14400")
+    # ---- CORS headers ----
+
+    def test_cors_headers_on_provisional_render(self):
+        headers = self._response(True).headers
+        self.assertEqual(headers["access-control-allow-origin"], "*")
+        self.assertEqual(headers["access-control-allow-headers"], "*")
+        self.assertIn("Cache-Control", headers["access-control-expose-headers"])
+        self.assertIn("ETag", headers["access-control-expose-headers"])
+        self.assertIn("Date", headers["access-control-expose-headers"])
+
+    def test_cors_headers_on_finished_render(self):
+        headers = self._response(False).headers
+        self.assertEqual(headers["access-control-allow-origin"], "*")
+        self.assertEqual(headers["access-control-allow-headers"], "*")
+        self.assertIn("Cache-Control", headers["access-control-expose-headers"])
+        self.assertIn("ETag", headers["access-control-expose-headers"])
+        self.assertIn("Date", headers["access-control-expose-headers"])
 
     # ---- Dynamic cache_ttl ----
 
@@ -256,6 +273,8 @@ class PosterResponseTests(unittest.TestCase):
             resp.headers["cache-control"],
             "public, max-age=21600, must-revalidate, stale-if-error=14400",
         )
+        self.assertEqual(resp.headers["access-control-allow-origin"], "*")
+        self.assertEqual(resp.headers["access-control-allow-headers"], "*")
 
 class CoalescedRenderTests(unittest.TestCase):
     """A request coalesced onto a provisional render inherits its status.
