@@ -149,6 +149,10 @@ SERVER_MDBLIST_KEYS: list[str] = [k for k in [SERVER_MDBLIST_KEY, SERVER_MDBLIST
 # Cache-Control: public header so Cloudflare (or any CDN) caches them at the
 # edge. Set to 0 to disable (e.g. when running without a CDN).
 CDN_CACHE_TTL         = int(os.environ.get("CDN_CACHE_TTL", "0"))
+# Auto Cache-Control TTL: when enabled, poster responses carry a dynamic "countdown"
+# max-age header matching the internal cache TTL of the item, capped at CDN_CACHE_TTL
+# (or 6 hours if CDN_CACHE_TTL is 0).
+AUTO_CACHE_TTL        = os.environ.get("AUTO_CACHE_TTL", "").strip().lower() in ("1", "true", "yes")
 # Image format for composited posters (webp or jpeg). webp is recommended.
 IMAGE_FORMAT          = os.environ.get("IMAGE_FORMAT", "webp").lower()
 # Normalise the common "jpg" alias to the canonical "jpeg" that PIL's save()

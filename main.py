@@ -567,6 +567,7 @@ from cache import (
     get_cached_quality,
     get_cached_rating,
     get_cached_final_poster,
+    get_cached_final_poster_remaining_ttl,
     set_cached_final_poster,
     delete_cached_final_poster,
     get_cached_tmdb_poster,
@@ -3815,6 +3816,33 @@ def _sanitize_request_params(query: str) -> str:
     return urlencode(kept)
 
 
+_trending_next_run_ts: float | None = None
+
+
+def _seconds_until_next_trending_fetch() -> float:
+    """Return seconds remaining until the next scheduled trending fetch cycle."""
+    global _trending_next_run_ts
+    now = time.time()
+    if _trending_next_run_ts is not None and _trending_next_run_ts > now:
+        return _trending_next_run_ts - now
+
+    if _cfg.TRENDING_FETCH_TIME:
+        try:
+            tz = zoneinfo.ZoneInfo(_cfg.TRENDING_FETCH_TIMEZONE)
+        except Exception:
+            tz = zoneinfo.ZoneInfo("UTC")
+        try:
+            h, m = map(int, _cfg.TRENDING_FETCH_TIME.split(':'))
+            now_dt = datetime.now(tz)
+            target_dt = now_dt.replace(hour=h, minute=m, second=0, microsecond=0)
+            if target_dt <= now_dt:
+                target_dt += timedelta(days=1)
+            return max(60.0, (target_dt - now_dt).total_seconds())
+        except Exception:
+            pass
+    return 86400.0
+
+
 async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
     logger.info("Starting scheduled trending fetch cycle")
     if not _cfg.SERVER_TMDB_KEY:
@@ -3855,42 +3883,68 @@ async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
         logger.error(f"Trending fetch: failed to query cache: {exc}")
         return
 
-    # Use a test client to regenerate posters through the API
+    # 1. Safe Parsing & Categorization
+    # Parse tmdb_id and media_type using negative indexing (parts[-3] and parts[-2])
+    # to safely handle keys with colon prefixes like tmdb:12345.
+    items_to_regenerate: list[tuple[str, str]] = []
+    items_to_delete_only: list[str] = []
+
+    for cache_key, req_params_str in rows:
+        parts = cache_key.split(":")
+        if len(parts) < 4:
+            continue
+        tmdb_id = parts[-3]
+        media_type = parts[-2]
+
+        if (tmdb_id, media_type) in trending_pairs:
+            if req_params_str:
+                items_to_regenerate.append((cache_key, req_params_str))
+            else:
+                items_to_delete_only.append(cache_key)
+        else:
+            items_to_delete_only.append(cache_key)
+
+    # 2. Instant Bulk Delete
+    # Loop through BOTH lists and instantly execute delete_cached_final_poster()
+    # so stale images are wiped immediately. No HTTP requests during this step.
+    for cache_key in items_to_delete_only:
+        delete_cached_final_poster(cache_key)
+
+    for cache_key, _ in items_to_regenerate:
+        delete_cached_final_poster(cache_key)
+
+    # 3. Sequential Regeneration
+    # Separate asynchronous loop that goes through only items_to_regenerate
+    # and calls local_client.get to build new posters.
     regenerated_count = 0
-    
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as local_client:
-        for cache_key, req_params_str in rows:
-            parts = cache_key.split(":")
-            if len(parts) < 4:
-                continue
-            if (parts[1], parts[2]) not in trending_pairs:
-                continue
-            if not req_params_str:
-                continue
+        for cache_key, req_params_str in items_to_regenerate:
             logger.info(f"Trending fetch: regenerating poster for {cache_key}")
             try:
-                # Delete first so the replay misses the cache and re-renders with
-                # the fresh trending rank instead of serving the stale composite.
-                delete_cached_final_poster(cache_key)
-                resp = await local_client.get(f"/poster?{req_params_str}")
+                req_url = f"/poster{req_params_str}" if req_params_str.startswith("?") else f"/poster?{req_params_str}"
+                resp = await local_client.get(req_url)
                 if resp.status_code >= 400:
                     logger.warning(f"Trending fetch: regenerate for {cache_key} returned HTTP {resp.status_code}")
                 else:
                     regenerated_count += 1
             except Exception as exc:
                 logger.error(f"Trending fetch: failed to regenerate poster {cache_key}: {exc}")
-                    
+
     logger.info(f"Trending fetch cycle completed. Regenerated {regenerated_count} posters.")
 
 
 async def _trending_fetch_loop() -> None:
     """Periodically fetch trending items and regenerate cached posters."""
+    global _trending_next_run_ts
+    _trending_next_run_ts = time.time() + _seconds_until_next_trending_fetch()
     # First run immediately on startup
     await asyncio.sleep(10)
     try:
-        if _HTTP_CLIENT is not None:
+        if _HTTP_CLIENT is not None and _cfg.TRENDING_FETCH_TIME:
             await _run_trending_fetch_cycle(_HTTP_CLIENT)
+    except asyncio.CancelledError:
+        return
     except Exception as exc:
         logger.error(f"Trending fetch: startup cycle failed: {exc}")
 
@@ -3908,18 +3962,21 @@ async def _trending_fetch_loop() -> None:
                 h, m = map(int, _cfg.TRENDING_FETCH_TIME.split(':'))
             except ValueError:
                 h, m = 0, 0
-                
+
             now_dt = datetime.now(tz)
             target_dt = now_dt.replace(hour=h, minute=m, second=0, microsecond=0)
             if target_dt <= now_dt:
                 target_dt += timedelta(days=1)
             wait = (target_dt - now_dt).total_seconds()
-            
+
+        _trending_next_run_ts = time.time() + wait
         logger.info(f"Trending fetch: next cycle scheduled in {wait / 3600:.1f} hours")
         await asyncio.sleep(wait)
         try:
             if _HTTP_CLIENT is not None:
                 await _run_trending_fetch_cycle(_HTTP_CLIENT)
+        except asyncio.CancelledError:
+            return
         except Exception as exc:
             logger.error(f"Trending fetch: cycle failed: {exc}")
 
@@ -4735,8 +4792,27 @@ def _poster_etag(body: bytes) -> str:
     return f'"{hashlib.blake2b(body, digest_size=16).hexdigest()}"'
 
 
+def _clean_etag(val: str | None) -> str | None:
+    """Safely strip quotes and Cloudflare weak prefixes from an ETag."""
+    if not val:
+        return None
+    val = val.strip()
+    while True:
+        prev = val
+        val = val.strip().strip('"').strip("'").strip('\\').strip()
+        if val.startswith(("W/", "w/")):
+            val = val[2:].strip()
+        if val == prev:
+            break
+    return val.replace('"', '').replace("'", '').replace('\\', '').strip()
+
+
 def _apply_poster_cache_headers(
-    response: Response, provisional: bool, etag: str | None = None
+    response: Response,
+    provisional: bool,
+    etag: str | None = None,
+    internal_ttl: int | float | None = None,
+    cache_key: str | None = None,
 ) -> None:
     """Attach the validator and freshness headers a poster response has earned.
 
@@ -4761,36 +4837,65 @@ def _apply_poster_cache_headers(
     if _cfg.DISABLE_COMPOSITE_CACHE:
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
         response.headers["Pragma"] = "no-cache"
+    elif _cfg.AUTO_CACHE_TTL:
+        cap = _cfg.CDN_CACHE_TTL if _cfg.CDN_CACHE_TTL > 0 else 6 * 3600
+        rem_ttl = internal_ttl
+        if rem_ttl is None and cache_key is not None:
+            rem_ttl = get_cached_final_poster_remaining_ttl(cache_key)
+        if rem_ttl is not None:
+            ttl = min(cap, max(0, int(rem_ttl)))
+        else:
+            ttl = cap
+        response.headers["Cache-Control"] = f"public, max-age={ttl}"
     elif _cfg.CDN_CACHE_TTL > 0:
         response.headers["Cache-Control"] = f"public, max-age={_cfg.CDN_CACHE_TTL}"
 
 
 def _poster_response(
-    request: Request, body: bytes, final_cache_key: str | None, provisional: bool
+    request: Request,
+    body: bytes,
+    final_cache_key: str | None,
+    provisional: bool,
+    internal_ttl: int | float | None = None,
 ) -> Response:
     """Return the 200 — or the 304 — a finished poster body has earned.
 
-    Every path that hands poster bytes back goes through here (composite hit,
-    coalesced render, fresh render) so the validator is computed one way and the
-    conditional request is answered one way.  *final_cache_key* only gates
-    whether a validator is offered at all: a quality= override is a one-off that
-    never enters the composite cache and has nothing to revalidate against.
+    ETags are content-derived (_poster_etag(body)), so two renders that hash the
+    same are byte-for-byte identical.  A provisional render is never given an
+    ETag because nothing downstream should be invited to cache it, and we never
+    answer a conditional request with a 304 for it.
 
-    The 304 carries the same headers as the 200 it stands in for.  A bare 304
-    leaves the client's stored freshness untouched (RFC 9111 §4.3.4 updates the
-    stored headers from whatever the 304 carries), so the poster would keep
-    whatever max-age it was first served with no matter how the TTL moved on.
+    If-None-Match is matched against the ETag.  If matched, a 304 Not Modified
+    response is returned carrying fresh validator and freshness headers.
     """
     etag = None
     if final_cache_key is not None and not provisional:
         etag = _poster_etag(body)
-        if request.headers.get("if-none-match") == etag:
-            not_modified = Response(status_code=304)
-            _apply_poster_cache_headers(not_modified, provisional, etag=etag)
-            return not_modified
+        raw_inm = request.headers.get("if-none-match")
+        if raw_inm:
+            clean_gen_etag = _clean_etag(etag)
+            client_tags = {_clean_etag(token) for token in raw_inm.split(",")}
+            client_tags.discard("")
+            client_tags.discard(None)
+            if clean_gen_etag and (clean_gen_etag in client_tags or "*" in client_tags):
+                not_modified = Response(status_code=304)
+                _apply_poster_cache_headers(
+                    not_modified,
+                    provisional,
+                    etag=etag,
+                    internal_ttl=internal_ttl,
+                    cache_key=final_cache_key,
+                )
+                return not_modified
 
     response = Response(content=body, media_type=f"image/{_cfg.IMAGE_FORMAT}")
-    _apply_poster_cache_headers(response, provisional, etag=etag)
+    _apply_poster_cache_headers(
+        response,
+        provisional,
+        etag=etag,
+        internal_ttl=internal_ttl,
+        cache_key=final_cache_key,
+    )
     return response
 
 
@@ -6434,7 +6539,7 @@ async def get_poster(
             if discovery_meta is not None:
                 _sash_result = pick_sash(discovery_meta, _sash_priority)
                 if _sash_result and _sash_result[1] in ("trending", "trending_broad"):
-                    _ttl_override = 86400
+                    _ttl_override = max(60, int(_seconds_until_next_trending_fetch()))
             if _release_status:
                 _status_ttl = release_status_ttl_seconds(_release_status)
                 _ttl_override = (
@@ -6453,7 +6558,13 @@ async def get_poster(
         if _render_fut is not None:
             _render_fut.set_result((img_bytes, _render_provisional))
 
-        return _poster_response(request, img_bytes, final_cache_key, _render_provisional)
+        return _poster_response(
+            request,
+            img_bytes,
+            final_cache_key,
+            _render_provisional,
+            internal_ttl=_ttl_override,
+        )
 
     except ValueError as exc:
         if _render_fut is not None and not _render_fut.done():

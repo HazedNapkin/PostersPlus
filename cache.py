@@ -355,8 +355,18 @@ def init_db() -> None:
     # that expire on their own schedules — a trending rank, a release status —
     # and the flat COMPOSITE_CACHE_TTL let it outlive them.  The deadline is now
     # computed at write time from whichever input expires soonest.  NULL rows
-    # predate the column and fall back to cached_at + TTL + jitter.
     _add_column_if_missing(conn, "final_poster_cache", "expires_at", "INTEGER")
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(final_poster_cache)").fetchall()}
+    if "image_bytes" in cols:
+        if "jpeg_bytes" not in cols:
+            conn.execute("ALTER TABLE final_poster_cache RENAME COLUMN image_bytes TO jpeg_bytes")
+        else:
+            conn.execute("UPDATE final_poster_cache SET jpeg_bytes = image_bytes WHERE jpeg_bytes IS NULL")
+            try:
+                conn.execute("ALTER TABLE final_poster_cache DROP COLUMN image_bytes")
+            except Exception:
+                pass
+    _add_column_if_missing(conn, "final_poster_cache", "jpeg_bytes", "BLOB")
 
     # Which source a trending snapshot came from.  Without this, changing
     # TRENDING_SOURCE_* had no visible effect until the snapshot aged out on its
@@ -537,6 +547,32 @@ def delete_cached_final_poster(cache_key: str) -> None:
     except Exception as exc:
         logger.error(f"Final poster cache delete error: {exc}")
 
+
+def get_cached_final_poster_remaining_ttl(cache_key: str) -> float | None:
+    """Return the remaining TTL in seconds for a cached composite poster, or None if not found."""
+    now = time.time()
+    if COMPOSITE_MEM_ENTRIES > 0:
+        with _composite_l1_lock:
+            entry = _composite_l1.get(cache_key)
+            if entry is not None:
+                expires_at, _ = entry
+                return max(0.0, float(expires_at) - now)
+
+    try:
+        row = get_db().execute(
+            "SELECT expires_at, cached_at FROM final_poster_cache WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
+        if not row:
+            return None
+        expires_at, cached_at = row
+        if expires_at is None:
+            expires_at = _composite_expiry(cache_key, cached_at)
+        return max(0.0, float(expires_at) - now)
+    except Exception as exc:
+        logger.error(f"Final poster cache remaining TTL error: {exc}")
+        return None
+
 def invalidate_final_posters(tmdb_id: str, media_type: str | None = None) -> None:
     """Invalidate all composited posters for a specific TMDB ID.
     Used when underlying dynamic data (like trending rank or release status)
@@ -557,7 +593,10 @@ def invalidate_final_posters(tmdb_id: str, media_type: str | None = None) -> Non
             keys_to_delete = []
             for k in _composite_l1:
                 parts = k.split(":")
-                if len(parts) >= 3 and parts[1] == tmdb_id:
+                if len(parts) >= 4 and parts[-3] == tmdb_id:
+                    if type_variants is None or parts[-2] in type_variants:
+                        keys_to_delete.append(k)
+                elif len(parts) >= 3 and parts[1] == tmdb_id:
                     if type_variants is None or parts[2] in type_variants:
                         keys_to_delete.append(k)
             for k in keys_to_delete:
