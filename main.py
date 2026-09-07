@@ -4799,7 +4799,7 @@ def _apply_poster_cache_headers(
     # CORS — required for Nuvio web clients making cross-origin image requests.
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Headers"] = "*"
-    response.headers["Access-Control-Expose-Headers"] = "Cache-Control"
+    response.headers["Access-Control-Expose-Headers"] = "Cache-Control, ETag, Pragma"
 
     if provisional:
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
