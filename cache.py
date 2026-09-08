@@ -443,9 +443,16 @@ def get_cached_final_poster(cache_key: str) -> bytes | None:
                 expires_at, data = entry
                 if now <= expires_at:
                     _composite_l1.move_to_end(cache_key)
+                    logger.info(
+                        f"[CACHE L1 HIT] {cache_key} (size={len(data)}B, "
+                        f"expires in {expires_at - now:.1f}s)"
+                    )
                     return data
                 # Nothing sweeps L1 on a timer, so an aged-out entry is dropped
                 # on the read that finds it and the L2 check below takes over.
+                logger.info(
+                    f"[CACHE L1 EXPIRED] {cache_key} (expired {now - expires_at:.1f}s ago) — evicting from L1"
+                )
                 del _composite_l1[cache_key]
 
     # L2: SQLite with TTL check
@@ -455,14 +462,15 @@ def get_cached_final_poster(cache_key: str) -> bytes | None:
             (cache_key,),
         ).fetchone()
         if not row:
+            logger.info(f"[CACHE MISS] {cache_key} not found in SQLite final_poster_cache")
             return None
         jpeg_bytes, cached_at, expires_at = row
         if expires_at is None:
             expires_at = _composite_expiry(cache_key, cached_at)
         if now > expires_at:
             logger.info(
-                f"Final poster cache expired for {cache_key} "
-                f"({(now - cached_at)/86400:.1f}d old)"
+                f"[CACHE L2 EXPIRED] Final poster cache expired for {cache_key} "
+                f"({(now - cached_at)/86400:.1f}d old, expired {now - expires_at:.1f}s ago) — deleting row"
             )
             with _db_lock:
                 get_db().execute(
@@ -471,6 +479,10 @@ def get_cached_final_poster(cache_key: str) -> bytes | None:
                 get_db().commit()
             return None
         data = bytes(jpeg_bytes)
+        logger.info(
+            f"[CACHE L2 HIT] {cache_key} (size={len(data)}B, "
+            f"expires in {expires_at - now:.1f}s) — promoting to L1"
+        )
         # Promote to L1
         if COMPOSITE_MEM_ENTRIES > 0:
             with _composite_l1_lock:
@@ -498,6 +510,12 @@ def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes, request_params: s
     if ttl_override is not None:
         ttl = min(ttl, ttl_override)
     expires_at = now + int(ttl)
+
+    logger.info(
+        f"[CACHE WRITE] Storing final poster for {cache_key}: size={len(jpeg_bytes)}B, "
+        f"ttl={ttl}s, expires_at={expires_at} (in {ttl}s), "
+        f"ttl_override={ttl_override}, has_params={bool(request_params)}"
+    )
 
     # L1: always store the freshly-rendered composite so the next hit skips SQLite
     if COMPOSITE_MEM_ENTRIES > 0:
@@ -544,6 +562,7 @@ def delete_cached_final_poster(cache_key: str) -> None:
         with _db_lock:
             get_db().execute("DELETE FROM final_poster_cache WHERE cache_key = ?", (cache_key,))
             get_db().commit()
+        logger.info(f"[CACHE DELETE] Deleted {cache_key} from L1 and L2")
     except Exception as exc:
         logger.error(f"Final poster cache delete error: {exc}")
 
@@ -556,7 +575,9 @@ def get_cached_final_poster_remaining_ttl(cache_key: str) -> float | None:
             entry = _composite_l1.get(cache_key)
             if entry is not None:
                 expires_at, _ = entry
-                return max(0.0, float(expires_at) - now)
+                rem = max(0.0, float(expires_at) - now)
+                logger.info(f"[CACHE REM_TTL] L1 hit for {cache_key}: {rem:.1f}s remaining")
+                return rem
 
     try:
         row = get_db().execute(
@@ -564,11 +585,14 @@ def get_cached_final_poster_remaining_ttl(cache_key: str) -> float | None:
             (cache_key,),
         ).fetchone()
         if not row:
+            logger.info(f"[CACHE REM_TTL] Key {cache_key} not in final_poster_cache")
             return None
         expires_at, cached_at = row
         if expires_at is None:
             expires_at = _composite_expiry(cache_key, cached_at)
-        return max(0.0, float(expires_at) - now)
+        rem = max(0.0, float(expires_at) - now)
+        logger.info(f"[CACHE REM_TTL] L2 hit for {cache_key}: {rem:.1f}s remaining")
+        return rem
     except Exception as exc:
         logger.error(f"Final poster cache remaining TTL error: {exc}")
         return None

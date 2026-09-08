@@ -3876,6 +3876,11 @@ async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
     if not trending_pairs:
         return
 
+    logger.info(
+        f"Trending fetch: retrieved {len(trending)} candidates from TMDB, "
+        f"{len(trending_pairs)} unique (tmdb_id, media_type) pairs"
+    )
+
     db = get_db()
     try:
         rows = db.execute("SELECT cache_key, request_params FROM final_poster_cache WHERE request_params IS NOT NULL").fetchall()
@@ -3904,6 +3909,12 @@ async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
         else:
             items_to_delete_only.append(cache_key)
 
+    logger.info(
+        f"Trending fetch: analyzed {len(rows)} cached entries — "
+        f"{len(items_to_regenerate)} marked for regeneration, "
+        f"{len(items_to_delete_only)} marked for deletion"
+    )
+
     # 2. Instant Bulk Delete
     # Loop through BOTH lists and instantly execute delete_cached_final_poster()
     # so stale images are wiped immediately. No HTTP requests during this step.
@@ -3913,6 +3924,10 @@ async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
     for cache_key, _ in items_to_regenerate:
         delete_cached_final_poster(cache_key)
 
+    logger.info(
+        f"Trending fetch: bulk deleted {len(items_to_delete_only) + len(items_to_regenerate)} entries"
+    )
+
     # 3. Sequential Regeneration
     # Separate asynchronous loop that goes through only items_to_regenerate
     # and calls local_client.get to build new posters.
@@ -3920,18 +3935,27 @@ async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as local_client:
         for cache_key, req_params_str in items_to_regenerate:
-            logger.info(f"Trending fetch: regenerating poster for {cache_key}")
+            req_url = f"/poster{req_params_str}" if req_params_str.startswith("?") else f"/poster?{req_params_str}"
+            t0 = time.time()
+            logger.info(f"Trending fetch: regenerating poster for {cache_key} (url={req_url})")
             try:
-                req_url = f"/poster{req_params_str}" if req_params_str.startswith("?") else f"/poster?{req_params_str}"
                 resp = await local_client.get(req_url)
+                elapsed = time.time() - t0
                 if resp.status_code >= 400:
-                    logger.warning(f"Trending fetch: regenerate for {cache_key} returned HTTP {resp.status_code}")
+                    logger.warning(
+                        f"Trending fetch: regeneration for {cache_key} returned HTTP {resp.status_code} in {elapsed:.2f}s"
+                    )
                 else:
                     regenerated_count += 1
+                    logger.info(
+                        f"Trending fetch: regenerated {cache_key} (HTTP {resp.status_code}, "
+                        f"ETag={resp.headers.get('ETag')}, Cache-Control={resp.headers.get('Cache-Control')}) in {elapsed:.2f}s"
+                    )
             except Exception as exc:
-                logger.error(f"Trending fetch: failed to regenerate poster {cache_key}: {exc}")
+                elapsed = time.time() - t0
+                logger.error(f"Trending fetch: failed to regenerate poster {cache_key} after {elapsed:.2f}s: {exc}")
 
-    logger.info(f"Trending fetch cycle completed. Regenerated {regenerated_count} posters.")
+    logger.info(f"Trending fetch cycle completed. Regenerated {regenerated_count}/{len(items_to_regenerate)} posters.")
 
 
 async def _trending_fetch_loop() -> None:
@@ -4789,7 +4813,10 @@ def _poster_etag(body: bytes) -> str:
     took a 304 and kept the superseded poster for as long as it kept asking.
     A validator has to be a function of what it validates.
     """
-    return f'"{hashlib.blake2b(body, digest_size=16).hexdigest()}"'
+    digest = hashlib.blake2b(body, digest_size=16).hexdigest()
+    etag = f'"{digest}"'
+    logger.info(f"Computed ETag {etag} for poster body ({len(body)} bytes)")
+    return etag
 
 
 def _clean_etag(val: str | None) -> str | None:
@@ -4830,6 +4857,9 @@ def _apply_poster_cache_headers(
     if provisional:
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
         response.headers["Pragma"] = "no-cache"
+        logger.info(
+            f"Applied provisional cache headers: Cache-Control='no-store, no-cache, must-revalidate' (no ETag)"
+        )
         return
 
     if etag is not None:
@@ -4837,6 +4867,9 @@ def _apply_poster_cache_headers(
     if _cfg.DISABLE_COMPOSITE_CACHE:
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
         response.headers["Pragma"] = "no-cache"
+        logger.info(
+            f"Applied cache headers (DISABLE_COMPOSITE_CACHE): Cache-Control='no-store, no-cache, must-revalidate' etag={etag}"
+        )
     elif _cfg.AUTO_CACHE_TTL:
         cap = _cfg.CDN_CACHE_TTL if _cfg.CDN_CACHE_TTL > 0 else 6 * 3600
         rem_ttl = internal_ttl
@@ -4847,8 +4880,17 @@ def _apply_poster_cache_headers(
         else:
             ttl = cap
         response.headers["Cache-Control"] = f"public, max-age={ttl}"
+        logger.info(
+            f"Applied AUTO_CACHE_TTL headers: Cache-Control='public, max-age={ttl}' "
+            f"(internal_ttl={internal_ttl}, rem_ttl={rem_ttl}, cap={cap}) etag={etag} key={cache_key}"
+        )
     elif _cfg.CDN_CACHE_TTL > 0:
         response.headers["Cache-Control"] = f"public, max-age={_cfg.CDN_CACHE_TTL}"
+        logger.info(
+            f"Applied static CDN_CACHE_TTL headers: Cache-Control='public, max-age={_cfg.CDN_CACHE_TTL}' etag={etag}"
+        )
+    else:
+        logger.info(f"No Cache-Control header applied (AUTO_CACHE_TTL=False, CDN_CACHE_TTL=0) etag={etag}")
 
 
 def _poster_response(
@@ -4877,7 +4919,13 @@ def _poster_response(
             client_tags = {_clean_etag(token) for token in raw_inm.split(",")}
             client_tags.discard("")
             client_tags.discard(None)
-            if clean_gen_etag and (clean_gen_etag in client_tags or "*" in client_tags):
+            is_match = clean_gen_etag and (clean_gen_etag in client_tags or "*" in client_tags)
+            logger.info(
+                f"ETag revalidation check for key={final_cache_key}: "
+                f"client If-None-Match={raw_inm!r} (parsed: {client_tags}) "
+                f"vs server ETag={clean_gen_etag!r} -> match={is_match}"
+            )
+            if is_match:
                 not_modified = Response(status_code=304)
                 _apply_poster_cache_headers(
                     not_modified,
@@ -4886,7 +4934,21 @@ def _poster_response(
                     internal_ttl=internal_ttl,
                     cache_key=final_cache_key,
                 )
+                logger.info(
+                    f"[EMIT 304] 304 Not Modified for key={final_cache_key}, ETag={etag}, "
+                    f"Cache-Control={not_modified.headers.get('Cache-Control')}"
+                )
                 return not_modified
+            else:
+                logger.info(
+                    f"[ETAG MISMATCH] ETag mismatch for key={final_cache_key} "
+                    f"(client={client_tags} != server={clean_gen_etag}) -> returning fresh 200 OK"
+                )
+        else:
+            logger.info(
+                f"ETag check for key={final_cache_key}: server ETag={_clean_etag(etag)!r}, "
+                f"no client If-None-Match header -> returning fresh 200 OK"
+            )
 
     response = Response(content=body, media_type=f"image/{_cfg.IMAGE_FORMAT}")
     _apply_poster_cache_headers(
@@ -4895,6 +4957,10 @@ def _poster_response(
         etag=etag,
         internal_ttl=internal_ttl,
         cache_key=final_cache_key,
+    )
+    logger.info(
+        f"[EMIT 200] 200 OK for key={final_cache_key}, ETag={etag}, "
+        f"Cache-Control={response.headers.get('Cache-Control')}, size={len(body)}B"
     )
     return response
 
@@ -4948,6 +5014,15 @@ async def get_poster(
     debug: str | None = None,
     nocache: str | None = None,
 ):
+    inm_header = request.headers.get("if-none-match")
+    cc_header = request.headers.get("cache-control")
+    client_ip = request.client.host if request.client else "unknown"
+    logger.info(
+        f"Incoming /poster request from {client_ip}: "
+        f"tmdb_id={tmdb_id!r}, imdb_id={imdb_id!r}, stremio_id={stremio_id!r}, type={type!r} | "
+        f"If-None-Match={inm_header!r}, Cache-Control={cc_header!r}"
+    )
+
     if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
         raise HTTPException(status_code=403, detail="Unauthorized, your access key is not valid for this instance.")
 
@@ -5203,10 +5278,17 @@ async def get_poster(
         if _force_refresh:
             logger.info(f"Force refresh (nocache) for {final_cache_key} — bypassing cache read")
         if cached_jpeg is not None:
-            logger.info(f"Final poster cache hit for {final_cache_key}")
+            rem_ttl = get_cached_final_poster_remaining_ttl(final_cache_key)
+            rem_str = f"{rem_ttl:.1f}s" if rem_ttl is not None else "unknown"
+            logger.info(
+                f"[CACHE HIT] Final poster cache hit for {final_cache_key} "
+                f"(size={len(cached_jpeg)}B, rem_ttl={rem_str})"
+            )
             # Only a finished render is ever written to the composite cache, so
             # a cache hit is never provisional.
             return _poster_response(request, cached_jpeg, final_cache_key, False)
+        else:
+            logger.info(f"[CACHE MISS] Final poster cache miss for {final_cache_key} — proceeding to render")
     else:
         final_cache_key = None
 
