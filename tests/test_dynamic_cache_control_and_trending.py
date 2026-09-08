@@ -340,6 +340,46 @@ class TrendingFetchCycleTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn(malformed_key, deleted_keys)
 
+    async def test_items_invalidated_by_snapshot_update_are_still_regenerated(self):
+        """If set_cached_trending_snapshot runs during candidates fetch and invalidates
+        (deletes) an item from final_poster_cache, pre-snapshotted rows ensure it is still
+        regenerated with its original request_params."""
+        key = "tt28014327:1137844:movie:abc123"
+        cache.set_cached_final_poster(key, b"old-poster", request_params="tmdb_id=1137844&type=movie")
+
+        # Simulate fetch_trending_candidates side effect: invalidating the item
+        async def fake_candidates(*args, **kwargs):
+            cache.invalidate_final_posters("1137844", "movie")
+            return [{"tmdb_id": "1137844", "media_type": "movie"}]
+
+        http_requests = []
+        async def fake_get(url):
+            http_requests.append(url)
+            return httpx.Response(200, content=b"new-poster")
+
+        with patch("main.fetch_trending_candidates", side_effect=fake_candidates), \
+             patch("httpx.AsyncClient.get", side_effect=fake_get):
+            await main._run_trending_fetch_cycle(AsyncMock())
+
+        self.assertEqual(len(http_requests), 1)
+        self.assertIn("/poster?tmdb_id=1137844&type=movie", http_requests)
+
+    async def test_fetch_trending_candidates_with_max_pages_per_list(self):
+        """Verify fetch_trending_candidates respects max_pages_per_list and does not truncate."""
+        import tmdb
+        mock_resp = {"results": [{"id": i} for i in range(1, 31)]}
+        mock_client = AsyncMock()
+        mock_client.get.return_value = httpx.Response(200, json=mock_resp, request=httpx.Request("GET", "http://test"))
+
+        with patch("tmdb.fetch_trending_source_ids", AsyncMock(return_value=None)):
+            candidates = await tmdb.fetch_trending_candidates(
+                mock_client, "fake_key", max_items=200, max_pages_per_list=2
+            )
+            # 30 items per page * 2 pages = 60 items per type (movie, tv)
+            self.assertEqual(len(candidates), 60)
+            movie_ids = [c["tmdb_id"] for c in candidates if c["media_type"] == "movie"]
+            self.assertEqual(len(movie_ids), 30)
+
 
 class ETagCleanHelperTests(unittest.TestCase):
     def test_clean_etag_edge_cases(self):

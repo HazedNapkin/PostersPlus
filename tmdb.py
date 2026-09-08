@@ -1539,6 +1539,7 @@ async def fetch_trending_candidates(
     client: httpx.AsyncClient,
     tmdb_key: str,
     max_items: int = 500,
+    max_pages_per_list: int | None = None,
 ) -> list[dict]:
     """
     Build a deduped, ranked list of currently-trending titles for cache
@@ -1550,7 +1551,11 @@ async def fetch_trending_candidates(
     tmdb_id) pair appears at most once. May return fewer than *max_items* if
     TMDB's trending lists are exhausted first.
     """
-    pages_per_list = max(1, (max_items + 19) // 20)  # 20 results per page
+    pages_per_list = (
+        max(1, max_pages_per_list)
+        if max_pages_per_list is not None
+        else max(1, (max_items + 19) // 20)
+    )  # 20 results per page
 
     async def _fetch_list(media_type: str, window: str) -> list[dict]:
         results: list[dict] = []

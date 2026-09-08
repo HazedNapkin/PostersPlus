@@ -3849,9 +3849,23 @@ async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
         logger.info("Trending fetch: skipped - no server TMDB key configured")
         return
 
+    # Snapshot existing cached items and their request_params BEFORE candidate fetch
+    # and snapshot updates, because snapshot updates may invalidate (delete) rows
+    # for titles whose ranks changed.
+    db = get_db()
+    try:
+        rows = db.execute("SELECT cache_key, request_params FROM final_poster_cache WHERE request_params IS NOT NULL").fetchall()
+    except Exception as exc:
+        logger.error(f"Trending fetch: failed to query cache: {exc}")
+        return
+
+    target_count = max(_cfg.TRENDING_FETCH_COUNT, _cfg.TRENDING_BROAD_FETCH_COUNT)
     try:
         trending = await fetch_trending_candidates(
-            client, _cfg.SERVER_TMDB_KEY, max_items=max(_cfg.TRENDING_FETCH_COUNT, _cfg.TRENDING_BROAD_FETCH_COUNT)
+            client,
+            _cfg.SERVER_TMDB_KEY,
+            max_items=target_count * 4,
+            max_pages_per_list=max(1, (target_count + 19) // 20),
         )
     except Exception as exc:
         logger.error(f"Trending fetch: failed to fetch candidates: {exc}")
@@ -3880,13 +3894,6 @@ async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
         f"Trending fetch: retrieved {len(trending)} candidates from TMDB, "
         f"{len(trending_pairs)} unique (tmdb_id, media_type) pairs"
     )
-
-    db = get_db()
-    try:
-        rows = db.execute("SELECT cache_key, request_params FROM final_poster_cache WHERE request_params IS NOT NULL").fetchall()
-    except Exception as exc:
-        logger.error(f"Trending fetch: failed to query cache: {exc}")
-        return
 
     # 1. Safe Parsing & Categorization
     # Parse tmdb_id and media_type using negative indexing (parts[-3] and parts[-2])
