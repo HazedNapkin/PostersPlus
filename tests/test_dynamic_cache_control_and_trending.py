@@ -104,9 +104,59 @@ class PosterResponse304AndAutoTTLTests(unittest.TestCase):
         # 7200 is less than the 6-hour cap (21600), so it should pass internal TTL ~7200
         cc = resp.headers["cache-control"]
         self.assertTrue(cc.startswith("public, max-age="))
+        self.assertIn("must-revalidate", cc)
         max_age = int(cc.split("max-age=")[1].split(",")[0])
         self.assertGreaterEqual(max_age, 7190)
         self.assertLessEqual(max_age, 7200)
+        self.assertEqual(cc, f"public, max-age={max_age}, must-revalidate")
+
+    def test_304_inherits_identical_cache_control_as_200(self):
+        """Verify that 304 Not Modified responses inherit the exact same Cache-Control
+        directive (including must-revalidate) as a fresh 200 response."""
+        etag = main._poster_etag(self.BODY)
+
+        # 1. AUTO_CACHE_TTL case
+        main._cfg.AUTO_CACHE_TTL = True
+        main._cfg.CDN_CACHE_TTL = 3600
+        cache.set_cached_final_poster(self.KEY, self.BODY, ttl_override=1800)
+
+        req_200 = _FakeRequest()
+        resp_200 = main._poster_response(req_200, self.BODY, self.KEY, False)
+        self.assertEqual(resp_200.status_code, 200)
+
+        req_304 = _FakeRequest(if_none_match=etag)
+        resp_304 = main._poster_response(req_304, self.BODY, self.KEY, False)
+        self.assertEqual(resp_304.status_code, 304)
+
+        self.assertEqual(resp_304.headers["cache-control"], resp_200.headers["cache-control"])
+        self.assertIn("must-revalidate", resp_304.headers["cache-control"])
+
+        # 2. Static CDN_CACHE_TTL case
+        main._cfg.AUTO_CACHE_TTL = False
+        main._cfg.CDN_CACHE_TTL = 7200
+
+        resp_200_static = main._poster_response(req_200, self.BODY, self.KEY, False)
+        resp_304_static = main._poster_response(req_304, self.BODY, self.KEY, False)
+        self.assertEqual(resp_304_static.status_code, 304)
+        self.assertEqual(resp_200_static.status_code, 200)
+        self.assertEqual(
+            resp_304_static.headers["cache-control"],
+            "public, max-age=7200, must-revalidate",
+        )
+        self.assertEqual(
+            resp_304_static.headers["cache-control"],
+            resp_200_static.headers["cache-control"],
+        )
+
+        # 3. Cache disabled (no Cache-Control)
+        main._cfg.AUTO_CACHE_TTL = False
+        main._cfg.CDN_CACHE_TTL = 0
+
+        resp_200_disabled = main._poster_response(req_200, self.BODY, self.KEY, False)
+        resp_304_disabled = main._poster_response(req_304, self.BODY, self.KEY, False)
+        self.assertEqual(resp_304_disabled.status_code, 304)
+        self.assertNotIn("cache-control", resp_304_disabled.headers)
+        self.assertNotIn("cache-control", resp_200_disabled.headers)
 
     # -----------------------------------------------------------------------
     # Part 2: Strict Cache-Control & Countdown Logic
@@ -117,7 +167,7 @@ class PosterResponse304AndAutoTTLTests(unittest.TestCase):
         main._cfg.CDN_CACHE_TTL = 3600
         req = _FakeRequest()
         resp = main._poster_response(req, self.BODY, self.KEY, False)
-        self.assertEqual(resp.headers["cache-control"], "public, max-age=3600")
+        self.assertEqual(resp.headers["cache-control"], "public, max-age=3600, must-revalidate")
 
     def test_auto_cache_ttl_disabled_and_cdn_cache_ttl_zero_gives_no_cache_control(self):
         main._cfg.AUTO_CACHE_TTL = False
@@ -135,7 +185,7 @@ class PosterResponse304AndAutoTTLTests(unittest.TestCase):
 
         req = _FakeRequest()
         resp = main._poster_response(req, self.BODY, self.KEY, False)
-        self.assertEqual(resp.headers["cache-control"], "public, max-age=21600")
+        self.assertEqual(resp.headers["cache-control"], "public, max-age=21600, must-revalidate")
 
     def test_auto_cache_ttl_respects_custom_cdn_cache_ttl_cap(self):
         main._cfg.AUTO_CACHE_TTL = True
@@ -146,7 +196,7 @@ class PosterResponse304AndAutoTTLTests(unittest.TestCase):
 
         req = _FakeRequest()
         resp = main._poster_response(req, self.BODY, self.KEY, False)
-        self.assertEqual(resp.headers["cache-control"], "public, max-age=3600")
+        self.assertEqual(resp.headers["cache-control"], "public, max-age=3600, must-revalidate")
 
     def test_auto_cache_ttl_passes_remaining_internal_ttl_when_less_than_cap(self):
         main._cfg.AUTO_CACHE_TTL = True
@@ -159,9 +209,11 @@ class PosterResponse304AndAutoTTLTests(unittest.TestCase):
         resp = main._poster_response(req, self.BODY, self.KEY, False)
         cc = resp.headers["cache-control"]
         self.assertTrue(cc.startswith("public, max-age="))
+        self.assertIn("must-revalidate", cc)
         max_age = int(cc.split("max-age=")[1].split(",")[0])
         self.assertGreaterEqual(max_age, 2990)
         self.assertLessEqual(max_age, 3000)
+        self.assertEqual(cc, f"public, max-age={max_age}, must-revalidate")
 
     def test_no_background_stale_reads_never_includes_stale_while_revalidate(self):
         main._cfg.AUTO_CACHE_TTL = True
@@ -171,6 +223,7 @@ class PosterResponse304AndAutoTTLTests(unittest.TestCase):
         req = _FakeRequest()
         resp = main._poster_response(req, self.BODY, self.KEY, False)
         self.assertNotIn("stale-while-revalidate", resp.headers["cache-control"])
+        self.assertIn("must-revalidate", resp.headers["cache-control"])
 
     def test_trending_posters_time_until_next_scheduled_run(self):
         """For trending posters generated on first run of container, the time
@@ -187,9 +240,11 @@ class PosterResponse304AndAutoTTLTests(unittest.TestCase):
             req = _FakeRequest()
             resp = main._poster_response(req, self.BODY, self.KEY, False)
             cc = resp.headers["cache-control"]
+            self.assertIn("must-revalidate", cc)
             max_age = int(cc.split("max-age=")[1].split(",")[0])
             self.assertGreaterEqual(max_age, 10790)
             self.assertLessEqual(max_age, 10800)
+            self.assertEqual(cc, f"public, max-age={max_age}, must-revalidate")
 
     def test_trending_posters_capped_when_next_scheduled_run_exceeds_cap(self):
         main._cfg.AUTO_CACHE_TTL = True
@@ -203,7 +258,7 @@ class PosterResponse304AndAutoTTLTests(unittest.TestCase):
             req = _FakeRequest()
             resp = main._poster_response(req, self.BODY, self.KEY, False)
             # Must respect the 6-hour cap (21600)
-            self.assertEqual(resp.headers["cache-control"], "public, max-age=21600")
+            self.assertEqual(resp.headers["cache-control"], "public, max-age=21600, must-revalidate")
 
 
 class TrendingFetchCycleTests(unittest.IsolatedAsyncioTestCase):
@@ -452,7 +507,7 @@ class AutoCacheTTLEdgeCasesTests(unittest.TestCase):
         # Remaining TTL of 0
         resp = Response(content=self.BODY)
         main._apply_poster_cache_headers(resp, provisional=False, internal_ttl=0)
-        self.assertEqual(resp.headers["cache-control"], "public, max-age=0")
+        self.assertEqual(resp.headers["cache-control"], "public, max-age=0, must-revalidate")
 
 
 if __name__ == "__main__":

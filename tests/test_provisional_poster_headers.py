@@ -86,7 +86,7 @@ class PosterResponseTests(unittest.TestCase):
     def test_a_finished_render_still_gets_the_cdn_ttl(self):
         main._cfg.CDN_CACHE_TTL = 86400
         self.assertEqual(
-            self._response(False).headers["cache-control"], "public, max-age=86400"
+            self._response(False).headers["cache-control"], "public, max-age=86400, must-revalidate"
         )
 
     def test_a_quality_override_has_no_key_to_validate_against(self):
@@ -143,7 +143,7 @@ class PosterResponseTests(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 304)
         self.assertEqual(resp.headers["etag"], main._poster_etag(self.BODY))
-        self.assertEqual(resp.headers["cache-control"], "public, max-age=86400")
+        self.assertEqual(resp.headers["cache-control"], "public, max-age=86400, must-revalidate")
 
 
 class CoalescedRenderTests(unittest.TestCase):

@@ -146,7 +146,7 @@ SERVER_MDBLIST_KEYS: list[str] = [k for k in [SERVER_MDBLIST_KEY, SERVER_MDBLIST
 
 # Workers
 # CDN cache TTL (seconds). When > 0, poster responses include a
-# Cache-Control: public header so Cloudflare (or any CDN) caches them at the
+# Cache-Control: public, max-age=N, must-revalidate header so Cloudflare (or any CDN) caches them at the
 # edge. Set to 0 to disable (e.g. when running without a CDN).
 CDN_CACHE_TTL         = int(os.environ.get("CDN_CACHE_TTL", "0"))
 # Auto Cache-Control TTL: when enabled, poster responses carry a dynamic "countdown"

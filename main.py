@@ -4886,15 +4886,15 @@ def _apply_poster_cache_headers(
             ttl = min(cap, max(0, int(rem_ttl)))
         else:
             ttl = cap
-        response.headers["Cache-Control"] = f"public, max-age={ttl}"
+        response.headers["Cache-Control"] = f"public, max-age={ttl}, must-revalidate"
         logger.info(
-            f"Applied AUTO_CACHE_TTL headers: Cache-Control='public, max-age={ttl}' "
+            f"Applied AUTO_CACHE_TTL headers: Cache-Control='public, max-age={ttl}, must-revalidate' "
             f"(internal_ttl={internal_ttl}, rem_ttl={rem_ttl}, cap={cap}) etag={etag} key={cache_key}"
         )
     elif _cfg.CDN_CACHE_TTL > 0:
-        response.headers["Cache-Control"] = f"public, max-age={_cfg.CDN_CACHE_TTL}"
+        response.headers["Cache-Control"] = f"public, max-age={_cfg.CDN_CACHE_TTL}, must-revalidate"
         logger.info(
-            f"Applied static CDN_CACHE_TTL headers: Cache-Control='public, max-age={_cfg.CDN_CACHE_TTL}' etag={etag}"
+            f"Applied static CDN_CACHE_TTL headers: Cache-Control='public, max-age={_cfg.CDN_CACHE_TTL}, must-revalidate' etag={etag}"
         )
     else:
         logger.info(f"No Cache-Control header applied (AUTO_CACHE_TTL=False, CDN_CACHE_TTL=0) etag={etag}")
